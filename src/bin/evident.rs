@@ -1,9 +1,12 @@
 use std::env;
 use std::fmt;
 use std::fs;
-use std::path::{Path, PathBuf};
-use std::process::{self, Command as ProcessCommand};
+use std::path::PathBuf;
+use std::process;
+use std::process::Command as ProcessCommand;
 
+use ed25519_dalek::{SigningKey, Signer};
+use rand::rngs::OsRng;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -18,43 +21,53 @@ enum CliError {
     Usage(String),
 }
 
-impl From<std::io::Error> for CliError {
-    fn from(err: std::io::Error) -> Self {
-        CliError::Io(err)
-    }
-}
-
-impl From<serde_json::Error> for CliError {
-    fn from(err: serde_json::Error) -> Self {
-        CliError::Json(err)
-    }
-}
-
-impl From<reqwest::Error> for CliError {
-    fn from(err: reqwest::Error) -> Self {
-        CliError::Http(err)
-    }
-}
+impl From<std::io::Error> for CliError { fn from(e: std::io::Error) -> Self { CliError::Io(e) } }
+impl From<serde_json::Error> for CliError { fn from(e: serde_json::Error) -> Self { CliError::Json(e) } }
+impl From<reqwest::Error> for CliError { fn from(e: reqwest::Error) -> Self { CliError::Http(e) } }
 
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CliError::Io(err) => write!(f, "I/O error: {err}"),
-            CliError::Json(err) => write!(f, "JSON error: {err}"),
-            CliError::Http(err) => write!(f, "HTTP error: {err}"),
-            CliError::Server(message) => write!(f, "{message}"),
-            CliError::Usage(message) => write!(f, "{message}"),
+            CliError::Io(e) => write!(f, "I/O error: {e}"),
+            CliError::Json(e) => write!(f, "JSON error: {e}"),
+            CliError::Http(e) => write!(f, "HTTP error: {e}"),
+            CliError::Server(m) => write!(f, "{m}"),
+            CliError::Usage(m) => write!(f, "{m}"),
         }
     }
 }
 
 impl std::error::Error for CliError {}
 
-#[derive(Debug)]
-enum CliCommand {
-    Hash { path: String },
-    Commit { path: String, chain_id: String },
-    Verify { proof_path: String },
+fn evident_dir() -> PathBuf {
+    let home = env::var("HOME").unwrap_or_else(|_| ".".into());
+    PathBuf::from(home).join(".evident")
+}
+
+fn load_signing_key() -> Result<SigningKey, CliError> {
+    let key_path = evident_dir().join("identity.key");
+    if !key_path.exists() {
+        return Err(CliError::Usage(
+            "no identity found — run: evident init".into()
+        ));
+    }
+    let bytes = fs::read(&key_path)?;
+    let array: [u8; 32] = bytes.try_into()
+        .map_err(|_| CliError::Usage("identity.key corrupted".into()))?;
+    Ok(SigningKey::from_bytes(&array))
+}
+
+fn sign_event(key: &SigningKey, chain_id: &Uuid, parent_event_id: Option<&Uuid>, file_hash: &str, idempotency_key: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(chain_id.as_bytes());
+    if let Some(p) = parent_event_id {
+        hasher.update(p.as_bytes());
+    }
+    hasher.update(file_hash.as_bytes());
+    hasher.update(idempotency_key.as_bytes());
+    let digest = hasher.finalize();
+    let sig = key.sign(&digest);
+    hex::encode(sig.to_bytes())
 }
 
 #[derive(Debug, Deserialize)]
@@ -62,8 +75,6 @@ struct CommitResponse {
     event_id: String,
     chain_id: String,
     head_event_id: String,
-    sequence: i64,
-    cached: bool,
     proof: ProofPayload,
     events: Vec<EventLeaf>,
 }
@@ -94,67 +105,104 @@ struct EventLeaf {
 }
 
 fn main() {
-    if let Err(err) = run() {
-        eprintln!("{err}");
+    if let Err(e) = run() {
+        eprintln!("{e}");
         process::exit(1);
     }
 }
 
 fn run() -> Result<(), CliError> {
     let mut args = env::args().skip(1);
-    let command = match args.next().as_deref() {
+    match args.next().as_deref() {
+        Some("init") => cmd_init(),
+        Some("new-chain") => cmd_new_chain(),
+        Some("status") => {
+            let chain_id = args.next().ok_or_else(|| CliError::Usage("usage: evident status <chain_id>".into()))?;
+            cmd_status(&chain_id)
+        }
         Some("hash") => {
             let path = args.next().ok_or_else(|| CliError::Usage("usage: evident hash <file>".into()))?;
-            CliCommand::Hash { path }
+            cmd_hash(&path)
         }
         Some("commit") => {
             let path = args.next().ok_or_else(|| CliError::Usage("usage: evident commit <file> --chain <id>".into()))?;
             let mut chain_id = None;
             while let Some(arg) = args.next() {
-                match arg.as_str() {
-                    "--chain" => chain_id = args.next(),
-                    _ => return Err(CliError::Usage("unknown argument".into())),
-                }
+                if arg == "--chain" { chain_id = args.next(); }
             }
             let chain_id = chain_id.ok_or_else(|| CliError::Usage("missing --chain".into()))?;
-            CliCommand::Commit { path, chain_id }
+            cmd_commit(&path, &chain_id)
         }
         Some("verify") => {
             let proof_path = args.next().ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
-            CliCommand::Verify { proof_path }
+            cmd_verify(&proof_path)
         }
-        Some(other) => return Err(CliError::Usage(format!("unknown command: {other}"))),
-        None => return Err(CliError::Usage("usage: evident <hash|commit|verify>".into())),
-    };
-
-    match command {
-        CliCommand::Hash { path } => cmd_hash(&path),
-        CliCommand::Commit { path, chain_id } => cmd_commit(&path, &chain_id),
-        CliCommand::Verify { proof_path } => cmd_verify(&proof_path),
+        _ => Err(CliError::Usage("usage: evident <init|new-chain|hash|commit|verify>".into())),
     }
+}
+
+fn cmd_init() -> Result<(), CliError> {
+    let dir = evident_dir();
+    fs::create_dir_all(&dir)?;
+    let key_path = dir.join("identity.key");
+    let pub_path = dir.join("identity.pub");
+    if key_path.exists() {
+        let pub_bytes = fs::read(&pub_path)?;
+        println!("identity already exists");
+        println!("public key: {}", hex::encode(&pub_bytes));
+        return Ok(());
+    }
+    let signing_key = SigningKey::generate(&mut OsRng);
+    let verifying_key = signing_key.verifying_key();
+    fs::write(&key_path, signing_key.to_bytes())?;
+    fs::write(&pub_path, verifying_key.to_bytes())?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        fs::set_permissions(&key_path, fs::Permissions::from_mode(0o600))?;
+    }
+    println!("identity created");
+    println!("public key: {}", hex::encode(verifying_key.to_bytes()));
+    Ok(())
 }
 
 fn cmd_hash(path: &str) -> Result<(), CliError> {
     let bytes = fs::read(path)?;
-    let hash = sha256_hex(&bytes);
-    println!("{hash}");
+    println!("{}", sha256_hex(&bytes));
     Ok(())
 }
 
 fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
+    let signing_key = load_signing_key()?;
     let bytes = fs::read(path)?;
     let file_hash = sha256_hex(&bytes);
-
-    let chain_uuid = Uuid::parse_str(chain_id).map_err(|_| CliError::Usage("invalid chain id".into()))?;
+    let chain_uuid = Uuid::parse_str(chain_id)
+        .map_err(|_| CliError::Usage("invalid chain id".into()))?;
     let idempotency_key = Uuid::new_v4().to_string();
 
+    // get current head from server
     let client = reqwest::blocking::Client::new();
+    let head_resp = client
+        .get(format!("http://127.0.0.1:3000/verify/{chain_id}"))
+        .send()?;
+    let head_json: serde_json::Value = head_resp.json()?;
+    let parent_event_id: Option<Uuid> = head_json["head_event_id"]
+        .as_str()
+        .and_then(|s| Uuid::parse_str(s).ok());
+
+    let signature = sign_event(&signing_key, &chain_uuid, parent_event_id.as_ref(), &file_hash, &idempotency_key);
+
+    println!("hashing...  {}", &file_hash[..16]);
+    println!("signing...");
+
     let response = client
         .post("http://127.0.0.1:3000/events")
         .json(&json!({
-            "file_hash": file_hash,
             "chain_id": chain_uuid,
-            "idempotency_key": idempotency_key
+            "parent_event_id": parent_event_id,
+            "file_hash": file_hash,
+            "idempotency_key": idempotency_key,
+            "signature": signature,
         }))
         .send()?;
 
@@ -165,56 +213,33 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     }
 
     let commit: CommitResponse = serde_json::from_str(&body)?;
-    let proof_path = PathBuf::from("proofs")
-        .join(commit.chain_id.clone())
-        .join(format!("{}.json", commit.event_id));
 
-    fs::create_dir_all(proof_path.parent().unwrap())?;
+    let proof_dir = evident_dir().join("proofs").join(&commit.chain_id);
+    fs::create_dir_all(&proof_dir)?;
+    let proof_path = proof_dir.join(format!("{}.json", commit.event_id));
     let proof = ProofFile {
         chain_id: commit.chain_id.clone(),
         head_event_id: commit.head_event_id.clone(),
         proof: commit.proof.clone(),
         events: commit.events.clone(),
     };
-
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
-    println!("saved proof to {}", proof_path.display());
+
+    println!("anchored    event={}", commit.event_id);
+    println!("proof       {}", proof_path.display());
     Ok(())
 }
 
 fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
-    let path = Path::new(proof_path);
-    let files: Vec<PathBuf> = if path.is_dir() {
-        let mut entries = fs::read_dir(path)?
-            .filter_map(|entry| entry.ok())
-            .map(|entry| entry.path())
-            .filter(|entry| entry.is_file())
-            .collect::<Vec<_>>();
-        entries.sort();
-        entries
-    } else {
-        vec![path.to_path_buf()]
-    };
-
-    for file in files {
-        let content = fs::read_to_string(&file)?;
-        let proof: ProofFile = serde_json::from_str(&content)?;
-        let verifier = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-            .join("target")
-            .join("debug")
-            .join("evident-verify");
-        let status = ProcessCommand::new(verifier).arg(&file).status().map_err(|err| CliError::Server(format!("failed to run verifier: {err}")))?;
-        if !status.success() {
-            return Err(CliError::Server(format!("verification failed for {}", file.display())));
-        }
-        println!("OK: proof valid");
-        println!("  file:       {}", file.display());
-        println!("  chain_id:   {}", proof.chain_id);
-        println!("  chain_head: {}", proof.head_event_id);
-        println!("  root:       {}", proof.proof.root);
-        println!("  events:     {}", proof.events.len());
+    let verifier = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("target").join("debug").join("evident-verify");
+    let status = ProcessCommand::new(verifier)
+        .arg(proof_path)
+        .status()
+        .map_err(|e| CliError::Server(format!("failed to run verifier: {e}")))?;
+    if !status.success() {
+        return Err(CliError::Server("verification failed".into()));
     }
-
     Ok(())
 }
 
@@ -222,4 +247,46 @@ fn sha256_hex(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
     hasher.update(bytes);
     format!("{:x}", hasher.finalize())
+}
+
+fn cmd_new_chain() -> Result<(), CliError> {
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .post("http://127.0.0.1:3000/chains")
+        .send()?;
+    let status = response.status();
+    let body = response.text()?;
+    if !status.is_success() {
+        return Err(CliError::Server(format!("server error {status}: {body}")));
+    }
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    println!("chain created");
+    println!("chain_id: {}", json["chain_id"].as_str().unwrap_or("?"));
+    Ok(())
+}
+
+fn cmd_status(chain_id: &str) -> Result<(), CliError> {
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .get(format!("http://127.0.0.1:3000/verify/{chain_id}"))
+        .send()?;
+    let status = response.status();
+    let body = response.text()?;
+    if !status.is_success() {
+        return Err(CliError::Server(format!("server error {status}: {body}")));
+    }
+    let json: serde_json::Value = serde_json::from_str(&body)?;
+    let valid = json["valid"].as_bool().unwrap_or(false);
+    let blocks = json["blocks"].as_u64().unwrap_or(0);
+    let head = json["head_event_id"].as_str().unwrap_or("none");
+    let errors = json["errors"].as_array().map(|e| e.len()).unwrap_or(0);
+
+    println!("chain:  {chain_id}");
+    println!("events: {blocks}");
+    println!("head:   {head}");
+    println!("valid:  {}", if valid { "OK" } else { "FAIL" });
+    if errors > 0 {
+        println!("errors: {errors}");
+    }
+    Ok(())
 }

@@ -31,3 +31,7 @@ path = "src/bin/evident.rs"
 [[bin]]
 name = "evident-verify"
 path = "src/bin/verify.rs"
+
+[[bin]]
+name = "evident-product"
+path = "src/bin/product.rs"
