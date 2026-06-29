@@ -1,6 +1,7 @@
 pub mod api;
 pub mod audit;
 pub mod db;
+pub mod freeze;
 pub mod merkle;
 pub mod models;
 pub mod product;
