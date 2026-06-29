@@ -1,7 +1,9 @@
 pub mod api;
+pub mod audit;
 pub mod db;
 pub mod merkle;
 pub mod models;
+pub mod product;
 pub mod service;
 pub mod signing;
 pub mod state;

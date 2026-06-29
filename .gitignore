@@ -16,3 +16,4 @@ Cargo.lock
 
 # logs
 *.log
+proofs/
