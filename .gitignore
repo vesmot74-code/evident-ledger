@@ -1,0 +1,18 @@
+# env
+.env
+*.env
+
+# secrets / keys
+*.bin
+signing_key.bin
+*.key
+
+# Rust
+target/
+Cargo.lock
+
+# OS
+.DS_Store
+
+# logs
+*.log
