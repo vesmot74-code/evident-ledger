@@ -13,6 +13,6 @@ async fn handler(
     State(state): State<AppState>,
     Json(req): Json<SubmitEventRequest>,
 ) -> Result<Json<serde_json::Value>, LedgerError> {
-    let res = submit_event(&state.db, req).await?;
+    let res = submit_event(&state.db, state.signer.as_ref(), req).await?;
     Ok(Json(res))
 }

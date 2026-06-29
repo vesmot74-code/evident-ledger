@@ -1,6 +1,6 @@
 use base64::Engine;
 
-use crate::types::{TsaAttestation, TsaStatus};
+use super::types::{TsaAttestation, TsaStatus};
 
 fn validate_stub_token(token_b64: &str, bundle_hash: &str) -> bool {
     let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(token_b64.trim()) else {
@@ -46,7 +46,7 @@ pub fn tsa_status_for_bundle(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::attest::create_stub_attestation;
+    use crate::tsa::create_stub_attestation;
 
     #[test]
     fn stub_attestation_verifies_for_correct_owner() {

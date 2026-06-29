@@ -5,7 +5,7 @@ use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
 use axum::Json;
 
-use crate::models::event::SubmitEventRequest;
+use crate::{models::event::SubmitEventRequest, signing::ServerSigner};
 
 #[derive(Debug)]
 pub enum LedgerError {
@@ -40,24 +40,47 @@ impl IntoResponse for LedgerError {
 
 pub async fn submit_event(
     pool: &PgPool,
+    signer: &ServerSigner,
     req: SubmitEventRequest,
 ) -> Result<Value, LedgerError> {
 
     let mut tx = pool.begin().await?;
 
-    // 1. LOCK chain
-    let chain = sqlx::query!(
+    #[derive(sqlx::FromRow)]
+    struct ChainRow {
+        chain_id: Uuid,
+        head_event_id: Option<Uuid>,
+    }
+
+    let chain = sqlx::query_as::<_, ChainRow>(
         r#"
-        SELECT chain_id, head_event_id
-        FROM chains
-        WHERE chain_id = $1
-        FOR UPDATE
-        "#,
-        req.chain_id
+        INSERT INTO chains (chain_id, head_event_id)
+        VALUES ($1, NULL)
+        ON CONFLICT (chain_id) DO NOTHING
+        RETURNING chain_id, head_event_id
+        "#
     )
+    .bind(req.chain_id)
     .fetch_optional(&mut *tx)
-    .await?
-    .ok_or(LedgerError::ChainNotFound)?;
+    .await?;
+
+    let chain = match chain {
+        Some(chain) => chain,
+        None => {
+            sqlx::query_as::<_, ChainRow>(
+                r#"
+                SELECT chain_id, head_event_id
+                FROM chains
+                WHERE chain_id = $1
+                FOR UPDATE
+                "#
+            )
+            .bind(req.chain_id)
+            .fetch_optional(&mut *tx)
+            .await?
+            .ok_or(LedgerError::ChainNotFound)?
+        }
+    };
 
     // 2. CHECK idempotency
     if let Some(existing) = sqlx::query!(
@@ -80,20 +103,19 @@ pub async fn submit_event(
         }));
     }
 
-    // 3. validate parent pointer (allow NULL for first event)
-    match (chain.head_event_id, req.parent_event_id) {
-        (None, parent) if parent == Uuid::nil() => {
-            // First event - valid
-        }
-        (Some(head), parent) if head == parent => {
-            // Valid parent
-        }
-        _ => {
-            return Err(LedgerError::ParentMismatch);
-        }
-    }
+    let parent_event_id = chain.head_event_id.unwrap_or(Uuid::nil());
 
-    // 4. insert event
+    let sequence = sqlx::query_scalar!(
+        r#"
+        SELECT COALESCE(MAX(sequence), 0) + 1
+        FROM events
+        WHERE chain_id = $1
+        "#,
+        req.chain_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
     let event_id = Uuid::new_v4();
 
     sqlx::query!(
@@ -104,16 +126,18 @@ pub async fn submit_event(
             parent_event_id,
             file_hash,
             idempotency_key,
-            signature
+            signature,
+            sequence
         )
-        VALUES ($1,$2,$3,$4,$5,$6)
+        VALUES ($1,$2,$3,$4,$5,$6,$7)
         "#,
         event_id,
         req.chain_id,
-        req.parent_event_id,
+        parent_event_id,
         req.file_hash,
         req.idempotency_key,
-        req.signature
+        "",
+        sequence
     )
     .execute(&mut *tx)
     .await?;
@@ -144,11 +168,50 @@ pub async fn submit_event(
         });
     }
 
+    let events = sqlx::query_as!(
+        crate::db::EventRow,
+        r#"
+        SELECT event_id, parent_event_id, file_hash, created_at, sequence
+        FROM events
+        WHERE chain_id = $1
+        ORDER BY sequence ASC
+        "#,
+        req.chain_id
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let root = crate::merkle::MerkleTree::recompute_root_from_events(&events);
+    let chain_head = event_id.to_string();
+    let signature = signer.sign_root(&root, &chain_head);
+    let public_key = signer.public_key_hex();
+
+    let event_payloads: Vec<Value> = events
+        .iter()
+        .map(|event| {
+            json!({
+                "sequence": event.sequence,
+                "event_id": event.event_id,
+                "parent_event_id": event.parent_event_id,
+                "file_hash": event.file_hash,
+            })
+        })
+        .collect();
+
     Ok(json!({
         "event_id": event_id,
         "chain_id": req.chain_id,
         "head_event_id": event_id,
-        "cached": false
+        "sequence": sequence,
+        "cached": false,
+        "proof": {
+            "root": root,
+            "chain_head": chain_head,
+            "signature": signature,
+            "public_key": public_key,
+            "leaves_count": event_payloads.len()
+        },
+        "events": event_payloads
     }))
 }
 

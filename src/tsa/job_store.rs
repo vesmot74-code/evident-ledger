@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 
-use crate::types::{TsaAttestation, TsaJob, TsaJobState};
+use super::types::{TsaAttestation, TsaJob, TsaJobState};
 
 pub trait TsaJobStore: Send + Sync {
     fn get_job(&self, repo: &str, bundle_hash: &str) -> Result<Option<TsaJob>>;
@@ -127,7 +127,7 @@ pub async fn process_pending_job(
     job.state = TsaJobState::Sent;
     store.save_job(&job)?;
 
-    match crate::attest::submit_bundle_hash_stub(bundle_hash, provider) {
+    match super::attest::submit_bundle_hash_stub(bundle_hash, provider) {
         Ok(attestation) => {
             job.state = TsaJobState::Verified;
             job.attestation = Some(attestation.clone());

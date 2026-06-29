@@ -5,4 +5,5 @@ pub mod models;
 pub mod service;
 pub mod signing;
 pub mod state;
+pub mod tsa;
 pub mod tsa_worker;

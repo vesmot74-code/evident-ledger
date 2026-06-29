@@ -2,9 +2,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Result;
 use base64::Engine;
-use notary_crypto::sha256_hex;
+use sha2::{Digest, Sha256};
 
-use crate::types::TsaAttestation;
+use super::types::TsaAttestation;
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -35,14 +35,16 @@ pub fn submit_bundle_hash_stub(bundle_hash: &str, provider: &str) -> Result<TsaA
 
 /// Hash of raw TSR bytes for audit metadata (external layer only).
 pub fn tsr_content_hash(raw_token_b64: &str) -> String {
-    sha256_hex(raw_token_b64.as_bytes())
+    let mut hasher = Sha256::new();
+    hasher.update(raw_token_b64.as_bytes());
+    format!("{:x}", hasher.finalize())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::verify::verify_tsa_attestation;
-    use crate::types::TsaStatus;
+    use crate::tsa::verify_tsa_attestation;
+    use crate::tsa::TsaStatus;
 
     #[test]
     fn bundle_plus_tsa_success() {
