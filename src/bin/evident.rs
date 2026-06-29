@@ -1,3 +1,4 @@
+use chrono::TimeZone;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -113,14 +114,35 @@ fn main() {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_artifacts_are_created_under_chain_directory() {
+        let base = PathBuf::from("/tmp/evident-test");
+        let (proof_path, pdf_path) = report_artifact_paths(&base, "chain-123");
+        assert_eq!(proof_path, base.join("proofs").join("chain-123").join("proof.json"));
+        assert_eq!(pdf_path, base.join("proofs").join("chain-123").join("proof.pdf"));
+    }
+}
+
 fn run() -> Result<(), CliError> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("init") => cmd_init(),
+        Some("help") | Some("--help") | Some("-h") => {
+            println!("usage: evident <init|new-chain|commit|verify|status|report generate>");
+            Ok(())
+        }
+        Some("new-chain") => cmd_new_chain(),
         Some("report") => {
-            let proof_path = args.next().ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
-            let output = args.next().unwrap_or_else(|| "proof.pdf".into());
-            cmd_report_generate(&proof_path, &output)
+            let subcommand = args.next().ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
+            if subcommand != "generate" {
+                return Err(CliError::Usage("usage: evident report generate <chain_id>".into()));
+            }
+            let chain_id = args.next().ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
+            cmd_report_generate(&chain_id)
         }
         Some("status") => {
             let chain_id = args.next().ok_or_else(|| CliError::Usage("usage: evident status <chain_id>".into()))?;
@@ -143,7 +165,7 @@ fn run() -> Result<(), CliError> {
             let proof_path = args.next().ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
             cmd_verify(&proof_path)
         }
-        _ => Err(CliError::Usage("usage: evident <init|hash|commit|verify|report generate|status>".into())),
+        _ => Err(CliError::Usage("usage: evident <init|new-chain|commit|verify|status|report generate>".into())),
     }
 }
 
@@ -226,6 +248,7 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
         events: commit.events.clone(),
     };
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
+    fs::write(proof_dir.join("proof.json"), serde_json::to_string_pretty(&proof)?)?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");
     let event_log = evident_dir().join("events.jsonl");
@@ -260,23 +283,58 @@ fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
     Ok(())
 }
 
-fn cmd_report_generate(proof_path: &str, output: &str) -> Result<(), CliError> {
-    let path = Path::new(proof_path);
-    let content = fs::read_to_string(path)?;
-    let proof: Proof = serde_json::from_str(&content)?;
-    let out = PathBuf::from(output);
+fn report_artifact_paths(base_dir: &Path, chain_id: &str) -> (PathBuf, PathBuf) {
+    let proof_dir = base_dir.join("proofs").join(chain_id);
+    let proof_path = proof_dir.join("proof.json");
+    let pdf_path = proof_dir.join("proof.pdf");
+    (proof_path, pdf_path)
+}
+
+fn find_latest_proof_artifact(chain_id: &str) -> Result<PathBuf, CliError> {
+    let proof_dir = evident_dir().join("proofs").join(chain_id);
+    let canonical = proof_dir.join("proof.json");
+    if canonical.exists() {
+        return Ok(canonical);
+    }
+
+    let mut paths: Vec<PathBuf> = fs::read_dir(&proof_dir)?
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect();
+    paths.sort();
+    paths.pop().ok_or_else(|| CliError::Usage(format!("no proof found for chain {chain_id}")))
+}
+
+fn cmd_report_generate(chain_id: &str) -> Result<(), CliError> {
+    let proof_dir = evident_dir().join("proofs").join(chain_id);
+    let source_path = find_latest_proof_artifact(chain_id)?;
+    let content = fs::read_to_string(&source_path)?;
+    let proof: ProofFile = serde_json::from_str(&content)?;
+    let output_path = proof_dir.join("proof.pdf");
+
+    let artifact_path = proof_dir.join("proof.json");
+    fs::write(&artifact_path, serde_json::to_string_pretty(&proof)?)?;
+
+    let events = proof.events.iter().map(|leaf| evident_report::EventSummary {
+        event_id: leaf.event_id.clone(),
+        file_hash: leaf.file_hash.clone(),
+        sequence: Some(leaf.sequence),
+    }).collect();
+
+    let deterministic_created_at = chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap();
     let report = evident_report::generate_report(&proof.chain_id, &evident_report::ProofData {
         chain_id: proof.chain_id.clone(),
-        head_event_id: String::new(),
-        events: vec![],
-        root: proof.root_hash.clone(),
-        signature: proof.tsa_signature.clone(),
-        public_key: String::new(),
+        head_event_id: proof.head_event_id.clone(),
+        events,
+        root: proof.proof.root.clone(),
+        signature: proof.proof.signature.clone(),
+        public_key: proof.proof.public_key.clone(),
         tsa: None,
-        created_at: chrono::Utc::now(),
-    }, &out);
+        created_at: deterministic_created_at,
+    }, &output_path);
     report.map_err(|_| CliError::Server("report generation failed".into()))?;
-    println!("report       {}", out.display());
+    println!("report       {}", output_path.display());
     Ok(())
 }
 

@@ -127,11 +127,8 @@ fn main() {
 
     if ok {
         println!("OK: proof valid");
-        println!("  chain_id:   {}", proof_file.chain_id);
-        println!("  chain_head: {}", proof_file.proof.chain_head);
-        println!("  root:       {}", proof_file.proof.root);
-        println!("  events:     {}", proof_file.events.len());
     } else {
+        println!("FAIL");
         process::exit(2);
     }
 }

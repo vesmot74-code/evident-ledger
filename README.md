@@ -1,19 +1,8 @@
-Вот **финальная, согласованная с CLI и FREEZE v0.1 версия README**. Она выровнена под твой текущий кодовый контур: `commit → verify → status → report generate`.
-
-Можно вставлять без изменений.
-
----
-
-# 📄 README.md (EVIDENT LEDGER v0.1 FROZEN)
-
-````markdown
 # Evident Ledger (v0.1 FROZEN)
 
 Deterministic verifiable event ledger with cryptographic proofs and offline verification.
 
----
-
-## 🧠 SYSTEM OVERVIEW
+## System overview
 
 Evident Ledger is a cryptographic event system where:
 
@@ -22,25 +11,19 @@ Evident Ledger is a cryptographic event system where:
 - trust is derived from cryptographic proof, not server state
 - all results are reproducible offline
 
----
-
-## 🔧 CORE PIPELINE
+## Core pipeline
 
 ```text
 file → SHA256 → event → chain → proof → verify → report
-````
+```
 
----
+## Quick start
 
-## 🚀 QUICK START
-
-### Build project
+### Build the CLI
 
 ```bash
 cargo build --bin evident
 ```
-
----
 
 ### Initialize local identity
 
@@ -48,17 +31,13 @@ cargo build --bin evident
 evident init
 ```
 
----
-
-### Create new chain
+### Create a new chain
 
 ```bash
 evident new-chain
 ```
 
----
-
-### Commit file into chain
+### Commit a file into a chain
 
 ```bash
 evident commit <file> --chain <chain_id>
@@ -70,29 +49,25 @@ Example:
 evident commit Cargo.toml --chain 11111111-1111-1111-1111-111111111111
 ```
 
----
-
-### Verify proof (offline)
+### Verify a proof offline
 
 ```bash
-evident verify ~/.evident/proofs/<chain_id>/*.json
+evident verify ~/.evident/proofs/<chain_id>/proof.json
 ```
 
-Output:
+Expected output:
 
 ```text
 OK: proof valid
 ```
 
----
-
-### Generate PDF report
+### Generate a deterministic report
 
 ```bash
 evident report generate <chain_id>
 ```
 
-Output:
+Artifacts written to:
 
 ```text
 ~/.evident/proofs/<chain_id>/
@@ -100,30 +75,26 @@ Output:
   └── proof.pdf
 ```
 
----
-
 ### Check chain status
 
 ```bash
 evident status <chain_id>
 ```
 
----
+## CLI contract
 
-## 📦 COMMANDS CONTRACT
+The frozen workflow is:
 
-| Command         | Description                                         |
-| --------------- | --------------------------------------------------- |
-| init            | Initialize local cryptographic identity             |
-| new-chain       | Create new ledger chain                             |
-| commit          | Append immutable event to chain                     |
-| verify          | Offline verification of proof                       |
-| status          | Show chain state                                    |
-| report generate | Generate deterministic proof artifacts (JSON + PDF) |
+- init
+- new-chain
+- commit
+- verify
+- status
+- report generate
 
----
+The current executable also exposes auxiliary commands `help` and `hash`, which are preserved for compatibility but are not part of the frozen protocol contract.
 
-## 🧱 ARCHITECTURE
+## Architecture
 
 ```text
 Ledger Engine   → immutable event chain
@@ -133,113 +104,53 @@ Report Engine   → deterministic proof exporter
 CLI             → orchestration layer (no business logic)
 ```
 
----
+## Freeze rules
 
-## 🔐 CORE RULES (FREEZE v0.1)
+1. Append-only system
+   - Events are immutable and cannot be modified or deleted.
+2. Deterministic hashing
+   - All hashes use SHA-256 only.
+3. Chain integrity
+   - Each event is linked to the prior event and the canonical proof is derived from the chain.
+4. Offline verification
+   - Verification must work without server access.
+5. Server is not truth
+   - Truth is derived from cryptographic proof, not server state.
 
-### 1. Append-only system
+## Proof model
 
-Events are immutable and cannot be modified or deleted.
-
----
-
-### 2. Deterministic hashing
-
-All hashes use SHA-256 only.
-
----
-
-### 3. Chain integrity
-
-Each event references the previous event hash.
+The canonical proof artifact contains:
 
 ```text
-event[i].parent_hash = hash(event[i-1])
+chain_id
+root_hash
+tsa_timestamp
+tsa_signature
+event_count
+verification_status
 ```
 
----
-
-### 4. Offline verification
-
-Verification must work without server access.
-
----
-
-### 5. Server is not truth
-
-Truth is derived from cryptographic proof, not server state.
-
----
-
-## 📄 PROOF MODEL
-
-Proof is the canonical output of the system:
-
-```text
-Proof = {
-  chain_id,
-  root_hash,
-  tsa_timestamp,
-  tsa_signature,
-  event_count,
-  verification_status
-}
-```
-
----
-
-## 📊 OUTPUT GUARANTEE
+## Output guarantee
 
 Given identical input:
 
-* proof.json is identical
-* proof.pdf is byte-identical
-* verification result is identical
+- proof.json is identical
+- proof.pdf is byte-identical
+- verification result is identical
 
 Determinism is a hard requirement of the system.
 
----
-
-## 🧪 TESTS
+## Tests
 
 ```bash
 cargo test --lib
 ```
 
----
+## Freeze status
 
-## ⚠️ FREEZE RULE (CRITICAL)
-
-This is protocol version v0.1.
-
-### Hard constraints:
-
-* NO breaking changes allowed
-* NO schema modifications
-* NO CLI contract changes without version bump
-* NO silent behavior changes
-
-### If change is required:
-
-→ must introduce v0.2 protocol
-
----
-
-## 📌 STATUS
-
-* CLI: stable
-* Ledger: stable
-* Verifier: stable
-* Report engine: integrated
-* Protocol: FROZEN v0.1
-
----
-
-## 🧠 FINAL NOTE
-
-This system defines a deterministic model of verifiable events.
-
-The source of truth is not the server — it is the cryptographically validated event chain.
-
-```
+- CLI: stable
+- Ledger: stable
+- Verifier: stable
+- Report engine: integrated
+- Protocol: FROZEN v0.1
 
