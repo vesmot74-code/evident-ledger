@@ -9,7 +9,7 @@ mod models;
 mod merkle;
 mod signing;
 mod state;
-
+mod tsa_worker;
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();

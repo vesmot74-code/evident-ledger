@@ -133,10 +133,46 @@ pub async fn submit_event(
 
     tx.commit().await?;
 
+    // async TSA stamp
+    {
+        let pool_clone = pool.clone();
+        let chain_id = req.chain_id;
+        tokio::spawn(async move {
+            if let Some(root) = compute_chain_root(&pool_clone, chain_id).await {
+                crate::tsa_worker::stamp_chain(&pool_clone, chain_id, &root, event_id).await;
+            }
+        });
+    }
+
     Ok(json!({
         "event_id": event_id,
         "chain_id": req.chain_id,
         "head_event_id": event_id,
         "cached": false
     }))
+}
+
+pub fn spawn_tsa_stamp(pool: PgPool, chain_id: Uuid, merkle_root: String, head_event_id: Uuid) {
+    tokio::spawn(async move {
+        crate::tsa_worker::stamp_chain(&pool, chain_id, &merkle_root, head_event_id).await;
+    });
+}
+
+async fn compute_chain_root(pool: &PgPool, chain_id: Uuid) -> Option<String> {
+    let events = sqlx::query_as!(
+        crate::db::EventRow,
+        r#"
+        SELECT event_id, parent_event_id, file_hash, created_at, sequence
+        FROM events
+        WHERE chain_id = $1
+        ORDER BY sequence ASC
+        "#,
+        chain_id
+    )
+    .fetch_all(pool)
+    .await
+    .ok()?;
+
+    if events.is_empty() { return None; }
+    Some(crate::merkle::MerkleTree::recompute_root_from_events(&events))
 }

@@ -109,6 +109,16 @@ pub async fn export_proof(
     let signature = signer.sign_root(&merkle_root, &chain_head.to_string());
     let public_key = signer.public_key_hex();
 
+    let tsa = sqlx::query!(
+        r#"SELECT tsa_timestamp, tsa_serial, length(tsa_token) as token_bytes
+           FROM tsa_tokens WHERE chain_id = $1 AND merkle_root = $2"#,
+        chain_id, merkle_root
+    )
+    .fetch_optional(pool)
+    .await
+    .ok()
+    .flatten();
+
     let leaves: Vec<serde_json::Value> = events.iter().map(|e| json!({
         "sequence": e.sequence,
         "event_id": e.event_id,
@@ -127,6 +137,11 @@ pub async fn export_proof(
             "chain_head": chain_head,
             "signature": signature,
             "public_key": public_key,
+            "tsa": tsa.map(|t| json!({
+                "timestamp": t.tsa_timestamp,
+                "serial": t.tsa_serial,
+                "token_bytes": t.token_bytes,
+            })),
         }
     }))
 }
