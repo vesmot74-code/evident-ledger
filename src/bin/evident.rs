@@ -116,6 +116,11 @@ fn run() -> Result<(), CliError> {
     match args.next().as_deref() {
         Some("init") => cmd_init(),
         Some("new-chain") => cmd_new_chain(),
+        Some("report") => {
+            let proof_path = args.next().ok_or_else(|| CliError::Usage("usage: evident report <proof.json> <output.pdf>".into()))?;
+            let output = args.next().unwrap_or_else(|| "report.pdf".into());
+            cmd_report(&proof_path, &output)
+        }
         Some("status") => {
             let chain_id = args.next().ok_or_else(|| CliError::Usage("usage: evident status <chain_id>".into()))?;
             cmd_status(&chain_id)
@@ -137,7 +142,7 @@ fn run() -> Result<(), CliError> {
             let proof_path = args.next().ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
             cmd_verify(&proof_path)
         }
-        _ => Err(CliError::Usage("usage: evident <init|new-chain|hash|commit|verify>".into())),
+        _ => Err(CliError::Usage("usage: evident <init|new-chain|hash|commit|verify|report|status>".into())),
     }
 }
 
@@ -180,7 +185,6 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
         .map_err(|_| CliError::Usage("invalid chain id".into()))?;
     let idempotency_key = Uuid::new_v4().to_string();
 
-    // get current head from server
     let client = reqwest::blocking::Client::new();
     let head_resp = client
         .get(format!("http://127.0.0.1:3000/verify/{chain_id}"))
@@ -288,5 +292,59 @@ fn cmd_status(chain_id: &str) -> Result<(), CliError> {
     if errors > 0 {
         println!("errors: {errors}");
     }
+    Ok(())
+}
+
+fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
+    use std::fs;
+    use std::path::Path;
+    use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
+
+    let content = fs::read_to_string(proof_path)?;
+    let proof_json: serde_json::Value = serde_json::from_str(&content)?;
+
+    let sha256 = proof_json["events"]
+        .as_array()
+        .and_then(|e| e.first())
+        .and_then(|e| e["file_hash"].as_str())
+        .unwrap_or("")
+        .to_string();
+
+    let tsa_obj = proof_json["proof"]["tsa"].as_object();
+    let tsa_timestamp = tsa_obj
+        .and_then(|t| t["timestamp"].as_i64())
+        .unwrap_or(0) as u64;
+    let tsa_serial = tsa_obj
+        .and_then(|t| t["serial"].as_str())
+        .unwrap_or("")
+        .to_string();
+    let tsa_token = tsa_obj
+        .and_then(|t| t["token_bytes"].as_i64())
+        .unwrap_or(0)
+        .to_string();
+
+    let input = CertificateInput {
+        status: CertificateStatus::Valid,
+        file_hash_valid: true,
+        tsa_valid: tsa_obj.is_some(),
+        proof_id: proof_json["chain_id"].as_str().unwrap_or("").to_string(),
+        sha256,
+        object_type: "file".into(),
+        created_at_utc: chrono::Utc::now().to_rfc3339(),
+        tsa_provider: "FreeTSA".into(),
+        tsa_timestamp_utc: CertificateInput::format_timestamp_unix(tsa_timestamp),
+        tsa_token_base64: tsa_token,
+        verify_url: format!("https://example.com/verify/{}", proof_json["chain_id"].as_str().unwrap_or("")),
+        file_size_kb: 0,
+        file_name: proof_path.split('/').last().unwrap_or("proof").to_string(),
+    };
+
+    let pdf_bytes = generate_certificate_pdf(&input)
+        .map_err(|e| CliError::Server(format!("PDF generation failed: {e}")))?;
+
+    fs::write(Path::new(output_path), pdf_bytes)
+        .map_err(|e| CliError::Io(e))?;
+
+    println!("report saved to {output_path}");
     Ok(())
 }

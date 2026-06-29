@@ -1,7 +1,15 @@
+[workspace]
+members = [
+    ".",
+    "evident-report"
+]
+resolver = "2"
+
 [package]
 name = "evident-ledger"
 version = "0.1.0"
 edition = "2021"
+default-run = "evident-ledger"
 
 [dependencies]
 axum = "0.7"
@@ -16,22 +24,24 @@ sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 hex = "0.4"
-base64 = "0.21"
-anyhow = "1"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 notary-tsa = { path = "/Users/iuriiveselskii/Projects/notary-core/crates/tsa" }
-
-[dev-dependencies]
 tempfile = "3"
+anyhow = "1"
+base64 = "0.21"
+notary-pdf = { path = "/Users/iuriiveselskii/Projects/notary-core/crates/pdf" }
 
 [[bin]]
-name = "evident"
-path = "src/bin/evident.rs"
+name = "evident-ledger"
+path = "src/main.rs"
 
 [[bin]]
 name = "evident-verify"
 path = "src/bin/verify.rs"
 
 [[bin]]
-name = "evident-product"
-path = "src/bin/product.rs"
+name = "evident"
+path = "src/bin/evident.rs"
+
+[dependencies.evident-report]
+path = "evident-report"
