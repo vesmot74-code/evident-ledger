@@ -1,34 +1,48 @@
-use axum::Router;
-use std::net::SocketAddr;
-use std::sync::Arc;
+use eframe::egui;
 
-mod db;
-mod api;
-mod service;
-mod models;
-mod merkle;
-mod signing;
-mod state;
-mod tsa_worker;
-#[tokio::main]
-async fn main() {
-    dotenvy::dotenv().ok();
+fn main() -> Result<(), eframe::Error> {
+    let options = eframe::NativeOptions::default();
+    eframe::run_native(
+        "Evident Ledger",
+        options,
+        Box::new(|_cc| Ok(Box::new(App::default()))),
+    )
+}
 
-    let pool = db::create_pool().await;
-    let signer = Arc::new(signing::ServerSigner::load_or_create("signing_key.bin"));
+struct App {
+    file_path: String,
+    status: String,
+}
 
-    println!("Public key: {}", signer.public_key_hex());
+impl Default for App {
+    fn default() -> Self {
+        Self {
+            file_path: String::new(),
+            status: "Ready".to_string(),
+        }
+    }
+}
 
-    let state = state::AppState { db: pool, signer };
+impl eframe::App for App {
+    fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        ui.heading("Evident Ledger");
+        ui.separator();
 
-    let app = Router::new()
-        .nest("/events", api::events::router(state.clone()))
-        .nest("/verify", api::verify::router(state.clone()))
-        .nest("/chains", api::chains::router(state.clone()));
+        if ui.button("Select File").clicked() {
+            if let Some(path) = rfd::FileDialog::new().pick_file() {
+                self.file_path = path.display().to_string();
+                self.status = "File selected".to_string();
+            }
+        }
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
-    println!("Evident Ledger running on http://{}", addr);
+        ui.label(format!("File: {}", self.file_path));
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+        if ui.button("Commit").clicked() {
+            if !self.file_path.is_empty() {
+                self.status = "Committing...".to_string();
+            }
+        }
+
+        ui.label(format!("Status: {}", self.status));
+    }
 }

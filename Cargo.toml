@@ -25,11 +25,14 @@ ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 hex = "0.4"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
-notary-tsa = { path = "/Users/iuriiveselskii/Projects/notary-core/crates/tsa" }
+notary-tsa = { path = "../Projects/notary-core/crates/tsa" }
 tempfile = "3"
 anyhow = "1"
 base64 = "0.21"
 notary-pdf = { path = "/Users/iuriiveselskii/Projects/notary-core/crates/pdf" }
+eframe = "0.35.0"
+egui = "0.35.0"
+rfd = "0.17.2"
 
 [[bin]]
 name = "evident-ledger"
