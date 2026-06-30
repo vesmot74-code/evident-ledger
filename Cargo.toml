@@ -48,3 +48,7 @@ path = "src/bin/evident.rs"
 
 [dependencies.evident-report]
 path = "evident-report"
+
+[[bin]]
+name = "evident-gui"
+path = "src/bin/evident-gui.rs"
