@@ -411,6 +411,7 @@ let tsa_obj = proof_json.get("tsa").and_then(|t| t.as_object());
         .to_string();
 
 println!("DEBUG: tsa_timestamp = {}", tsa_timestamp);
+println!("DEBUG: tsa_obj = {:?}", tsa_obj);
 
     let input = CertificateInput {
         status: CertificateStatus::Valid,

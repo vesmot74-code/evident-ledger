@@ -33,6 +33,7 @@ notary-pdf = { path = "/Users/iuriiveselskii/Projects/notary-core/crates/pdf" }
 eframe = "0.35.0"
 egui = "0.35.0"
 rfd = "0.17.2"
+dirs = "6.0.0"
 
 [[bin]]
 name = "evident-ledger"
