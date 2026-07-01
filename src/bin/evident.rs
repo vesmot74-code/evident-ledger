@@ -397,7 +397,7 @@ fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
         .unwrap_or("")
         .to_string();
 
-    let tsa_obj = proof_json["proof"]["tsa"].as_object();
+let tsa_obj = proof_json.get("tsa").and_then(|t| t.as_object());
     let tsa_timestamp = tsa_obj
         .and_then(|t| t["timestamp"].as_i64())
         .unwrap_or(0) as u64;
@@ -409,6 +409,8 @@ fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
         .and_then(|t| t["token_bytes"].as_i64())
         .unwrap_or(0)
         .to_string();
+
+println!("DEBUG: tsa_timestamp = {}", tsa_timestamp);
 
     let input = CertificateInput {
         status: CertificateStatus::Valid,
