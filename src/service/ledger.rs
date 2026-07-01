@@ -157,16 +157,23 @@ pub async fn submit_event(
 
     tx.commit().await?;
 
-    // async TSA stamp
-    {
-        let pool_clone = pool.clone();
-        let chain_id = req.chain_id;
-        tokio::spawn(async move {
-            if let Some(root) = compute_chain_root(&pool_clone, chain_id).await {
-                crate::tsa_worker::stamp_chain(&pool_clone, chain_id, &root, event_id).await;
-            }
-        });
+    // Сначала делаем TSA stamp (синхронно)
+    if let Some(root) = compute_chain_root(pool, req.chain_id).await {
+        crate::tsa_worker::stamp_chain(pool, req.chain_id, &root, event_id).await;
     }
+
+    // Потом получаем TSA из БД
+    let tsa_record = sqlx::query!(
+        r#"
+        SELECT tsa_timestamp, tsa_serial, length(tsa_token) as token_bytes
+        FROM tsa_tokens
+        WHERE chain_id = $1 AND event_id = $2
+        "#,
+        req.chain_id,
+        event_id
+    )
+    .fetch_optional(pool)
+    .await?;
 
     let events = sqlx::query_as!(
         crate::db::EventRow,
@@ -211,7 +218,12 @@ pub async fn submit_event(
             "public_key": public_key,
             "leaves_count": event_payloads.len()
         },
-        "events": event_payloads
+        "events": event_payloads,
+        "tsa": tsa_record.map(|t| json!({
+            "timestamp": t.tsa_timestamp,
+            "serial": t.tsa_serial,
+            "token_bytes": t.token_bytes,
+        }))
     }))
 }
 

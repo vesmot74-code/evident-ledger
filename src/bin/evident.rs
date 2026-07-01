@@ -15,6 +15,13 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
+#[derive(Debug, Serialize, Deserialize, Clone)]
+struct TsaData {
+    timestamp: i64,
+    serial: String,
+    token_bytes: usize,
+}
+
 #[derive(Debug)]
 enum CliError {
     Io(std::io::Error),
@@ -80,7 +87,9 @@ struct CommitResponse {
     head_event_id: String,
     proof: ProofPayload,
     events: Vec<EventLeaf>,
+    tsa: Option<TsaData>,
 }
+
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct ProofFile {
@@ -88,6 +97,7 @@ struct ProofFile {
     head_event_id: String,
     proof: ProofPayload,
     events: Vec<EventLeaf>,
+    tsa: Option<TsaData>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -241,14 +251,14 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     let proof_dir = evident_dir().join("proofs").join(&commit.chain_id);
     fs::create_dir_all(&proof_dir)?;
     let proof_path = proof_dir.join(format!("{}.json", commit.event_id));
-    let proof = ProofFile {
-        chain_id: commit.chain_id.clone(),
-        head_event_id: commit.head_event_id.clone(),
-        proof: commit.proof.clone(),
-        events: commit.events.clone(),
-    };
+let proof = ProofFile {
+    chain_id: commit.chain_id.clone(),
+    head_event_id: commit.head_event_id.clone(),
+    proof: commit.proof.clone(),
+    events: commit.events.clone(),
+    tsa: commit.tsa.clone(),
+};
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
-    fs::write(proof_dir.join("proof.json"), serde_json::to_string_pretty(&proof)?)?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");
     let event_log = evident_dir().join("events.jsonl");
@@ -292,50 +302,36 @@ fn report_artifact_paths(base_dir: &Path, chain_id: &str) -> (PathBuf, PathBuf) 
 
 fn find_latest_proof_artifact(chain_id: &str) -> Result<PathBuf, CliError> {
     let proof_dir = evident_dir().join("proofs").join(chain_id);
-    let canonical = proof_dir.join("proof.json");
-    if canonical.exists() {
-        return Ok(canonical);
-    }
-
+    
     let mut paths: Vec<PathBuf> = fs::read_dir(&proof_dir)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
-        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .filter(|path| {
+            path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            && path.file_name().and_then(|n| n.to_str()).map(|s| s != "proof.json").unwrap_or(true)
+        })
         .collect();
-    paths.sort();
+    
+    if paths.is_empty() {
+        return Err(CliError::Usage(format!("no proof found for chain {chain_id}")));
+    }
+    
+    paths.sort_by_key(|p| {
+        fs::metadata(p)
+            .and_then(|m| m.modified())
+            .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+    });
+    
     paths.pop().ok_or_else(|| CliError::Usage(format!("no proof found for chain {chain_id}")))
 }
 
 fn cmd_report_generate(chain_id: &str) -> Result<(), CliError> {
-    let proof_dir = evident_dir().join("proofs").join(chain_id);
     let source_path = find_latest_proof_artifact(chain_id)?;
-    let content = fs::read_to_string(&source_path)?;
-    let proof: ProofFile = serde_json::from_str(&content)?;
-    let output_path = proof_dir.join("proof.pdf");
-
-    let artifact_path = proof_dir.join("proof.json");
-    fs::write(&artifact_path, serde_json::to_string_pretty(&proof)?)?;
-
-    let events = proof.events.iter().map(|leaf| evident_report::EventSummary {
-        event_id: leaf.event_id.clone(),
-        file_hash: leaf.file_hash.clone(),
-        sequence: Some(leaf.sequence),
-    }).collect();
-
-    let deterministic_created_at = chrono::Utc.with_ymd_and_hms(1970, 1, 1, 0, 0, 0).single().unwrap();
-    let report = evident_report::generate_report(&proof.chain_id, &evident_report::ProofData {
-        chain_id: proof.chain_id.clone(),
-        head_event_id: proof.head_event_id.clone(),
-        events,
-        root: proof.proof.root.clone(),
-        signature: proof.proof.signature.clone(),
-        public_key: proof.proof.public_key.clone(),
-        tsa: None,
-        created_at: deterministic_created_at,
-    }, &output_path);
-    report.map_err(|_| CliError::Server("report generation failed".into()))?;
-    println!("report       {}", output_path.display());
-    Ok(())
+    let output_path = evident_dir()
+        .join("proofs")
+        .join(chain_id)
+        .join("proof.pdf");
+    cmd_report(&source_path.to_string_lossy(), &output_path.to_string_lossy())
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
