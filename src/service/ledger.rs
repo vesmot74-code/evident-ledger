@@ -190,7 +190,7 @@ pub async fn submit_event(
 
     let root = crate::merkle::MerkleTree::recompute_root_from_events(&events);
     let chain_head = event_id.to_string();
-    let signature = signer.sign_root(&root, &chain_head);
+    let signature = signer.sign_root(&req.chain_id.to_string(), &root, &chain_head);
     let public_key = signer.public_key_hex();
 
     let event_payloads: Vec<Value> = events

@@ -27,11 +27,11 @@ impl ServerSigner {
         Self { signing_key, verifying_key }
     }
 
-    pub fn sign_root(&self, merkle_root: &str, chain_head: &str) -> String {
-        let message = format!("{}:{}", merkle_root, chain_head);
-        let signature: Signature = self.signing_key.sign(message.as_bytes());
-        hex::encode(signature.to_bytes())
-    }
+pub fn sign_root(&self, chain_id: &str, merkle_root: &str, chain_head: &str) -> String {
+    let message = format!("{}:{}:{}", chain_id, merkle_root, chain_head);
+    let signature: Signature = self.signing_key.sign(message.as_bytes());
+    hex::encode(signature.to_bytes())
+}
 
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.verifying_key.to_bytes())
@@ -39,6 +39,7 @@ impl ServerSigner {
 }
 
 pub fn verify_root(
+    chain_id: &str,
     merkle_root: &str,
     chain_head: &str,
     signature_hex: &str,
@@ -50,6 +51,14 @@ pub fn verify_root(
     let Ok(pk_array): Result<[u8; 32], _> = pk_bytes.try_into() else { return false; };
     let Ok(verifying_key) = VerifyingKey::from_bytes(&pk_array) else { return false; };
     let signature = Signature::from_bytes(&sig_array);
-    let message = format!("{}:{}", merkle_root, chain_head);
-    verifying_key.verify(message.as_bytes(), &signature).is_ok()
+    
+    // Пробуем новый формат (с chain_id)
+    let message_new = format!("{}:{}:{}", chain_id, merkle_root, chain_head);
+    if verifying_key.verify(message_new.as_bytes(), &signature).is_ok() {
+        return true;
+    }
+    
+    // Пробуем старый формат (без chain_id)
+    let message_old = format!("{}:{}", merkle_root, chain_head);
+    verifying_key.verify(message_old.as_bytes(), &signature).is_ok()
 }

@@ -84,13 +84,27 @@ fn main() {
     let mut ok = true;
 
     // 1. signature
-    let sig_valid = evident_ledger::signing::verify_root(
-        &proof_file.proof.root,
-        &proof_file.proof.chain_head,
-        &proof_file.proof.signature,
-        &proof_file.proof.public_key,
-    );
-    if !sig_valid { eprintln!("FAIL: signature invalid"); ok = false; }
+let pinned_key_path = dirs::home_dir()
+    .expect("no home dir")
+    .join(".evident")
+    .join("server_identity.pub");
+let trusted_public_key = match std::fs::read_to_string(&pinned_key_path) {
+    Ok(k) => k.trim().to_string(),
+    Err(_) => {
+        eprintln!("FAIL: no pinned server key at {}", pinned_key_path.display());
+        eprintln!("Fetch it once: curl http://127.0.0.1:3000/identity");
+        std::process::exit(3);
+    }
+};
+
+let sig_valid = evident_ledger::signing::verify_root(
+    &proof_file.chain_id,
+    &proof_file.proof.root,
+    &proof_file.proof.chain_head,
+    &proof_file.proof.signature,
+    &trusted_public_key,
+);
+if !sig_valid { eprintln!("FAIL: signature invalid (untrusted key or tampered data)"); ok = false; }
 
     // 2. leaves_count
     if proof_file.events.len() != proof_file.proof.leaves_count {

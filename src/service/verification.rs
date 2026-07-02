@@ -61,7 +61,7 @@ pub async fn verify_chain(
 
     let merkle_root = MerkleTree::recompute_root_from_events(&events);
     let chain_head = events.last().map(|e| e.event_id).unwrap();
-    let signature = signer.sign_root(&merkle_root, &chain_head.to_string());
+    let signature = signer.sign_root(&chain_id.to_string(), &merkle_root, &chain_head.to_string());
     let public_key = signer.public_key_hex();
 
     Ok(json!({
@@ -106,7 +106,7 @@ pub async fn export_proof(
 
     let merkle_root = MerkleTree::recompute_root_from_events(&events);
     let chain_head = events.last().unwrap().event_id;
-    let signature = signer.sign_root(&merkle_root, &chain_head.to_string());
+    let signature = signer.sign_root(&chain_id.to_string(), &merkle_root, &chain_head.to_string());
     let public_key = signer.public_key_hex();
 
     let tsa = sqlx::query!(

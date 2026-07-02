@@ -10,6 +10,7 @@ mod merkle;
 mod signing;
 mod state;
 mod tsa_worker;
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -24,7 +25,7 @@ async fn main() {
     let app = Router::new()
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
-        .nest("/chains", api::chains::router(state.clone()));
+        .nest("/identity", api::identity::router(state.clone()));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Evident Ledger running on http://{}", addr);

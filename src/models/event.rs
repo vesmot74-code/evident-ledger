@@ -7,5 +7,4 @@ pub struct SubmitEventRequest {
     pub file_hash: String,
     pub idempotency_key: String,
     pub parent_event_id: Option<Uuid>, // None only for genesis
-    pub signature: String,             // always required
 }

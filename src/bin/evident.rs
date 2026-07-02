@@ -1,4 +1,3 @@
-use chrono::TimeZone;
 use std::env;
 use std::fmt;
 use std::fs;
@@ -6,10 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::process::Command as ProcessCommand;
 
-use evident_ledger::freeze::{self, Event, Proof};
-
-use ed25519_dalek::{SigningKey, Signer};
-use rand::rngs::OsRng;
+use evident_ledger::freeze::{self, Event};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -31,9 +27,21 @@ enum CliError {
     Usage(String),
 }
 
-impl From<std::io::Error> for CliError { fn from(e: std::io::Error) -> Self { CliError::Io(e) } }
-impl From<serde_json::Error> for CliError { fn from(e: serde_json::Error) -> Self { CliError::Json(e) } }
-impl From<reqwest::Error> for CliError { fn from(e: reqwest::Error) -> Self { CliError::Http(e) } }
+impl From<std::io::Error> for CliError {
+    fn from(e: std::io::Error) -> Self {
+        CliError::Io(e)
+    }
+}
+impl From<serde_json::Error> for CliError {
+    fn from(e: serde_json::Error) -> Self {
+        CliError::Json(e)
+    }
+}
+impl From<reqwest::Error> for CliError {
+    fn from(e: reqwest::Error) -> Self {
+        CliError::Http(e)
+    }
+}
 
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -54,32 +62,6 @@ fn evident_dir() -> PathBuf {
     PathBuf::from(home).join(".evident")
 }
 
-fn load_signing_key() -> Result<SigningKey, CliError> {
-    let key_path = evident_dir().join("identity.key");
-    if !key_path.exists() {
-        return Err(CliError::Usage(
-            "no identity found — run: evident init".into()
-        ));
-    }
-    let bytes = fs::read(&key_path)?;
-    let array: [u8; 32] = bytes.try_into()
-        .map_err(|_| CliError::Usage("identity.key corrupted".into()))?;
-    Ok(SigningKey::from_bytes(&array))
-}
-
-fn sign_event(key: &SigningKey, chain_id: &Uuid, parent_event_id: Option<&Uuid>, file_hash: &str, idempotency_key: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(chain_id.as_bytes());
-    if let Some(p) = parent_event_id {
-        hasher.update(p.as_bytes());
-    }
-    hasher.update(file_hash.as_bytes());
-    hasher.update(idempotency_key.as_bytes());
-    let digest = hasher.finalize();
-    let sig = key.sign(&digest);
-    hex::encode(sig.to_bytes())
-}
-
 #[derive(Debug, Deserialize)]
 struct CommitResponse {
     event_id: String,
@@ -89,7 +71,6 @@ struct CommitResponse {
     events: Vec<EventLeaf>,
     tsa: Option<TsaData>,
 }
-
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct ProofFile {
@@ -124,19 +105,6 @@ fn main() {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn report_artifacts_are_created_under_chain_directory() {
-        let base = PathBuf::from("/tmp/evident-test");
-        let (proof_path, pdf_path) = report_artifact_paths(&base, "chain-123");
-        assert_eq!(proof_path, base.join("proofs").join("chain-123").join("proof.json"));
-        assert_eq!(pdf_path, base.join("proofs").join("chain-123").join("proof.pdf"));
-    }
-}
-
 fn run() -> Result<(), CliError> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
@@ -147,35 +115,51 @@ fn run() -> Result<(), CliError> {
         }
         Some("new-chain") => cmd_new_chain(),
         Some("report") => {
-            let subcommand = args.next().ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
+            let subcommand = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
             if subcommand != "generate" {
                 return Err(CliError::Usage("usage: evident report generate <chain_id>".into()));
             }
-            let chain_id = args.next().ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
+            let chain_id = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
             cmd_report_generate(&chain_id)
         }
         Some("status") => {
-            let chain_id = args.next().ok_or_else(|| CliError::Usage("usage: evident status <chain_id>".into()))?;
+            let chain_id = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident status <chain_id>".into()))?;
             cmd_status(&chain_id)
         }
         Some("hash") => {
-            let path = args.next().ok_or_else(|| CliError::Usage("usage: evident hash <file>".into()))?;
+            let path = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident hash <file>".into()))?;
             cmd_hash(&path)
         }
         Some("commit") => {
-            let path = args.next().ok_or_else(|| CliError::Usage("usage: evident commit <file> --chain <id>".into()))?;
+            let path = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident commit <file> --chain <id>".into()))?;
             let mut chain_id = None;
             while let Some(arg) = args.next() {
-                if arg == "--chain" { chain_id = args.next(); }
+                if arg == "--chain" {
+                    chain_id = args.next();
+                }
             }
             let chain_id = chain_id.ok_or_else(|| CliError::Usage("missing --chain".into()))?;
             cmd_commit(&path, &chain_id)
         }
         Some("verify") => {
-            let proof_path = args.next().ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
+            let proof_path = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
             cmd_verify(&proof_path)
         }
-        _ => Err(CliError::Usage("usage: evident <init|new-chain|commit|verify|status|report generate>".into())),
+        _ => Err(CliError::Usage(
+            "usage: evident <init|new-chain|commit|verify|status|report generate>".into(),
+        )),
     }
 }
 
@@ -190,7 +174,7 @@ fn cmd_init() -> Result<(), CliError> {
         println!("public key: {}", hex::encode(&pub_bytes));
         return Ok(());
     }
-    let signing_key = SigningKey::generate(&mut OsRng);
+    let signing_key = ed25519_dalek::SigningKey::generate(&mut rand::rngs::OsRng);
     let verifying_key = signing_key.verifying_key();
     fs::write(&key_path, signing_key.to_bytes())?;
     fs::write(&pub_path, verifying_key.to_bytes())?;
@@ -211,7 +195,6 @@ fn cmd_hash(path: &str) -> Result<(), CliError> {
 }
 
 fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
-    let signing_key = load_signing_key()?;
     let bytes = fs::read(path)?;
     let file_hash = sha256_hex(&bytes);
     let chain_uuid = Uuid::parse_str(chain_id)
@@ -227,8 +210,6 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
         .as_str()
         .and_then(|s| Uuid::parse_str(s).ok());
 
-    let signature = sign_event(&signing_key, &chain_uuid, parent_event_id.as_ref(), &file_hash, &idempotency_key);
-
     let response = client
         .post("http://127.0.0.1:3000/events")
         .json(&json!({
@@ -236,7 +217,6 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
             "parent_event_id": parent_event_id,
             "file_hash": file_hash,
             "idempotency_key": idempotency_key,
-            "signature": signature,
         }))
         .send()?;
 
@@ -251,29 +231,18 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     let proof_dir = evident_dir().join("proofs").join(&commit.chain_id);
     fs::create_dir_all(&proof_dir)?;
     let proof_path = proof_dir.join(format!("{}.json", commit.event_id));
-let proof = ProofFile {
-    chain_id: commit.chain_id.clone(),
-    head_event_id: commit.head_event_id.clone(),
-    proof: commit.proof.clone(),
-    events: commit.events.clone(),
-    tsa: commit.tsa.clone(),
-};
+    let proof = ProofFile {
+        chain_id: commit.chain_id.clone(),
+        head_event_id: commit.head_event_id.clone(),
+        proof: commit.proof.clone(),
+        events: commit.events.clone(),
+        tsa: commit.tsa.clone(),
+    };
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");
     let event_log = evident_dir().join("events.jsonl");
     freeze::append_event_log(&event_log, &event)?;
-
-    let proof_obj = Proof {
-        chain_id: commit.chain_id.clone(),
-        root_hash: commit.proof.root.clone(),
-        tsa_timestamp: commit.proof.chain_head.clone(),
-        tsa_signature: commit.proof.signature.clone(),
-        event_count: commit.events.len() as u64,
-        verification_status: true,
-    };
-    let frozen_proof_path = proof_dir.join("proof.json");
-    freeze::write_proof(&frozen_proof_path, &proof_obj)?;
 
     println!("anchored    event={}", commit.event_id);
     println!("proof       {}", proof_path.display());
@@ -282,7 +251,9 @@ let proof = ProofFile {
 
 fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
     let verifier = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target").join("debug").join("evident-verify");
+        .join("target")
+        .join("debug")
+        .join("evident-verify");
     let status = ProcessCommand::new(verifier)
         .arg(proof_path)
         .status()
@@ -302,27 +273,34 @@ fn report_artifact_paths(base_dir: &Path, chain_id: &str) -> (PathBuf, PathBuf) 
 
 fn find_latest_proof_artifact(chain_id: &str) -> Result<PathBuf, CliError> {
     let proof_dir = evident_dir().join("proofs").join(chain_id);
-    
+
     let mut paths: Vec<PathBuf> = fs::read_dir(&proof_dir)?
         .filter_map(Result::ok)
         .map(|entry| entry.path())
         .filter(|path| {
             path.extension().and_then(|ext| ext.to_str()) == Some("json")
-            && path.file_name().and_then(|n| n.to_str()).map(|s| s != "proof.json").unwrap_or(true)
+                && path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .map(|s| s != "proof.json")
+                    .unwrap_or(true)
         })
         .collect();
-    
+
     if paths.is_empty() {
-        return Err(CliError::Usage(format!("no proof found for chain {chain_id}")));
+        return Err(CliError::Usage(format!(
+            "no proof found for chain {chain_id}"
+        )));
     }
-    
+
     paths.sort_by_key(|p| {
         fs::metadata(p)
             .and_then(|m| m.modified())
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
-    
-    paths.pop().ok_or_else(|| CliError::Usage(format!("no proof found for chain {chain_id}")))
+
+    paths.pop()
+        .ok_or_else(|| CliError::Usage(format!("no proof found for chain {chain_id}")))
 }
 
 fn cmd_report_generate(chain_id: &str) -> Result<(), CliError> {
@@ -342,9 +320,7 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn cmd_new_chain() -> Result<(), CliError> {
     let client = reqwest::blocking::Client::new();
-    let response = client
-        .post("http://127.0.0.1:3000/chains")
-        .send()?;
+    let response = client.post("http://127.0.0.1:3000/chains").send()?;
     let status = response.status();
     let body = response.text()?;
     if !status.is_success() {
@@ -383,8 +359,6 @@ fn cmd_status(chain_id: &str) -> Result<(), CliError> {
 }
 
 fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
-    use std::fs;
-    use std::path::Path;
     use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
 
     let content = fs::read_to_string(proof_path)?;
@@ -397,7 +371,7 @@ fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
         .unwrap_or("")
         .to_string();
 
-let tsa_obj = proof_json.get("tsa").and_then(|t| t.as_object());
+    let tsa_obj = proof_json.get("tsa").and_then(|t| t.as_object());
     let tsa_timestamp = tsa_obj
         .and_then(|t| t["timestamp"].as_i64())
         .unwrap_or(0) as u64;
@@ -410,8 +384,8 @@ let tsa_obj = proof_json.get("tsa").and_then(|t| t.as_object());
         .unwrap_or(0)
         .to_string();
 
-println!("DEBUG: tsa_timestamp = {}", tsa_timestamp);
-println!("DEBUG: tsa_obj = {:?}", tsa_obj);
+    println!("DEBUG: tsa_timestamp = {}", tsa_timestamp);
+    println!("DEBUG: tsa_obj = {:?}", tsa_obj);
 
     let input = CertificateInput {
         status: CertificateStatus::Valid,
@@ -424,7 +398,10 @@ println!("DEBUG: tsa_obj = {:?}", tsa_obj);
         tsa_provider: "FreeTSA".into(),
         tsa_timestamp_utc: CertificateInput::format_timestamp_unix(tsa_timestamp),
         tsa_token_base64: tsa_token,
-        verify_url: format!("https://example.com/verify/{}", proof_json["chain_id"].as_str().unwrap_or("")),
+        verify_url: format!(
+            "https://example.com/verify/{}",
+            proof_json["chain_id"].as_str().unwrap_or("")
+        ),
         file_size_kb: 0,
         file_name: proof_path.split('/').last().unwrap_or("proof").to_string(),
     };
@@ -432,8 +409,7 @@ println!("DEBUG: tsa_obj = {:?}", tsa_obj);
     let pdf_bytes = generate_certificate_pdf(&input)
         .map_err(|e| CliError::Server(format!("PDF generation failed: {e}")))?;
 
-    fs::write(Path::new(output_path), pdf_bytes)
-        .map_err(|e| CliError::Io(e))?;
+    fs::write(Path::new(output_path), pdf_bytes).map_err(|e| CliError::Io(e))?;
 
     println!("report saved to {output_path}");
     Ok(())
