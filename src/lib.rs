@@ -10,4 +10,3 @@ pub mod signing;
 pub mod state;
 pub mod tsa;
 pub mod tsa_worker;
-pub mod client;
