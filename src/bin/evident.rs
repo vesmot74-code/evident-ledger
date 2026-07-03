@@ -196,49 +196,18 @@ fn cmd_hash(path: &str) -> Result<(), CliError> {
 
 fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     let bytes = fs::read(path)?;
-    let file_hash = sha256_hex(&bytes);
     let chain_uuid = Uuid::parse_str(chain_id)
         .map_err(|_| CliError::Usage("invalid chain id".into()))?;
-    let idempotency_key = Uuid::new_v4().to_string();
 
-    let client = reqwest::blocking::Client::new();
-    let head_resp = client
-        .get(format!("http://127.0.0.1:3000/verify/{chain_id}"))
-        .send()?;
-    let head_json: serde_json::Value = head_resp.json()?;
-    let parent_event_id: Option<Uuid> = head_json["head_event_id"]
-        .as_str()
-        .and_then(|s| Uuid::parse_str(s).ok());
-
-    let response = client
-        .post("http://127.0.0.1:3000/events")
-        .json(&json!({
-            "chain_id": chain_uuid,
-            "parent_event_id": parent_event_id,
-            "file_hash": file_hash,
-            "idempotency_key": idempotency_key,
-        }))
-        .send()?;
-
-    let status = response.status();
-    let body = response.text()?;
-    if !status.is_success() {
-        return Err(CliError::Server(format!("server error {status}: {body}")));
-    }
-
-    let commit: CommitResponse = serde_json::from_str(&body)?;
-
-    let proof_dir = evident_dir().join("proofs").join(&commit.chain_id);
-    fs::create_dir_all(&proof_dir)?;
-    let proof_path = proof_dir.join(format!("{}.json", commit.event_id));
-    let proof = ProofFile {
-        chain_id: commit.chain_id.clone(),
-        head_event_id: commit.head_event_id.clone(),
-        proof: commit.proof.clone(),
-        events: commit.events.clone(),
-        tsa: commit.tsa.clone(),
-    };
-    fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
+    let client = evident_ledger::client::EvidentClient::new("http://127.0.0.1:3000");
+    let (commit, proof_path, file_hash) = client
+        .submit_event(chain_uuid, &bytes)
+        .map_err(|e| match e {
+            evident_ledger::client::ClientError::Http(err) => CliError::Http(err),
+            evident_ledger::client::ClientError::Io(err) => CliError::Io(err),
+            evident_ledger::client::ClientError::Json(err) => CliError::Json(err),
+            evident_ledger::client::ClientError::Server(s) => CliError::Server(s),
+        })?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");
     let event_log = evident_dir().join("events.jsonl");
