@@ -1,0 +1,19 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n                INSERT INTO tsa_tokens (chain_id, event_id, merkle_root, tsa_token, tsa_timestamp, tsa_serial)\n                VALUES ($1, $2, $3, $4, $5, $6)\n                ON CONFLICT (chain_id, merkle_root) DO NOTHING\n                ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid",
+        "Text",
+        "Bytea",
+        "Int8",
+        "Text"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "b873ffe356e3bcfdc9af8ba8cdf6cacb55e8669a4f4b6d72cf0bbafb2c594642"
+}

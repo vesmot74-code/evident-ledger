@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE chains\n        SET head_event_id = $1\n        WHERE chain_id = $2\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "0d0e739e2636f0909bd636f21e8fa7764c91dfa94c9b8d377829e8d540ac617e"
+}
