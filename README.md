@@ -50,7 +50,6 @@ evident new-chain
 # → prints: chain created / chain_id: <generated-uuid>
 
 evident commit Cargo.toml --chain <paste-the-generated-chain_id-here>
-evident commit Cargo.toml --chain "$CHAIN_ID"
 ```
 
 ### Verify a proof offline
