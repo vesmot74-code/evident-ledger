@@ -17,8 +17,6 @@ Cargo.lock
 # logs
 *.log
 proofs/
-evident-report/
-src/audit.rs
-src/product.rs
-src/bin/product.rs
 *.pdf
+*.backup
+*.backup_*
