@@ -139,6 +139,37 @@ if !sig_valid { eprintln!("FAIL: signature invalid (untrusted key or tampered da
         ok = false;
     }
 
+    // Optional: original file check (informational only)
+    let original_path = args.get(2);
+    if let Some(original_path) = original_path {
+        // find the event with event_id == head_event_id
+        let maybe_ev = proof_file
+            .events
+            .iter()
+            .find(|e| e.event_id == proof_file.head_event_id);
+        let mut original_ok = false;
+        if let Some(ev) = maybe_ev {
+            match std::fs::read(original_path) {
+                Ok(bytes) => {
+                    let mut hasher = Sha256::new();
+                    hasher.update(&bytes);
+                    let calc = format!("{:x}", hasher.finalize());
+                    if calc == ev.file_hash {
+                        original_ok = true;
+                    }
+                }
+                Err(_) => {
+                    original_ok = false;
+                }
+            }
+        }
+        if original_ok {
+            println!("Original: OK");
+        } else {
+            println!("Original: MISSING or MISMATCH");
+        }
+    }
+
     if ok {
         println!("OK: proof valid");
     } else {

@@ -1,13 +1,13 @@
 use eframe::egui;
 use std::process::Command;
-use std::str;
-use sha2::{Digest, Sha256};
 use std::fs;
-use std::fs::OpenOptions;
-use std::io::{Write, BufRead, BufReader};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use chrono::Utc;
+use evident_ledger::audit::{AuditEvent, AuditStore, TsaAttestation};
+use sha2::{Digest, Sha256};
+use evident_ledger::client::{self, EvidentClient};
+use uuid::Uuid;
 
 // ============================================================================
 // МОДЕЛЬ ПРОЕКТА
@@ -51,26 +51,16 @@ impl Project {
 // ============================================================================
 // МОДЕЛЬ АУДИТА ДЛЯ ВЕРИФИКАЦИИ
 // ============================================================================
-#[derive(Debug, Deserialize)]
-struct AuditEvent {
-    timestamp: String,
-    event_id: String,
-    file_name: String,
-    file_hash: String,
-    chain_id: String,
-    proof: String,
-}
-
 #[derive(Debug, Clone)]
 struct VerificationEvent {
-    index: usize,
+    sequence: i64,
     event_id: String,
     file_name: String,
-    file_hash: String,
     timestamp: String,
     valid: bool,
     error: Option<String>,
     error_type: ErrorType,
+    local_integrity_ok: Option<bool>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -103,13 +93,30 @@ const COLOR_BORDER: egui::Color32 = egui::Color32::from_rgb(203, 213, 225);
 // ============================================================================
 // ПРИЛОЖЕНИЕ
 // ============================================================================
+fn file_hash_from_bytes(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("{:x}", hasher.finalize())
+}
+
+#[derive(Debug, Clone, PartialEq)]
+enum ChainValidationError {
+    InvalidSequence { index: usize, sequence: i64 },
+    SequenceBreak { index: usize, expected: i64, actual: i64 },
+    MissingHeadEventId,
+}
+
+#[derive(Default)]
+struct AppState {
+    head_event_id: Option<String>,
+}
+
 #[derive(Default)]
 struct App {
     // === Файл ===
     file_path: String,
     file_name: String,
     file_size: u64,
-    file_hash: String,
 
     // === Проект ===
     projects: Vec<String>,
@@ -135,9 +142,7 @@ struct App {
     // === UI состояние ===
     screen: Screen,
     error_message: String,
-    existing_hash: String,
-    existing_events: Vec<String>,
-    hash_history: Vec<(String, String)>, // ← НОВОЕ ПОЛЕ
+    state: AppState,
 }
 
 #[derive(PartialEq, Default)]
@@ -176,21 +181,157 @@ enum Screen {
     Result,
     VerifyProject,  // новый экран
     VerifyResult,   // новый экран
-    ReconfirmDialog,  // ← новый экран
 }
 
 impl App {
-    fn compute_hash(path: &str) -> String {
-        let bytes = fs::read(path).unwrap_or_default();
-        let mut hasher = Sha256::new();
-        hasher.update(&bytes);
-        format!("{:x}", hasher.finalize())
+
+    fn check_local_integrity(originals_dir: &Path, sequence: i64, expected_hash: &str) -> Option<bool> {
+        let prefix = format!("{:04}_", sequence);
+        let entries = fs::read_dir(originals_dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
+                if name.starts_with(&prefix) && path.is_file() {
+                    let bytes = fs::read(&path).ok()?;
+                    let actual_hash = file_hash_from_bytes(&bytes);
+                    return Some(actual_hash == expected_hash);
+                }
+            }
+        }
+        None
+    }
+
+    fn new() -> Self {
+        let mut app = Self::default();
+        if let Err(err) = app.ensure_projects_dir() {
+            app.status = format!("⚠️ {err}");
+        }
+        app
+    }
+
+    fn projects_dir(&self) -> Result<PathBuf, String> {
+        let home = std::env::var("HOME").map_err(|_| "HOME is required".to_string())?;
+        Ok(PathBuf::from(home).join("Evident Projects"))
+    }
+
+    fn ensure_projects_dir(&self) -> Result<(), String> {
+        let projects_dir = self.projects_dir()?;
+        fs::create_dir_all(&projects_dir)
+            .map_err(|e| format!("Не удалось создать каталог проектов: {e}"))?;
+        Ok(())
     }
 
     fn load_projects(&mut self) {
-        let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-            .join("Evident Projects");
-        self.projects = Project::list(&projects_dir);
+        match self.projects_dir() {
+            Ok(projects_dir) => self.projects = Project::list(&projects_dir),
+            Err(err) => {
+                self.projects.clear();
+                self.status = format!("⚠️ {err}");
+            }
+        }
+    }
+
+    fn ensure_project_layout(&self, project_path: &Path) -> Result<(), String> {
+        fs::create_dir_all(project_path.join("originals"))
+            .map_err(|e| format!("Не удалось создать originals: {e}"))?;
+        fs::create_dir_all(project_path.join("proofs"))
+            .map_err(|e| format!("Не удалось создать proofs: {e}"))?;
+        fs::create_dir_all(project_path.join("Аудит"))
+            .map_err(|e| format!("Не удалось создать Аудит: {e}"))?;
+        Ok(())
+    }
+
+    fn persist_original(&self, project_path: &Path, source_path: &Path, sequence: i64) -> Result<String, String> {
+        assert!(sequence > 0, "invalid sequence");
+
+        let originals_dir = project_path.join("originals");
+        fs::create_dir_all(&originals_dir)
+            .map_err(|e| format!("Не удалось создать originals: {e}"))?;
+
+        let file_name = source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or("document")
+            .to_string();
+        let stem = source_path
+            .file_stem()
+            .and_then(|name| name.to_str())
+            .unwrap_or("document")
+            .to_string();
+        let ext = source_path
+            .extension()
+            .and_then(|name| name.to_str())
+            .unwrap_or("")
+            .to_string();
+
+        let mut candidate_sequence = sequence;
+        loop {
+            let candidate_name = if ext.is_empty() {
+                format!("{:04}_{}", candidate_sequence, file_name)
+            } else {
+                format!("{:04}_{}.{}", candidate_sequence, stem, ext)
+            };
+            let candidate_path = originals_dir.join(&candidate_name);
+            if !candidate_path.exists() {
+                fs::copy(source_path, &candidate_path)
+                    .map_err(|e| format!("Не удалось сохранить оригинал: {e}"))?;
+                return Ok(candidate_name);
+            }
+            candidate_sequence += 1;
+        }
+    }
+
+    fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
+        let audit_path = project_path.join("Аудит").join("audit.jsonl");
+        let store = AuditStore::new(&audit_path);
+        store.append(&event).map_err(|e| format!("Не удалось записать аудиторский журнал: {e}"))?;
+        Ok(())
+    }
+
+    fn validate_chain(events: &[VerificationEvent], head_event_id: Option<&str>) -> Result<(), ChainValidationError> {
+        if events.is_empty() {
+            return Err(ChainValidationError::MissingHeadEventId);
+        }
+
+        for (index, event) in events.iter().enumerate() {
+            if event.sequence <= 0 {
+                return Err(ChainValidationError::InvalidSequence {
+                    index,
+                    sequence: event.sequence,
+                });
+            }
+
+            let expected = (index as i64) + 1;
+            if event.sequence != expected {
+                return Err(ChainValidationError::SequenceBreak {
+                    index,
+                    expected,
+                    actual: event.sequence,
+                });
+            }
+        }
+
+        if head_event_id.is_none() {
+            return Err(ChainValidationError::MissingHeadEventId);
+        }
+
+        Ok(())
+    }
+
+    fn render_chain_error(&mut self, ui: &mut egui::Ui, error: &ChainValidationError) {
+        ui.colored_label(COLOR_INVALID, "❌ Цепочка событий нарушена");
+        ui.add_space(8.0);
+        match error {
+            ChainValidationError::InvalidSequence { index, sequence } => {
+                ui.label(format!("Неверный sequence в событии #{index}: {sequence}"));
+            }
+            ChainValidationError::SequenceBreak { index, expected, actual } => {
+                ui.label(format!("Разрыв цепочки в событии #{index}: ожидалось {expected}, получено {actual}"));
+            }
+            ChainValidationError::MissingHeadEventId => {
+                ui.label("Не получен head_event_id из backend");
+            }
+        }
     }
 
     // ================================================================
@@ -201,223 +342,133 @@ impl App {
         self.verification_complete = false;
         self.verification_report.clear();
 
-        let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-            .join("Evident Projects");
-        let project_path = projects_dir.join(&self.selected_project);
-        let audit_path = project_path.join("Аудит").join("audit.jsonl");
-
-println!("DEBUG: project_path = {}", project_path.display());
-println!("DEBUG: audit_path = {}", audit_path.display());
-
-println!("DEBUG: exists = {}", audit_path.exists());
-println!("DEBUG: is_file = {}", audit_path.is_file());
-
-        if !audit_path.exists() {
-            self.status = "❌ Файл аудита не найден".to_string();
+        if self.selected_project.is_empty() {
+            self.status = "❌ Выберите проект".to_string();
             return;
         }
 
-        // Читаем audit.jsonl
-        let file = match fs::File::open(&audit_path) {
-            Ok(f) => f,
-            Err(e) => {
-                self.status = format!("❌ Ошибка чтения аудита: {}", e);
+        let projects_dir = match self.projects_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                self.status = format!("⚠️ {err}");
                 return;
             }
         };
-        let reader = BufReader::new(file);
-        let mut events: Vec<AuditEvent> = Vec::new();
-
-        for line in reader.lines() {
-            if let Ok(line) = line {
-                if let Ok(event) = serde_json::from_str::<AuditEvent>(&line) {
-                    events.push(event);
-                }
+        let project_path = projects_dir.join(&self.selected_project);
+        let project_json = match fs::read_to_string(project_path.join("project.json")) {
+            Ok(contents) => contents,
+            Err(e) => {
+                self.status = format!("❌ Не удалось прочитать проект: {}", e);
+                return;
             }
-        }
+        };
+        let project: Project = match serde_json::from_str(&project_json) {
+            Ok(project) => project,
+            Err(e) => {
+                self.status = format!("❌ Не удалось разобрать проект: {}", e);
+                return;
+            }
+        };
+        let chain_id = match Uuid::parse_str(&project.chain_id) {
+            Ok(id) => id,
+            Err(_) => {
+                self.status = "❌ Неправильный chain_id в проекте".to_string();
+                return;
+            }
+        };
 
-println!("DEBUG: events loaded = {}", events.len());
+        let client = EvidentClient::new("http://127.0.0.1:3000");
+        let verify_result = match client::verify_chain(&client, chain_id) {
+            Ok(result) => result,
+            Err(e) => {
+                self.status = format!("❌ Ошибка проверки: {}", e);
+                self.verify_status = VerifyStatus::Partial;
+                self.verification_report = format!("{}", e);
+                self.screen = Screen::VerifyResult;
+                return;
+            }
+        };
 
-        if events.is_empty() {
-            self.status = "❌ В проекте нет событий".to_string();
-            return;
-        }
+        self.state.head_event_id = Some(verify_result.head_event_id.clone());
 
-        // Проверяем каждое событие
-        let mut prev_hash = String::new();
-        let mut valid = true;
+        let proof = match client::fetch_proof(&client, chain_id) {
+            Ok(proof) => proof,
+            Err(e) => {
+                self.status = format!("❌ Ошибка получения proof: {}", e);
+                self.verify_status = VerifyStatus::Partial;
+                self.verification_report = format!("{}", e);
+                self.screen = Screen::VerifyResult;
+                return;
+            }
+        };
 
-        for (i, event) in events.iter().enumerate() {
-            let mut verification_event = VerificationEvent {
-                index: i + 1,
-                event_id: event.event_id.clone(),
-                file_name: event.file_name.clone(),
-                file_hash: event.file_hash.clone(),
-                timestamp: event.timestamp.clone(),
-                valid: true,
-                error: None,
-                error_type: ErrorType::None,
-            };
-
-// 1. Проверка файла
 let originals_dir = project_path.join("originals");
-let mut found = false;
-let mut matching_path: Option<std::path::PathBuf> = None;
 
-if let Ok(entries) = fs::read_dir(&originals_dir) {
-    for entry in entries.flatten() {
-        let path = entry.path();
-        if path.is_file() {
-            let hash = Self::compute_hash(&path.display().to_string());
-            if hash == event.file_hash {
-                found = true;
-                matching_path = Some(path);
-                println!("DEBUG: ✅ FILE FOUND BY HASH: {}", matching_path.clone().unwrap().display());
-                break;
-            }
-        }
-    }
+for event in proof.events.iter() {
+    let local_integrity_ok =
+        Self::check_local_integrity(&originals_dir, event.sequence, &event.file_hash);
+
+    self.verification_events.push(VerificationEvent {
+        sequence: event.sequence,
+        event_id: event.event_id.clone(),
+        file_name: event.event_id.clone(),
+        timestamp: "".to_string(),
+        valid: verify_result.valid,
+        error: if verify_result.valid {
+            None
+        } else {
+            Some(verify_result.errors.join("; "))
+        },
+        error_type: if verify_result.valid {
+            ErrorType::None
+        } else {
+            ErrorType::ChainBreak
+        },
+        local_integrity_ok,
+    });
 }
 
-// Если не найден — проверяем историю
-if !found {
-    for (history_name, history_hash) in &self.hash_history {
-        if *history_name == event.file_name && *history_hash == event.file_hash {
-            found = true;
-            matching_path = None;
-            println!("DEBUG: ✅ FILE FOUND IN HISTORY: {} -> {}", history_name, history_hash);
-            break;
-        }
-    }
-}
+self.verification_project = self.selected_project.clone();
+self.verification_complete = true;
 
-if found {
-    verification_event.valid = true;
-    println!("DEBUG: ✅ HASH MATCH (from {} )", 
-        if matching_path.is_some() { "file" } else { "history" }
-    );
+let local_tampered =
+    self.verification_events.iter().any(|e| e.local_integrity_ok == Some(false));
+
+self.verify_status = if !verify_result.valid {
+    VerifyStatus::Invalid
+} else if local_tampered {
+    VerifyStatus::Partial
 } else {
-    // Проверяем, есть ли файл с таким именем
-    let file_path = originals_dir.join(&event.file_name);
-    if file_path.exists() {
-        let hash = Self::compute_hash(&file_path.display().to_string());
-        if hash == event.file_hash {
-            verification_event.valid = true;
-            println!("DEBUG: ✅ HASH MATCH (by name)");
-        } else {
-            verification_event.valid = false;
-            verification_event.error_type = ErrorType::FileHashMismatch;
-            verification_event.error = Some("Файл был изменён после фиксации".to_string());
-            valid = false;
-            println!("DEBUG: ❌ HASH MISMATCH!");
-        }
-    } else {
-        println!("DEBUG: ❌ FILE NOT FOUND!");
-        verification_event.valid = false;
-        verification_event.error_type = ErrorType::FileHashMismatch;
-        verification_event.error = Some("Файл не найден в папке originals".to_string());
-        valid = false;
-    }
-}
+    VerifyStatus::Valid
+};
 
-            // 2. Проверка цепочки
-            if i > 0 {
-                // В реальности здесь должна быть проверка previous_event_hash
-                // Пока заглушка
-            }
+self.status = if !verify_result.valid {
+    "❌ Обнаружены нарушения".to_string()
+} else if local_tampered {
+    "⚠️ Backend OK, но локальные файлы изменены".to_string()
+} else {
+    "✅ Проект успешно проверен".to_string()
+};
 
-            // 3. Проверка подписи (заглушка)
-            // 4. Проверка TSA (заглушка)
+self.verification_report = if !verify_result.valid {
+    format!("{}", verify_result.errors.join("; "))
+} else if local_tampered {
+    "Локальные файлы originals/ изменены или отсутствуют".to_string()
+} else {
+    "Все события валидны. Локальная копия совпадает.".to_string()
+};
 
-            self.verification_events.push(verification_event);
-        }
-
-        // Сохраняем имя проекта для отчёта
-        self.verification_project = self.selected_project.clone();
-        self.verification_complete = true;
-
-        if valid {
-            self.status = "✅ Проект успешно проверен".to_string();
-            self.verify_status = VerifyStatus::Valid;
-            self.verification_report = "Все события валидны. Цепочка не нарушена.".to_string();
-        } else {
-            self.status = "❌ Обнаружены нарушения".to_string();
-            self.verify_status = VerifyStatus::Invalid;
-            self.verification_report = "Обнаружены нарушения в цепочке.".to_string();
-        }
-
-println!("DEBUG: valid = {}", valid);
-println!("DEBUG: events count = {}", self.verification_events.len());
-
-        self.screen = Screen::VerifyResult;
+self.screen = Screen::VerifyResult;
     }
 
     // ================================================================
     // ФИКСАЦИЯ
     // ================================================================
-fn do_commit(&mut self) {
-    if self.file_path.is_empty() {
-        self.status = "❌ Выберите файл".to_string();
-        return;
-    }
-
-    let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-        .join("Evident Projects");
-
-    let project_name = if self.project_mode == ProjectMode::New {
-        self.project_name.clone()
-    } else {
-        self.selected_project.clone()
-    };
-
-    if project_name.is_empty() {
-        self.status = "❌ Укажите название проекта".to_string();
-        return;
-    }
-
-    let project_path = projects_dir.join(&project_name);
-    let audit_path = project_path.join("Аудит").join("audit.jsonl");
-
-    // ===== ПРОВЕРКА: ЕСТЬ ЛИ ТАКОЙ ХЕШ В АУДИТЕ? =====
-    let mut existing_events: Vec<String> = Vec::new();
-    let mut hash_found = false;
-
-    if audit_path.exists() {
-        if let Ok(file) = fs::File::open(&audit_path) {
-            let reader = std::io::BufReader::new(file);
-            for line in reader.lines() {
-                if let Ok(line) = line {
-                    if let Ok(event) = serde_json::from_str::<AuditEvent>(&line) {
-                        if event.file_hash == self.file_hash {
-                            hash_found = true;
-                            existing_events.push(format!("{}  {}", event.timestamp, event.file_name));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // ===== ЕСЛИ НАЙДЕН — ПОКАЗЫВАЕМ ДИАЛОГ =====
-    if hash_found {
-        self.existing_hash = self.file_hash.clone();
-        self.existing_events = existing_events;
-        self.screen = Screen::ReconfirmDialog;
-        return;
-    }
-
-    // ===== ИНАЧЕ — ОБЫЧНАЯ ФИКСАЦИЯ =====
-    self.do_commit_actual();
-}
-
-fn do_commit_actual(&mut self) {
+    fn do_commit(&mut self) {
         if self.file_path.is_empty() {
             self.status = "❌ Выберите файл".to_string();
             return;
         }
-
-        let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-            .join("Evident Projects");
 
         let project_name = if self.project_mode == ProjectMode::New {
             self.project_name.clone()
@@ -430,160 +481,210 @@ fn do_commit_actual(&mut self) {
             return;
         }
 
+        let projects_dir = match self.projects_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                self.status = format!("⚠️ {err}");
+                return;
+            }
+        };
         let project_path = projects_dir.join(&project_name);
-        let originals_dir = project_path.join("originals");
         let proofs_dir = project_path.join("proofs");
-        let audit_dir = project_path.join("Аудит");
+        let _ = fs::create_dir_all(&proofs_dir);
+        if let Err(err) = self.ensure_project_layout(&project_path) {
+            self.status = format!("❌ {err}");
+            return;
+        }
 
-        // 1. Создаём проект
-        if self.project_mode == ProjectMode::New {
-            let project = Project {
-                name: project_name.clone(),
-                chain_id: "11111111-1111-1111-1111-111111111111".to_string(),
-                created_at: Utc::now().to_rfc3339(),
-            };
+        let chain_id = if self.project_mode == ProjectMode::New {
+let project = Project {
+    name: project_name.clone(),
+    chain_id: Uuid::new_v4().to_string(),
+    created_at: Utc::now().to_rfc3339(),
+};
             if let Err(e) = project.save(&projects_dir) {
                 self.status = format!("❌ Ошибка создания проекта: {}", e);
                 return;
             }
-        }
-
-        // 2. Создаём папки
-        let _ = fs::create_dir_all(&originals_dir);
-        let _ = fs::create_dir_all(&proofs_dir);
-        let _ = fs::create_dir_all(&audit_dir);
-
-// 3. Копируем файл — сохраняем старую версию
-let dest = originals_dir.join(&self.file_name);
-if dest.exists() {
-    let existing_hash = Self::compute_hash(&dest.display().to_string());
-    if existing_hash != self.file_hash {
-        // Сохраняем старый хеш в историю
-        self.hash_history.push((self.file_name.clone(), existing_hash));
-        let backup_name = format!("{}.old_{}", self.file_name, Utc::now().timestamp());
-        let backup_path = originals_dir.join(backup_name);
-        let _ = fs::rename(&dest, &backup_path);
-        println!("DEBUG: Старый файл сохранён как: {}", backup_path.display());
-    }
-}
-// Копируем новый файл
-if let Err(e) = fs::copy(&self.file_path, &dest) {
-    self.status = format!("❌ Ошибка копирования: {}", e);
-    return;
-}
-
-        self.step = Step::Hashing;
-        self.status = "⏳ Вычисление SHA-256...".to_string();
-        self.screen = Screen::CommitProgress;
+            self.selected_project = project_name.clone();
+            self.project_mode = ProjectMode::Existing;
+            project.chain_id
+        } else {
+            let project_file = project_path.join("project.json");
+            let project_json = match fs::read_to_string(&project_file) {
+                Ok(contents) => contents,
+                Err(e) => {
+                    self.status = format!("❌ Не удалось прочитать проект: {}", e);
+                    return;
+                }
+            };
+            let project: Project = match serde_json::from_str(&project_json) {
+                Ok(project) => project,
+                Err(e) => {
+                    self.status = format!("❌ Не удалось разобрать проект: {}", e);
+                    return;
+                }
+            };
+            project.chain_id
+        };
 
         self.step = Step::Committing;
         self.status = "⏳ Отправка на сервер...".to_string();
+        self.screen = Screen::CommitProgress;
 
-        let chain_id = "11111111-1111-1111-1111-111111111111".to_string();
-        let output = Command::new("./target/debug/evident")
-            .args(&["commit", &self.file_path, "--chain", &chain_id])
-            .output();
-
-        match output {
-            Ok(out) => {
-                if out.status.success() {
-                    let stdout = str::from_utf8(&out.stdout).unwrap_or("");
-
-                    self.step = Step::TsaWaiting;
-                    self.status = "⏳ Получение TSA...".to_string();
-
-                    for line in stdout.lines() {
-                        if line.starts_with("anchored    event=") {
-                            self.event_id = line.replace("anchored    event=", "").to_string();
-                        }
-                        if line.starts_with("proof       ") {
-                            self.proof_path = line.replace("proof       ", "").to_string();
-                        }
-                    }
-
-                    // Сохраняем proof
-                    if !self.proof_path.is_empty() {
-                        let proof_name = format!("{}.json", self.event_id);
-                        let dest_proof = proofs_dir.join(&proof_name);
-                        let _ = fs::copy(&self.proof_path, &dest_proof);
-                        self.proof_path = dest_proof.display().to_string();
-                    }
-
-                    // Аудит
-                    let audit_path = audit_dir.join("audit.jsonl");
-                    let audit_entry = serde_json::json!({
-                        "timestamp": Utc::now().to_rfc3339(),
-                        "event_id": self.event_id,
-                        "file_name": self.file_name,
-                        "file_hash": self.file_hash,
-                        "chain_id": chain_id,
-                        "proof": self.proof_path,
-                    });
-if let Ok(audit_line) = serde_json::to_string(&audit_entry) {
-    let _ = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&audit_path)
-        .and_then(|mut f| {
-            f.write_all(audit_line.as_bytes())?;
-            f.write_all(b"\n")  // ← ДОБАВЛЯЕМ ПЕРЕВОД СТРОКИ
-        });
-}
-
-                    // Генерация PDF
-                    self.status = "⏳ Генерация PDF...".to_string();
-                    let _ = Command::new("./target/debug/evident")
-                        .args(&["report", "generate", &chain_id])
-                        .output();
-
-                    // Копируем PDF в папку проекта
-                    let source_pdf = format!("/Users/iuriiveselskii/.evident/proofs/{}/proof.pdf", chain_id);
-                    let dest_pdf = proofs_dir.join("proof.pdf");
-                    if std::path::Path::new(&source_pdf).exists() {
-                        let _ = fs::copy(&source_pdf, &dest_pdf);
-                    }
-
-                    self.step = Step::Done;
-                    self.status = "✅ Фиксация завершена".to_string();
-                    self.commit_success = true;
-                    self.screen = Screen::Result;
-                    self.load_projects();
-                } else {
-                    self.step = Step::Failed;
-                    self.status = "❌ Ошибка фиксации".to_string();
-                }
-            }
+        let file_bytes = match fs::read(&self.file_path) {
+            Ok(bytes) => bytes,
             Err(e) => {
                 self.step = Step::Failed;
-                self.status = format!("❌ Ошибка: {}", e);
+                self.status = format!("❌ Ошибка чтения файла: {}", e);
+                return;
+            }
+        };
+
+        let chain_uuid = match Uuid::parse_str(&chain_id) {
+            Ok(id) => id,
+            Err(_) => {
+                self.step = Step::Failed;
+                self.status = "❌ Неправильный chain_id".to_string();
+                return;
+            }
+        };
+
+        let client = EvidentClient::new("http://127.0.0.1:3000");
+        let (commit, proof_path, file_hash) = match client.submit_event(chain_uuid, &file_bytes) {
+            Ok(result) => result,
+            Err(e) => {
+                let _ = self.append_audit_event(&project_path, AuditEvent::failed(
+                    Uuid::new_v4(),
+                    chain_uuid,
+                    file_hash_from_bytes(&file_bytes),
+                    None,
+                    format!("submit failed: {e}"),
+                ));
+                self.step = Step::Failed;
+                self.status = format!("❌ Ошибка отправки на сервер: {}", e);
+                return;
+            }
+        };
+
+        self.state.head_event_id = Some(commit.head_event_id.clone());
+
+        let original_name = match self.persist_original(&project_path, Path::new(&self.file_path), commit.sequence) {
+            Ok(name) => name,
+            Err(err) => {
+                self.step = Step::Failed;
+                self.status = format!("❌ {err}");
+                return;
+            }
+        };
+
+        self.event_id = commit.event_id.clone();
+        let proof_name = format!("{}.json", self.event_id);
+        let dest_proof = proofs_dir.join(&proof_name);
+        let _ = fs::copy(&proof_path, &dest_proof);
+        self.proof_path = dest_proof.display().to_string();
+
+        if let Ok(event_id) = Uuid::parse_str(&commit.event_id) {
+            let audit_event = AuditEvent::submitted(
+                event_id,
+                chain_uuid,
+                file_hash.clone(),
+                None,
+                format!("{}:{}", original_name, self.file_name),
+            );
+            let _ = self.append_audit_event(&project_path, audit_event);
+
+            // Find the matching EventLeaf to get parent_event_id
+            let parent_event_id = commit.events.iter()
+                .find(|leaf| leaf.event_id == commit.event_id)
+                .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
+
+            // Create TsaAttestation from commit.tsa and commit.proof if available
+            let proof = commit.tsa.as_ref().map(|tsa| {
+                TsaAttestation::new(
+                    commit.proof.root.clone(),
+                    commit.proof.signature.clone(),
+                    "".to_string() // TSA field placeholder for now
+                )
+            });
+
+            if let Ok(server_event_id) = Uuid::parse_str(&commit.event_id) {
+                let anchored_event = AuditEvent::anchored(
+                    Uuid::new_v4(), // new event_id for the anchored event
+                    chain_uuid,
+                    file_hash,
+                    parent_event_id,
+                    commit.sequence,
+                    server_event_id,
+                    proof,
+                );
+                let _ = self.append_audit_event(&project_path, anchored_event);
             }
         }
+
+        self.step = Step::Done;
+        self.status = "✅ Фиксация завершена".to_string();
+        self.commit_success = true;
+        self.screen = Screen::Result;
+        self.load_projects();
     }
 
     fn do_verify(&mut self) {
-        if self.proof_path.is_empty() {
+        if self.selected_project.is_empty() {
             self.verify_status = VerifyStatus::Invalid;
-            self.verify_details = "Доказательство не найдено".to_string();
+            self.verify_details = "Проект не выбран".to_string();
             return;
         }
 
-        let output = Command::new("./target/debug/evident")
-            .args(&["verify", &self.proof_path])
-            .output();
+        let projects_dir = match self.projects_dir() {
+            Ok(dir) => dir,
+            Err(err) => {
+                self.verify_status = VerifyStatus::Partial;
+                self.verify_details = format!("⚠️ {err}");
+                return;
+            }
+        };
+        let project_path = projects_dir.join(&self.selected_project);
+        let project_file = project_path.join("project.json");
+        let project_json = match fs::read_to_string(&project_file) {
+            Ok(contents) => contents,
+            Err(e) => {
+                self.verify_status = VerifyStatus::Partial;
+                self.verify_details = format!("⚠️ Не удалось прочитать проект: {}", e);
+                return;
+            }
+        };
+        let project: Project = match serde_json::from_str(&project_json) {
+            Ok(project) => project,
+            Err(e) => {
+                self.verify_status = VerifyStatus::Partial;
+                self.verify_details = format!("⚠️ Не удалось разобрать проект: {}", e);
+                return;
+            }
+        };
+        let chain_id = match Uuid::parse_str(&project.chain_id) {
+            Ok(id) => id,
+            Err(_) => {
+                self.verify_status = VerifyStatus::Partial;
+                self.verify_details = "⚠️ Неправильный chain_id".to_string();
+                return;
+            }
+        };
 
-        match output {
-            Ok(out) => {
-                if out.status.success() {
+        let client = EvidentClient::new("http://127.0.0.1:3000");
+        match client::verify_chain(&client, chain_id) {
+            Ok(result) => {
+                if result.valid {
                     self.verify_status = VerifyStatus::Valid;
                     self.verify_details = "✅ Доказательство действительно".to_string();
                 } else {
                     self.verify_status = VerifyStatus::Invalid;
-                    self.verify_details = "❌ Проверка не пройдена".to_string();
+                    self.verify_details = result.errors.join("; ");
                 }
             }
             Err(e) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!("⚠️ Частичная проверка: {}", e);
+                self.verify_details = format!("⚠️ Ошибка проверки: {}", e);
             }
         }
     }
@@ -595,9 +696,6 @@ impl eframe::App for App {
             ui.painter().rect_filled(ui.max_rect(), 0.0, COLOR_BG);
             ui.add_space(12.0);
 
-            // ================================================================
-            // ЭКРАН: FILE SELECTION
-            // ================================================================
             if self.screen == Screen::FileSelection {
                 ui.heading("Evident Ledger");
                 ui.add_space(8.0);
@@ -608,7 +706,6 @@ impl eframe::App for App {
                             self.file_path = path.display().to_string();
                             self.file_name = path.file_name().unwrap_or_default().to_string_lossy().into();
                             self.file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                            self.file_hash = Self::compute_hash(&path.display().to_string());
                             self.screen = Screen::SelectProject;
                             self.load_projects();
                             self.status = "Файл выбран".to_string();
@@ -619,63 +716,45 @@ impl eframe::App for App {
                     }
                 });
 
-if !self.file_path.is_empty() {
-    let size_kb = self.file_size / 1024;
-    let size_mb = self.file_size / (1024 * 1024);
-    let size_str = if size_mb > 0 {
-        format!("{:.2} МБ", self.file_size as f64 / (1024.0 * 1024.0))
-    } else if size_kb > 0 {
-        format!("{} КБ", size_kb)
-    } else {
-        format!("{} байт", self.file_size)
-    };
-    ui.label(format!("📊 Размер: {}", size_str));
-    if self.file_size == 0 {
-        ui.colored_label(COLOR_INVALID, "⚠️ Файл пустой!");
-    }
-    ui.label(format!("🔑 SHA-256: {}", &self.file_hash[..16]));
-}
+                if !self.file_path.is_empty() {
+                    let size_kb = self.file_size / 1024;
+                    let size_mb = self.file_size / (1024 * 1024);
+                    let size_str = if size_mb > 0 {
+                        format!("{:.2} МБ", self.file_size as f64 / (1024.0 * 1024.0))
+                    } else if size_kb > 0 {
+                        format!("{} КБ", size_kb)
+                    } else {
+                        format!("{} байт", self.file_size)
+                    };
+                    ui.label(format!("📊 Размер: {}", size_str));
+                    if self.file_size == 0 {
+                        ui.colored_label(COLOR_INVALID, "⚠️ Файл пустой!");
+                    }
+                }
 
-// Кнопка "Проверить проект"
-ui.add_space(12.0);
-if ui.button("🔍 Проверить проект").clicked() {
-    self.screen = Screen::VerifyProject;
-    self.load_projects();  
-}
-    
-// Кнопка "Выход"
-ui.add_space(8.0);
-if ui.button("🚪 Выход").clicked() {
-    std::process::exit(0);
-}
-    
-if !self.status.is_empty() {
-    ui.add_space(8.0);
-    ui.label(&self.status);
-}
-return;
+                if !self.status.is_empty() {
+                    ui.add_space(8.0);
+                    ui.label(&self.status);
+                }
+                return;
             }
 
-            // ================================================================
-            // ЭКРАН: VERIFY PROJECT
-            // ================================================================
             if self.screen == Screen::VerifyProject {
                 ui.heading("🔍 Проверка проекта");
                 ui.add_space(12.0);
-
                 ui.label("Выберите проект для проверки:");
                 ui.add_space(8.0);
 
                 if self.projects.is_empty() {
                     ui.label("📭 Нет сохранённых проектов.");
                 } else {
-let projects = self.projects.clone();
-for project in projects {
-    if ui.button(&project).clicked() {
-        self.selected_project = project.clone();
-        self.verify_project();
-    }
-}
+                    let projects = self.projects.clone();
+                    for project in projects {
+                        if ui.button(&project).clicked() {
+                            self.selected_project = project.clone();
+                            self.verify_project();
+                        }
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -685,14 +764,10 @@ for project in projects {
                 return;
             }
 
-            // ================================================================
-            // ЭКРАН: VERIFY RESULT
-            // ================================================================
             if self.screen == Screen::VerifyResult {
                 ui.heading(format!("🔍 Проверка проекта: {}", self.verification_project));
                 ui.add_space(12.0);
 
-                // Статус
                 match self.verify_status {
                     VerifyStatus::Valid => {
                         ui.colored_label(COLOR_VALID, "✅ ВСЕ СОБЫТИЯ ВАЛИДНЫ");
@@ -705,82 +780,83 @@ for project in projects {
 
                 ui.add_space(8.0);
                 ui.label(&self.verification_report);
-
                 ui.add_space(12.0);
 
-// Список событий
-ui.label("Цепочка событий:");
-ui.add_space(8.0);
+                ui.label("Цепочка событий:");
+                ui.add_space(8.0);
 
-let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-    .join("Evident Projects");
+                let projects_dir = match self.projects_dir() {
+                    Ok(dir) => dir,
+                    Err(err) => {
+                        ui.colored_label(COLOR_INVALID, format!("⚠️ {err}"));
+                        return;
+                    }
+                };
 
-for event in &self.verification_events {
-    ui.horizontal(|ui| {
-        let label = if event.valid {
-            format!("✅ EVENT {:03}    {}   {}", event.index, event.timestamp, event.file_name)
-        } else {
-            format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.index, event.timestamp, event.file_name, event.error.as_deref().unwrap_or("ошибка"))
-        };
-        if event.valid {
-            ui.label(label);
-        } else {
-            ui.colored_label(COLOR_INVALID, label);
-        }
+                match Self::validate_chain(&self.verification_events, self.state.head_event_id.as_deref()) {
+                    Ok(()) => {
+                        for event in &self.verification_events {
+                            ui.horizontal(|ui| {
+                                let label = if event.valid {
+format!(
+    "✅ EVENT {:03}    {}   {}   {}",
+    event.sequence,
+    event.timestamp,
+    event.file_name,
+    local_marker(event.local_integrity_ok)
+)
+                                } else {
+                                    format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.sequence, event.timestamp, event.file_name, event.error.as_deref().unwrap_or("ошибка"))
+                                };
+                                if event.valid {
+                                    ui.label(label);
+                                } else {
+                                    ui.colored_label(COLOR_INVALID, label);
+                                }
 
-        // Кнопка PDF для события
-        if ui.button("📄 PDF").clicked() {
-            let pdf_path = projects_dir
-                .join(&self.verification_project)
-                .join("proofs")
-                .join("proof.pdf");
-            if pdf_path.exists() {
-                let _ = Command::new("open").arg(&pdf_path).output();
-                self.status = format!("✅ PDF открыт для события {}", event.index);
-            } else {
-                self.status = format!("❌ PDF не найден для события {}", event.index);
-            }
-        }
+                                if ui.button("📄 PDF").clicked() {
+                                    let pdf_path = projects_dir
+                                        .join(&self.verification_project)
+                                        .join("proofs")
+                                        .join("proof.pdf");
+                                    if pdf_path.exists() {
+                                        let _ = Command::new("open").arg(&pdf_path).output();
+                                        self.status = format!("✅ PDF открыт для события {}", event.sequence);
+                                    } else {
+                                        self.status = format!("❌ PDF не найден для события {}", event.sequence);
+                                    }
+                                }
 
-        // Кнопка ZIP для события
-        if ui.button("📦 ZIP").clicked() {
-            self.status = format!("⏳ Упаковка события {}...", event.index);
-            // TODO: упаковка конкретного события
-        }
-    });
+                                if ui.button("📦 ZIP").clicked() {
+                                    self.status = format!("⏳ Упаковка события {}...", event.sequence);
+                                }
+                            });
 
-    // Если есть ошибка, показываем детали
-    if !event.valid && event.error_type != ErrorType::None {
-        ui.label(format!("   └─ Тип: {:?}", event.error_type));
-    }
-}
+                            if !event.valid && event.error_type != ErrorType::None {
+                                ui.label(format!("   └─ Тип: {:?}", event.error_type));
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        self.render_chain_error(ui, &error);
+                    }
+                }
 
-ui.add_space(12.0);
-
-// ОБЩИЕ КНОПКИ (оставляем)
-ui.horizontal(|ui| {
-    if ui.button("📄 Скачать заключение (PDF)").clicked() {
-        self.status = "⏳ Генерация заключения...".to_string();
-        // TODO: генерация PDF заключения для всего проекта
-    }
-    if ui.button("📦 Скачать проект (ZIP)").clicked() {
-        self.status = "⏳ Упаковка проекта...".to_string();
-        // TODO: генерация ZIP для всего проекта
-    }
-});
-
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui.button("📄 Скачать заключение (PDF)").clicked() {
+                        self.status = "⏳ Генерация заключения...".to_string();
+                    }
+                    if ui.button("📦 Скачать проект (ZIP)").clicked() {
+                        self.status = "⏳ Упаковка проекта...".to_string();
+                    }
+                });
 
                 ui.add_space(8.0);
-if ui.button("⬅ Назад").clicked() {
-    // Если мы пришли из ReconfirmDialog — возвращаемся туда
-    if !self.existing_events.is_empty() {
-        self.screen = Screen::ReconfirmDialog;
-    } else {
-        self.screen = Screen::FileSelection;
-    }
-    self.verification_events.clear();
-    self.verification_complete = false;
-}
+                if ui.button("⬅ Назад").clicked() {
+                    self.screen = Screen::FileSelection;
+                    self.verification_complete = false;
+                }
 
                 if !self.status.is_empty() {
                     ui.add_space(8.0);
@@ -789,69 +865,25 @@ if ui.button("⬅ Назад").clicked() {
                 return;
             }
 
-            // ================================================================
-            // ЭКРАН: RECONFIRM DIALOG
-            // ================================================================
-            if self.screen == Screen::ReconfirmDialog {
-                ui.heading("📁 Файл уже существует в аудите");
-                ui.add_space(8.0);
-
-                ui.label(format!("Проект: {}", self.selected_project));
-                ui.label(format!("Файл: {}", self.file_name));
-                ui.label(format!("Хеш: {}", &self.file_hash[..16]));
-                ui.add_space(8.0);
-
-                ui.label("История фиксаций:");
-                for event in &self.existing_events {
-                    ui.label(format!("   • {}", event));
-                }
-
-                ui.add_space(12.0);
-                ui.label("Что сделать?");
-
-                ui.horizontal(|ui| {
-                    if ui.button("🔄 Повторно зафиксировать").clicked() {
-                        self.screen = Screen::SelectProject;
-                        self.do_commit_actual();
-                    }
-if ui.button("🔍 Проверить историю").clicked() {
-    self.screen = Screen::VerifyProject;
-    self.verify_project();
-}
-if ui.button("❌ Отмена").clicked() {
-    self.screen = Screen::SelectProject;
-    self.existing_events.clear();
-    self.file_path.clear();
-    self.file_name.clear();
-    self.file_hash.clear();
-}
-                });
-                return;
-            }
-
-            // ================================================================
-            // ЭКРАН: SELECT PROJECT
-            // ================================================================
             if self.screen == Screen::SelectProject {
                 ui.heading("Куда сохранить доказательство?");
                 ui.add_space(8.0);
-// Размер файла
-let size_kb = self.file_size / 1024;
-let size_mb = self.file_size / (1024 * 1024);
-let size_str = if size_mb > 0 {
-    format!("{:.2} МБ", self.file_size as f64 / (1024.0 * 1024.0))
-} else if size_kb > 0 {
-    format!("{} КБ", size_kb)
-} else {
-    format!("{} байт", self.file_size)
-};
-ui.label(format!("📁 Файл: {} ({})", self.file_name, size_str));
-if self.file_size == 0 {
-    ui.colored_label(COLOR_INVALID, " ⚠️ Файл пустой!");
-}
-ui.label(format!("🔑 SHA-256: {}", &self.file_hash[..16]));
-                ui.add_space(12.0);
 
+                let size_kb = self.file_size / 1024;
+                let size_mb = self.file_size / (1024 * 1024);
+                let size_str = if size_mb > 0 {
+                    format!("{:.2} МБ", self.file_size as f64 / (1024.0 * 1024.0))
+                } else if size_kb > 0 {
+                    format!("{} КБ", size_kb)
+                } else {
+                    format!("{} байт", self.file_size)
+                };
+                ui.label(format!("📁 Файл: {} ({})", self.file_name, size_str));
+                if self.file_size == 0 {
+                    ui.colored_label(COLOR_INVALID, " ⚠️ Файл пустой!");
+                }
+
+                ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.radio(self.project_mode == ProjectMode::New, "🆕 Создать новый проект").clicked() {
                         self.project_mode = ProjectMode::New;
@@ -868,8 +900,13 @@ ui.label(format!("🔑 SHA-256: {}", &self.file_hash[..16]));
                     ui.label("Название проекта:");
                     ui.text_edit_singleline(&mut self.project_name);
                     ui.add_space(8.0);
-                    let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-                        .join("Evident Projects");
+                    let projects_dir = match self.projects_dir() {
+                        Ok(dir) => dir,
+                        Err(err) => {
+                            ui.colored_label(COLOR_INVALID, format!("⚠️ {err}"));
+                            return;
+                        }
+                    };
                     ui.label(format!("📁 Папка: {}/{}", projects_dir.display(), self.project_name));
                 } else {
                     if self.projects.is_empty() {
@@ -913,7 +950,6 @@ ui.label(format!("🔑 SHA-256: {}", &self.file_hash[..16]));
                     self.screen = Screen::FileSelection;
                     self.file_path.clear();
                     self.file_name.clear();
-                    self.file_hash.clear();
                 }
 
                 if !self.error_message.is_empty() {
@@ -923,25 +959,30 @@ ui.label(format!("🔑 SHA-256: {}", &self.file_hash[..16]));
                 return;
             }
 
-            // ================================================================
-            // ЭКРАН: COMMIT PROGRESS
-            // ================================================================
             if self.screen == Screen::CommitProgress {
                 ui.heading("Фиксация документа");
                 ui.add_space(12.0);
 
                 ui.label(format!("📁 Файл: {}", self.file_name));
-                ui.label(format!("📁 Проект: {}", 
-                    if self.project_mode == ProjectMode::New { &self.project_name } else { &self.selected_project }
-                ));
+                ui.label(format!("📁 Проект: {}", if self.project_mode == ProjectMode::New { &self.project_name } else { &self.selected_project }));
                 ui.add_space(12.0);
 
                 match self.step {
-                    Step::Hashing => { ui.label("⏳ Вычисление SHA-256..."); }
-                    Step::Committing => { ui.label("⏳ Отправка на сервер..."); }
-                    Step::TsaWaiting => { ui.label("⏳ Получение TSA..."); }
-                    Step::Done => { ui.label("✅ Фиксация завершена"); }
-                    Step::Failed => { ui.label("❌ Ошибка"); }
+                    Step::Hashing => {
+                        let _ = ui.label("⏳ Вычисление SHA-256...");
+                    }
+                    Step::Committing => {
+                        let _ = ui.label("⏳ Отправка на сервер...");
+                    }
+                    Step::TsaWaiting => {
+                        let _ = ui.label("⏳ Получение TSA...");
+                    }
+                    Step::Done => {
+                        let _ = ui.label("✅ Фиксация завершена");
+                    }
+                    Step::Failed => {
+                        let _ = ui.label("❌ Ошибка");
+                    }
                     _ => {}
                 }
 
@@ -965,51 +1006,49 @@ ui.label(format!("🔑 SHA-256: {}", &self.file_hash[..16]));
                 return;
             }
 
-            // ================================================================
-            // ЭКРАН: RESULT
-            // ================================================================
             if self.screen == Screen::Result {
                 ui.heading("✅ Документ успешно зафиксирован");
                 ui.add_space(8.0);
 
-                ui.label(format!("📁 Проект: {}", 
-                    if self.project_mode == ProjectMode::New { &self.project_name } else { &self.selected_project }
-                ));
+                ui.label(format!("📁 Проект: {}", if self.project_mode == ProjectMode::New { &self.project_name } else { &self.selected_project }));
                 ui.label(format!("📄 Событие: {}", self.event_id));
                 ui.label(format!("📄 Доказательство: {}", self.proof_path));
 
                 ui.add_space(12.0);
-
-ui.horizontal(|ui| {
-    if ui.button("🔍 Проверить").clicked() {
-        self.do_verify();
-    }
-    if !self.proof_path.is_empty() {
-        if ui.button("📄 Открыть PDF").clicked() {
-            let projects_dir = PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
-                .join("Evident Projects");
-            let project_name = if self.project_mode == ProjectMode::New {
-                &self.project_name
-            } else {
-                &self.selected_project
-            };
-            let pdf_path = projects_dir
-                .join(project_name)
-                .join("proofs")
-                .join("proof.pdf");
-            let _ = Command::new("open").arg(&pdf_path).output();
-        }
-    }
-    // НОВАЯ КНОПКА
-    if ui.button("📋 Вся цепочка аудита").clicked() {
-        self.screen = Screen::VerifyProject;
-        self.selected_project = if self.project_mode == ProjectMode::New {
-            self.project_name.clone()
-        } else {
-            self.selected_project.clone()
-        };
-        self.verify_project();
-    }
+                ui.horizontal(|ui| {
+                    if ui.button("🔍 Проверить").clicked() {
+                        self.do_verify();
+                    }
+                    if !self.proof_path.is_empty() {
+                        if ui.button("📄 Открыть PDF").clicked() {
+                            let projects_dir = match self.projects_dir() {
+                                Ok(dir) => dir,
+                                Err(err) => {
+                                    self.status = format!("⚠️ {err}");
+                                    return;
+                                }
+                            };
+                            let project_name = if self.project_mode == ProjectMode::New {
+                                &self.project_name
+                            } else {
+                                &self.selected_project
+                            };
+                            let pdf_path = projects_dir
+                                .join(project_name)
+                                .join("proofs")
+                                .join("proof.pdf");
+                            let _ = Command::new("open").arg(&pdf_path).output();
+                        }
+                    }
+                    if ui.button("📋 Вся цепочка аудита").clicked() {
+                        self.screen = Screen::VerifyProject;
+                        self.selected_project = if self.project_mode == ProjectMode::New {
+                            self.project_name.clone()
+                        } else {
+                            self.selected_project.clone()
+                        };
+                        self.verify_project();
+                    }
                 });
 
                 match self.verify_status {
@@ -1034,7 +1073,6 @@ ui.horizontal(|ui| {
                     self.commit_success = false;
                     self.file_path.clear();
                     self.file_name.clear();
-                    self.file_hash.clear();
                     self.event_id.clear();
                     self.proof_path.clear();
                     self.verify_status = VerifyStatus::None;
@@ -1049,11 +1087,20 @@ ui.horizontal(|ui| {
     }
 }
 
+fn local_marker(status: Option<bool>) -> &'static str {
+    match status {
+        Some(true) => "✅ Local",
+        Some(false) => "❌ Local MODIFIED",
+        None => "⚠️ Local N/A",
+    }
+}
+
+
 fn main() -> Result<(), eframe::Error> {
-    // Создаём папку Evident Projects при запуске
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".into());
-    let projects_dir = PathBuf::from(home).join("Evident Projects");
-    let _ = fs::create_dir_all(&projects_dir);
+    let mut app = App::new();
+    if let Err(err) = app.ensure_projects_dir() {
+        app.status = format!("⚠️ {err}");
+    }
 
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
@@ -1064,6 +1111,6 @@ fn main() -> Result<(), eframe::Error> {
     eframe::run_native(
         "Evident Ledger",
         options,
-        Box::new(|_cc| Ok(Box::new(App::default()))),
+        Box::new(|_cc| Ok(Box::new(app))),
     )
 }

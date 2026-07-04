@@ -50,6 +50,16 @@ pub struct ProofFile {
     pub tsa: Option<TsaData>,
 }
 
+#[derive(Debug, Deserialize, Serialize, Clone)]
+pub struct VerifyResponse {
+    pub chain_id: String,
+    pub valid: bool,
+    pub blocks: usize,
+    pub errors: Vec<String>,
+    pub head_event_id: String,
+    pub proof: ProofPayload,
+}
+
 pub struct EvidentClient {
     base_url: String,
     client: Client,
@@ -135,4 +145,36 @@ impl EvidentClient {
 
         Ok((commit, proof_path, file_hash))
     }
+
+    pub fn verify_chain(&self, chain_id: Uuid) -> Result<VerifyResponse, ClientError> {
+        let resp = self.client
+            .get(format!("{}/verify/{}", self.base_url, chain_id))
+            .send()?;
+        if !resp.status().is_success() {
+            let body = resp.text().unwrap_or_default();
+            return Err(ClientError::Server(body));
+        }
+        let result: VerifyResponse = resp.json()?;
+        Ok(result)
+    }
+
+    pub fn fetch_proof(&self, chain_id: Uuid) -> Result<ProofFile, ClientError> {
+        let resp = self.client
+            .get(format!("{}/verify/proof/{}", self.base_url, chain_id))
+            .send()?;
+        if !resp.status().is_success() {
+            let body = resp.text().unwrap_or_default();
+            return Err(ClientError::Server(body));
+        }
+        let proof: ProofFile = resp.json()?;
+        Ok(proof)
+    }
+}
+
+pub fn verify_chain(client: &EvidentClient, chain_id: Uuid) -> Result<VerifyResponse, ClientError> {
+    client.verify_chain(chain_id)
+}
+
+pub fn fetch_proof(client: &EvidentClient, chain_id: Uuid) -> Result<ProofFile, ClientError> {
+    client.fetch_proof(chain_id)
 }

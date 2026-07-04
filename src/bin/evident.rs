@@ -337,21 +337,27 @@ fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
         .as_array()
         .and_then(|e| e.first())
         .and_then(|e| e["file_hash"].as_str())
-        .unwrap_or("")
+        .ok_or_else(|| CliError::Server("incomplete proof: missing file_hash".into()))?
+        .to_string();
+
+    let chain_id_str = proof_json["chain_id"]
+        .as_str()
+        .ok_or_else(|| CliError::Server("incomplete proof: missing chain_id".into()))?
         .to_string();
 
     let tsa_obj = proof_json.get("tsa").and_then(|t| t.as_object());
-    let tsa_timestamp = tsa_obj
-        .and_then(|t| t["timestamp"].as_i64())
-        .unwrap_or(0) as u64;
-    let tsa_serial = tsa_obj
-        .and_then(|t| t["serial"].as_str())
-        .unwrap_or("")
-        .to_string();
-    let tsa_token = tsa_obj
-        .and_then(|t| t["token_bytes"].as_i64())
-        .unwrap_or(0)
-        .to_string();
+
+    let tsa_timestamp_raw = tsa_obj.and_then(|t| t["timestamp"].as_i64());
+    let tsa_serial_raw = tsa_obj.and_then(|t| t["serial"].as_str());
+    let tsa_token_raw = tsa_obj.and_then(|t| t["token_bytes"].as_i64());
+
+    let tsa_complete = tsa_timestamp_raw.is_some()
+        && tsa_serial_raw.is_some()
+        && tsa_token_raw.is_some();
+
+    let tsa_timestamp = tsa_timestamp_raw.unwrap_or(0) as u64;
+    let tsa_serial = tsa_serial_raw.unwrap_or("").to_string();
+    let tsa_token = tsa_token_raw.unwrap_or(0).to_string();
 
     println!("DEBUG: tsa_timestamp = {}", tsa_timestamp);
     println!("DEBUG: tsa_obj = {:?}", tsa_obj);
@@ -359,18 +365,15 @@ fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
     let input = CertificateInput {
         status: CertificateStatus::Valid,
         file_hash_valid: true,
-        tsa_valid: tsa_obj.is_some(),
-        proof_id: proof_json["chain_id"].as_str().unwrap_or("").to_string(),
+        tsa_valid: tsa_complete,
+        proof_id: chain_id_str.clone(),
         sha256,
         object_type: "file".into(),
         created_at_utc: chrono::Utc::now().to_rfc3339(),
         tsa_provider: "FreeTSA".into(),
         tsa_timestamp_utc: CertificateInput::format_timestamp_unix(tsa_timestamp),
         tsa_token_base64: tsa_token,
-        verify_url: format!(
-            "https://example.com/verify/{}",
-            proof_json["chain_id"].as_str().unwrap_or("")
-        ),
+        verify_url: format!("https://example.com/verify/{}", chain_id_str),
         file_size_kb: 0,
         file_name: proof_path.split('/').last().unwrap_or("proof").to_string(),
     };
