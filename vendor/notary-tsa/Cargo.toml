@@ -1,0 +1,24 @@
+[package]
+name = "notary-tsa"
+version = "1.0.0"
+edition = "2021"
+
+[dependencies]
+async-trait = "0.1"
+reqwest = { version = "0.12", features = ["json", "rustls-tls"] }
+serde = { version = "1.0", features = ["derive"] }
+thiserror = "1.0"
+tracing = "0.1"
+base64 = "0.22"
+tokio = { version = "1", features = ["full"] }
+hex = "0.4"
+chrono = "0.4"
+toml = "0.8"
+tempfile = "3"
+tsp-http-client = "0.1"
+cms = "0.2"
+der = "0.7"
+x509-tsp = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
