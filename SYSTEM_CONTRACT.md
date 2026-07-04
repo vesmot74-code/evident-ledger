@@ -1,37 +1,51 @@
-# SYSTEM_CONTRACT.md — Evident Ledger v1.2 (FINAL / CONTROLLED DRIFT)
+# SYSTEM_CONTRACT.md — Evident Ledger (актуальное состояние)
 
 Deterministic verifiable event ledger with cryptographic proofs and offline verification.
+
+**Статус:** это описание фактической реализации на текущий момент, не целевой архитектуры. Расхождения между компонентами отмечены явно как известный технический долг.
 
 ---
 
 ## 1. SYSTEM MODEL
 
-Evident Ledger is a project-local deterministic event system.
-
-- every action is an immutable event
-- events form a hash-linked chain
-- trust is derived from cryptographic proof, not server state
-- all outputs are reproducible offline
-- no global system state is authoritative
+- каждое действие — неизменяемое событие (event)
+- события образуют hash-linked цепочку
+- доверие строится на криптографическом доказательстве (merkle root + подпись сервера), backend возвращает verdict, но GUI дополнительно перепроверяет локальные файлы на диске (см. п.5)
+- офлайн-проверка возможна через `evident-verify`
 
 ---
 
-## 2. STORAGE MODEL (HARD CONTRACT)
+## 2. STORAGE MODEL — ⚠️ ИЗВЕСТНОЕ РАСХОЖДЕНИЕ (не архитектурное решение)
+
+В системе сейчас существуют **два независимых, не связанных друг с другом хранилища**:
+
+### 2.1 GUI storage (`evident-gui`)
 
 ```text
-Evident Projects/<project_name>/
+~/Evident Projects/<project_name>/
   originals/
   proofs/
   Аудит/
     audit.jsonl
 ```
 
-RULES:
+Используется приложением `evident-gui`. Каждый проект имеет собственный `chain_id` (UUID v4), сохранённый в `project.json`.
 
-- ONLY “Evident Projects” is valid root
-- NO ~/.evident as active storage
-- NO HOME-based fallback
-- all paths must be deterministic
+### 2.2 CLI storage (`evident`)
+
+```text
+~/.evident/
+  identity.key
+  identity.pub
+  events.jsonl
+  proofs/<chain_id>/
+```
+
+Используется бинарником `evident` (CLI): `evident init`, `evident commit`, `evident report generate`, `evident status`.
+
+### ⚠️ Технический долг
+
+Эти два хранилища **не синхронизированы и не пересекаются**: файл, закоммиченный через GUI, не виден CLI-командам, и наоборот. Это исторический артефакт параллельного развития GUI и CLI, а не осознанное архитектурное решение. Унификация в единое хранилище — открытая задача на будущее.
 
 ---
 
@@ -41,153 +55,90 @@ RULES:
 file → SHA256 → event → chain → proof → verify → report
 ```
 
-- pipeline is deterministic
-- no external state allowed
+Общий пайплайн одинаков для GUI и CLI, но с разными точками входа для storage (см. п.2).
 
 ---
 
-## 4. LAYERS
+## 4. VERIFICATION MODEL
 
-CLI:
+### 4.1 Backend verification (`GET /verify/{chain_id}`)
 
-- orchestration only
-- no business logic
+Backend пересчитывает merkle root по всем событиям цепочки, проверяет подпись, возвращает `{valid, blocks, head_event_id, errors}`.
 
-GUI:
+### 4.2 Local file integrity check (GUI only)
 
-- user interaction layer
-- must not affect ledger semantics
+GUI дополнительно сверяет SHA-256 файлов в `originals/` с `file_hash` из ответа backend. Итоговый статус в GUI — комбинация двух независимых осей:
 
-VERIFIER:
+- `backend_valid` — криптографическая целостность цепочки (источник истины)
+- `local_integrity_ok` — совпадение локальной копии файла с зафиксированным хэшем (клиентская проверка, обнаруживает локальную подмену файла на диске)
 
-- standalone binary
-- offline only
-- no runtime dependencies
+CLI (`evident-verify`) выполняет офлайн-проверку по файлу `proof.json`: merkle root, подпись (pinned server key через `~/.evident/server_identity.pub`), опционально сверку с оригиналом файла (`Original: OK` / `Original: MISSING or MISMATCH`).
 
 ---
 
-## 5. ORIGINALS CONTRACT
+## 5. AUDIT MODEL
 
-Format:
+`audit.jsonl` (GUI) — append-only, каждая запись:
+
+```json
+{
+  "event_id": "...",
+  "chain_id": "...",
+  "file_hash": "...",
+  "sequence": 1,
+  "parent_event_id": "...",
+  "created_at": "...",
+  "kind": { "Anchored": { "server_event_id": "...", "proof": {...} } }
+}
+```
+
+Каждая фиксация файла создаёт две записи: `Submitted` (sequence: null, до ответа сервера) и `Anchored` (sequence: реальное значение от backend, после подтверждения).
+
+---
+
+## 6. ORIGINALS NAMING
 
 ```text
-{:04}_<filename>
+originals/{sequence:04}_{filename}
 ```
 
-RULES:
-
-- sequence prefix mandatory
-- monotonic per project
-- immutable after creation
-- no overwrite
-- no hash-based naming
+Пример: `0001_document.rtf`, `0002_report.pdf`.
 
 ---
 
-## 6. AUDIT CONTRACT
+## 7. TSA (RFC 3161)
 
-Path:
-
-```text
-Evident Projects/<project>/Аудит/audit.jsonl
-```
-
-RULES:
-
-- append-only (append=true)
-- no truncate
-- no rewrite
-- 1 line = 1 JSON event
+Через vendored крейт `notary-tsa` (внешний провайдер FreeTSA). TSA-данные опциональны в отчёте: если `timestamp`/`serial`/`token_bytes` неполны — PDF-сертификат явно показывает "Статус TSA: Не подтверждено", не выдаёт ложное "Подтверждено" с нулевой датой.
 
 ---
 
-## 7. VERIFY CONTRACT
+## 8. REPORT GENERATION (`evident report generate`)
 
-```bash
-evident-verify <proof_path> <original_file_path>
-```
-
-OUTPUT:
-
-```text
-OK: proof valid
-```
-
-RULES:
-
-- fully offline
-- deterministic
-- no server dependency
+Требует обязательного наличия `file_hash` и `chain_id` в proof.json — при отсутствии команда завершается ошибкой `incomplete proof: missing <field>`, PDF не генерируется. TSA-поля остаются опциональными.
 
 ---
 
-## 8. PROOF MODEL
+## 9. DEPENDENCIES
 
-Required fields:
-
-- chain_id
-- root_hash
-- tsa_timestamp
-- tsa_signature
-- event_count
-- verification_status
+- `notary-tsa`, `notary-pdf` — vendored в `vendor/` (копии крейтов из отдельного репозитория `notary-core`, скопированы для самодостаточности сборки)
+- PostgreSQL — требуется для запуска сервера (`evident-ledger` bin), не требуется для сборки (офлайн sqlx-кэш в `.sqlx/`)
 
 ---
 
-## 9. DETERMINISM RULE
+## 10. KNOWN LIMITATIONS
 
-Same input MUST produce:
-
-- identical proof.json
-- identical proof.pdf
-- identical verification result
-
----
-
-## 10. FORBIDDEN
-
-- HOME fallback paths
-- ~/.evident writes
-- mutation of past events
-- audit truncation
-- nondeterministic timestamps in core logic
-- server-truth dependency
+- GUI и CLI используют разные, не связанные хранилища (см. п.2)
+- ZIP-экспорт в GUI: кнопка присутствует, функциональность не реализована
+- TSA зависит от доступности внешнего провайдера (FreeTSA)
+- Сервер требует запущенный PostgreSQL
 
 ---
 
-## 11. CONTROLLED DRIFT
+## 11. WHAT IS ACTUALLY LOCKED (проверено тестами)
 
-ALLOWED:
+- audit.jsonl append-only механизм — `cargo test` покрывает
+- merkle root recompute + подпись — `cargo test` покрывает (`tests/verifier.rs`, 4 сценария)
+- sequence monotonicity в verify_project (CLI) — покрыто
+- local file integrity check (GUI) — проверено вручную (регрессионный сценарий с подменой файла)
 
-- CLI internal refactors
-- GUI changes
-- verifier optimizations
-
-NOT ALLOWED:
-
-- storage model changes
-- audit format changes
-- originals naming changes
-- verification logic changes
-
----
-
-## 12. ARCHITECTURE
-
-Ledger Engine → events  
-Verifier → validation  
-TSA → timestamping  
-Report Engine → export  
-CLI → orchestration  
-GUI → interaction  
-
----
-
-## 13. FREEZE
-
-Protocol: FROZEN v1.2  
-Storage: LOCKED  
-Audit: LOCKED  
-Verifier: LOCKED  
-CLI/GUI: drift allowed only in execution layer
-```
+Всё остальное — рабочая, но не formально закреплённая тестами область; при рефакторинге проверяйте вручную по сценариям выше.
