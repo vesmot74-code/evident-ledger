@@ -1,4 +1,4 @@
-use axum::Router;
+use axum::{Router, routing::get};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -23,6 +23,8 @@ async fn main() {
     let state = state::AppState { db: pool, signer };
 
     let app = Router::new()
+        .route("/", get(|| async { axum::response::Html(include_str!("../static/index.html")) }))
+        .route("/verify-ui", get(|| async { axum::response::Html(include_str!("../static/verify.html")) }))
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
         .nest("/identity", api::identity::router(state.clone()));
