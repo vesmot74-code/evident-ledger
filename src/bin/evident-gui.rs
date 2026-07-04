@@ -201,6 +201,14 @@ impl App {
         None
     }
 
+fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
+    let prefix = format!("{:04}_", sequence);
+    fs::read_dir(originals_dir).ok()?
+        .flatten()
+        .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+}
+
     fn new() -> Self {
         let mut app = Self::default();
         if let Err(err) = app.ensure_projects_dir() {
@@ -380,13 +388,14 @@ impl App {
         let client = EvidentClient::new("http://127.0.0.1:3000");
         let verify_result = match client::verify_chain(&client, chain_id) {
             Ok(result) => result,
-            Err(e) => {
-                self.status = format!("❌ Ошибка проверки: {}", e);
-                self.verify_status = VerifyStatus::Partial;
-                self.verification_report = format!("{}", e);
-                self.screen = Screen::VerifyResult;
-                return;
-            }
+Err(e) => {
+    let friendly = friendly_error(&e);
+    self.status = format!("❌ {}", friendly);
+    self.verify_status = VerifyStatus::Partial;
+    self.verification_report = friendly.clone();
+    self.screen = Screen::VerifyResult;
+    return;
+}
         };
 
         self.state.head_event_id = Some(verify_result.head_event_id.clone());
@@ -411,7 +420,7 @@ for event in proof.events.iter() {
     self.verification_events.push(VerificationEvent {
         sequence: event.sequence,
         event_id: event.event_id.clone(),
-        file_name: event.event_id.clone(),
+file_name: Self::find_original_name(&originals_dir, event.sequence).unwrap_or_else(|| "Файл недоступен".to_string()),
         timestamp: "".to_string(),
         valid: verify_result.valid,
         error: if verify_result.valid {
@@ -562,7 +571,7 @@ let project = Project {
                     format!("submit failed: {e}"),
                 ));
                 self.step = Step::Failed;
-                self.status = format!("❌ Ошибка отправки на сервер: {}", e);
+         self.status = format!("❌ {}", friendly_error(&e));
                 return;
             }
         };
@@ -805,14 +814,13 @@ impl eframe::App for App {
                             ui.horizontal(|ui| {
                                 let label = if event.valid {
 format!(
-    "✅ EVENT {:03}    {}   {}   {}",
+    "✅ EVENT {:03}    {}   {}",
     event.sequence,
-    event.timestamp,
     event.file_name,
     local_marker(event.local_integrity_ok)
 )
                                 } else {
-                                    format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.sequence, event.timestamp, event.file_name, event.error.as_deref().unwrap_or("ошибка"))
+                     format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.sequence, event.file_name, local_marker(event.local_integrity_ok), event.error.as_deref().unwrap_or("ошибка"))
                                 };
                                 if event.valid {
                                     ui.label(label);
@@ -833,9 +841,8 @@ format!(
                                     }
                                 }
 
-                                if ui.button("📦 ZIP").clicked() {
-                                    self.status = format!("⏳ Упаковка события {}...", event.sequence);
-                                }
+ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
+    .on_disabled_hover_text("Экспорт в ZIP появится в следующей версии");
                             });
 
                             if !event.valid && event.error_type != ErrorType::None {
@@ -1098,6 +1105,21 @@ fn local_marker(status: Option<bool>) -> &'static str {
         Some(true) => "✅ Local",
         Some(false) => "❌ Local MODIFIED",
         None => "⚠️ Local N/A",
+    }
+}
+
+fn friendly_error(e: &impl std::fmt::Display) -> String {
+    let msg = e.to_string();
+    if msg.contains("connection refused") 
+        || msg.contains("connect") 
+        || msg.contains("error sending request") 
+        || msg.contains("dns") 
+        || msg.contains("failed to lookup") {
+        "Сервер недоступен. Проверьте, что программа Evident Ledger запущена, и повторите попытку.".into()
+    } else if msg.contains("timed out") || msg.contains("timeout") {
+        "Сервер не отвечает слишком долго. Попробуйте ещё раз.".into()
+    } else {
+        format!("Произошла ошибка: {msg}")
     }
 }
 
