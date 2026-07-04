@@ -716,6 +716,12 @@ impl eframe::App for App {
                     }
                 });
 
+                ui.add_space(8.0);
+                if ui.button("🔍 Проверить проект").clicked() {
+                    self.screen = Screen::VerifyProject;
+                    self.load_projects();
+                }
+
                 if !self.file_path.is_empty() {
                     let size_kb = self.file_size / 1024;
                     let size_mb = self.file_size / (1024 * 1024);
