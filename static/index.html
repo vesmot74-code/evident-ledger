@@ -1,0 +1,69 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Evident Ledger — детерминированный audit-ledger с криптографическим доказательством</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #0b1f3a; }
+    h1 { font-size: 1.4em; letter-spacing: 0.05em; }
+    .eyebrow { text-transform: uppercase; font-size: 0.8em; color: #64748b; letter-spacing: 0.1em; }
+    section { margin: 32px 0; }
+    a.cta { display: inline-block; padding: 12px 24px; background: #0b1f3a; color: white; text-decoration: none; border-radius: 6px; }
+    li { margin: 8px 0; }
+  </style>
+</head>
+<body>
+  <header><h1>EVIDENT LEDGER</h1></header>
+
+  <section>
+    <p class="eyebrow">Deterministic Event Ledger</p>
+    <h2>Криптографическое доказательство фиксации файла во времени</h2>
+    <p>
+      Evident Ledger — локальная система фиксации цифровых объектов:
+      SHA-256 хеширование, hash-linked цепочка событий, опциональная внешняя
+      временная метка RFC 3161 (TSA) и независимая офлайн-верификация.
+      Не облачный сервис — вы полностью контролируете свои данные локально.
+    </p>
+  </section>
+
+  <section>
+    <h3>Зачем это нужно</h3>
+    <ul>
+      <li><strong>Доказательство существования файла в момент времени</strong> —
+        если позже возникнет спор о том, менялся ли документ, у вас есть
+        криптографически проверяемая цепочка событий с merkle-доказательством.</li>
+      <li><strong>Независимая проверка</strong> — верификация (evident-verify)
+        работает офлайн, не требует доверия к серверу: пересчитывает merkle root,
+        проверяет подпись, сверяет файл с зафиксированным хэшем.</li>
+      <li><strong>Локальный контроль целостности</strong> — GUI дополнительно
+        проверяет, что файлы на вашем диске совпадают с зафиксированными хэшами,
+        обнаруживая случайную или намеренную подмену уже после фиксации.</li>
+    </ul>
+  </section>
+
+  <section>
+    <h3>Когда это пригодится</h3>
+    <ul>
+      <li>Фиксация версии документа перед отправкой на согласование/подпись</li>
+      <li>Доказательство даты создания артефакта (черновик, договор, чертёж)</li>
+      <li>Аудиторский след изменений в проекте с восстановимой историей</li>
+      <li>Локальная альтернатива, когда нельзя/не хочется отправлять файл в облачный сервис</li>
+    </ul>
+  </section>
+
+  <section>
+    <h3>Как это работает</h3>
+    <ol>
+      <li><strong>Commit</strong> — файл хешируется (SHA-256) локально, событие отправляется в цепочку</li>
+      <li><strong>Anchor</strong> — сервер назначает sequence, строит merkle root, подписывает результат; опционально запрашивает TSA-метку у FreeTSA</li>
+      <li><strong>Verify</strong> — proof можно проверить в любой момент: через GUI (backend + локальная сверка файла) или офлайн через CLI</li>
+    </ol>
+  </section>
+
+  <section>
+    <a class="cta" href="/verify-ui">Перейти к верификатору →</a>
+  </section>
+
+  <footer><p>Evident Ledger — локальный open-source ledger.</p></footer>
+</body>
+</html>

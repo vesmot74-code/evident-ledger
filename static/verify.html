@@ -1,0 +1,48 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <title>Evident Ledger — Верификатор</title>
+  <style>
+    body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; color: #0b1f3a; }
+    input { width: 100%; padding: 10px; font-size: 1em; margin: 8px 0; box-sizing: border-box; }
+    button { padding: 10px 20px; background: #0b1f3a; color: white; border: none; border-radius: 6px; cursor: pointer; }
+    #result { margin-top: 20px; }
+  </style>
+</head>
+<body>
+  <h1>Проверка цепочки событий</h1>
+  <p>Введите chain_id для проверки криптографической целостности цепочки.</p>
+
+  <input type="text" id="chainIdInput" placeholder="chain_id (UUID)">
+  <button onclick="verify()">Проверить</button>
+
+  <div id="result"></div>
+
+  <script>
+    async function verify() {
+      const chainId = document.getElementById('chainIdInput').value.trim();
+      const resultDiv = document.getElementById('result');
+      resultDiv.textContent = 'Проверка...';
+      try {
+        const resp = await fetch(`/verify/${chainId}`);
+        const data = await resp.json();
+        if (data.valid) {
+          resultDiv.innerHTML = `
+            <p style="color: green">✅ ВАЛИДНО</p>
+            <p>Событий: ${data.blocks}</p>
+            <p>Head event: ${data.head_event_id}</p>
+          `;
+        } else {
+          resultDiv.innerHTML = `
+            <p style="color: red">❌ НЕВАЛИДНО</p>
+            <p>Ошибки: ${(data.errors || []).join('; ')}</p>
+          `;
+        }
+      } catch (e) {
+        resultDiv.innerHTML = `<p style="color: orange">⚠️ Ошибка запроса: ${e}</p>`;
+      }
+    }
+  </script>
+</body>
+</html>
