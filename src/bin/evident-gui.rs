@@ -111,7 +111,6 @@ struct AppState {
     head_event_id: Option<String>,
 }
 
-#[derive(Default)]
 struct App {
     // === Файл ===
     file_path: String,
@@ -143,6 +142,53 @@ struct App {
     screen: Screen,
     error_message: String,
     state: AppState,
+
+    // === Async ===
+    _runtime: tokio::runtime::Runtime,
+    rt: tokio::runtime::Handle,
+    tx_resp: tokio::sync::mpsc::UnboundedSender<WorkerResponse>,
+    rx_resp: tokio::sync::mpsc::UnboundedReceiver<WorkerResponse>,
+    loading_verify_project: bool,
+    loading_verify_chain: bool,
+    network_error: bool,
+}
+
+impl Default for App {
+    fn default() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let rt = tokio::runtime::Runtime::new().expect("failed to create tokio runtime");
+        let rt_handle = rt.handle().clone();
+        Self {
+            file_path: Default::default(),
+            file_name: Default::default(),
+            file_size: Default::default(),
+            projects: Default::default(),
+            project_name: Default::default(),
+            selected_project: Default::default(),
+            project_mode: Default::default(),
+            status: Default::default(),
+            step: Default::default(),
+            commit_success: Default::default(),
+            event_id: Default::default(),
+            proof_path: Default::default(),
+            verify_status: Default::default(),
+            verify_details: Default::default(),
+            verification_events: Default::default(),
+            verification_report: Default::default(),
+            verification_complete: Default::default(),
+            verification_project: Default::default(),
+            screen: Default::default(),
+            error_message: Default::default(),
+            state: Default::default(),
+            _runtime: rt,
+            rt: rt_handle,
+            tx_resp: tx,
+            rx_resp: rx,
+            loading_verify_project: Default::default(),
+            loading_verify_chain: false,
+            network_error: false,
+        }
+    }
 }
 
 #[derive(PartialEq, Default)]
@@ -181,6 +227,11 @@ enum Screen {
     Result,
     VerifyProject,  // новый экран
     VerifyResult,   // новый экран
+}
+
+enum WorkerResponse {
+    VerifyProjectDone(Result<(evident_ledger::client::VerifyResponse, evident_ledger::client::ProofFile, PathBuf), String>),
+    VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
 }
 
 impl App {
@@ -345,10 +396,11 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
     // ================================================================
     // ВЕРИФИКАЦИЯ ПРОЕКТА
     // ================================================================
-    fn verify_project(&mut self) {
+    fn verify_project(&mut self, ctx: &egui::Context) {
         self.verification_events.clear();
         self.verification_complete = false;
         self.verification_report.clear();
+        self.verification_project = self.selected_project.clone();
 
         if self.selected_project.is_empty() {
             self.status = "❌ Выберите проект".to_string();
@@ -385,89 +437,28 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
             }
         };
 
-        let client = EvidentClient::new("http://127.0.0.1:3000");
-        let verify_result = match client::verify_chain(&client, chain_id) {
-            Ok(result) => result,
-Err(e) => {
-    let friendly = friendly_error(&e);
-    self.status = format!("❌ {}", friendly);
-    self.verify_status = VerifyStatus::Partial;
-    self.verification_report = friendly.clone();
-    self.screen = Screen::VerifyResult;
-    return;
-}
-        };
+        let originals_dir = project_path.join("originals");
 
-        self.state.head_event_id = Some(verify_result.head_event_id.clone());
+        // --- теперь уходит в фон ---
+        self.loading_verify_project = true;
+        self.status = "⏳ Проверка...".to_string();
 
-        let proof = match client::fetch_proof(&client, chain_id) {
-            Ok(proof) => proof,
-            Err(e) => {
-                self.status = format!("❌ Ошибка получения proof: {}", e);
-                self.verify_status = VerifyStatus::Partial;
-                self.verification_report = format!("{}", e);
-                self.screen = Screen::VerifyResult;
-                return;
-            }
-        };
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new("http://127.0.0.1:3000");
 
-let originals_dir = project_path.join("originals");
+            let result: Result<(evident_ledger::client::VerifyResponse, evident_ledger::client::ProofFile, PathBuf), String> = (|| {
+                let verify_result = client::verify_chain(&client, chain_id)
+                    .map_err(|e| friendly_error(&e))?;
+                let proof = client::fetch_proof(&client, chain_id)
+                    .map_err(|e| friendly_error(&e))?;
+                Ok((verify_result, proof, originals_dir))
+            })();
 
-for event in proof.events.iter() {
-    let local_integrity_ok =
-        Self::check_local_integrity(&originals_dir, event.sequence, &event.file_hash);
-
-    self.verification_events.push(VerificationEvent {
-        sequence: event.sequence,
-        event_id: event.event_id.clone(),
-file_name: Self::find_original_name(&originals_dir, event.sequence).unwrap_or_else(|| "Файл недоступен".to_string()),
-        timestamp: "".to_string(),
-        valid: verify_result.valid,
-        error: if verify_result.valid {
-            None
-        } else {
-            Some(verify_result.errors.join("; "))
-        },
-        error_type: if verify_result.valid {
-            ErrorType::None
-        } else {
-            ErrorType::ChainBreak
-        },
-        local_integrity_ok,
-    });
-}
-
-self.verification_project = self.selected_project.clone();
-self.verification_complete = true;
-
-let local_tampered =
-    self.verification_events.iter().any(|e| e.local_integrity_ok == Some(false));
-
-self.verify_status = if !verify_result.valid {
-    VerifyStatus::Invalid
-} else if local_tampered {
-    VerifyStatus::Partial
-} else {
-    VerifyStatus::Valid
-};
-
-self.status = if !verify_result.valid {
-    "❌ Обнаружены нарушения".to_string()
-} else if local_tampered {
-    "⚠️ Backend OK, но локальные файлы изменены".to_string()
-} else {
-    "✅ Проект успешно проверен".to_string()
-};
-
-self.verification_report = if !verify_result.valid {
-    format!("{}", verify_result.errors.join("; "))
-} else if local_tampered {
-    "Локальные файлы originals/ изменены или отсутствуют".to_string()
-} else {
-    "Все события валидны. Локальная копия совпадает.".to_string()
-};
-
-self.screen = Screen::VerifyResult;
+            let _ = tx.send(WorkerResponse::VerifyProjectDone(result));
+            ctx.request_repaint();
+        });
     }
 
     // ================================================================
@@ -638,7 +629,7 @@ let project = Project {
         self.load_projects();
     }
 
-    fn do_verify(&mut self) {
+    fn do_verify(&mut self, ctx: &egui::Context) {
         if self.selected_project.is_empty() {
             self.verify_status = VerifyStatus::Invalid;
             self.verify_details = "Проект не выбран".to_string();
@@ -680,27 +671,120 @@ let project = Project {
             }
         };
 
-        let client = EvidentClient::new("http://127.0.0.1:3000");
-        match client::verify_chain(&client, chain_id) {
-            Ok(result) => {
-                if result.valid {
-                    self.verify_status = VerifyStatus::Valid;
-                    self.verify_details = "✅ Доказательство действительно".to_string();
-                } else {
-                    self.verify_status = VerifyStatus::Invalid;
-                    self.verify_details = result.errors.join("; ");
-                }
-            }
-            Err(e) => {
-                self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!("⚠️ Ошибка проверки: {}", e);
-            }
-        }
+        self.loading_verify_chain = true;
+        self.verify_details = "⏳ Проверка...".to_string();
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new("http://127.0.0.1:3000");
+            let result = client::verify_chain(&client, chain_id).map_err(|e| friendly_error(&e));
+            let _ = tx.send(WorkerResponse::VerifyChainDone(result));
+            ctx.request_repaint();
+        });
     }
 }
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // --- worker response handling ---
+        while let Ok(resp) = self.rx_resp.try_recv() {
+            match resp {
+                WorkerResponse::VerifyProjectDone(res) => {
+                    self.loading_verify_project = false;
+                    match res {
+                        Ok((verify_result, proof, originals_dir)) => {
+                            self.network_error = false;
+                            self.state.head_event_id = Some(verify_result.head_event_id.clone());
+
+                            for event in proof.events.iter() {
+                                let local_integrity_ok = Self::check_local_integrity(
+                                    &originals_dir, event.sequence, &event.file_hash,
+                                );
+                                self.verification_events.push(VerificationEvent {
+                                    sequence: event.sequence,
+                                    event_id: event.event_id.clone(),
+                                    file_name: Self::find_original_name(&originals_dir, event.sequence)
+                                        .unwrap_or_else(|| "Файл недоступен".to_string()),
+                                    timestamp: "".to_string(),
+                                    valid: verify_result.valid,
+                                    error: if verify_result.valid {
+                                        None
+                                    } else {
+                                        Some(verify_result.errors.join("; "))
+                                    },
+                                    error_type: if verify_result.valid {
+                                        ErrorType::None
+                                    } else {
+                                        ErrorType::ChainBreak
+                                    },
+                                    local_integrity_ok,
+                                });
+                            }
+
+                            self.verification_project = self.selected_project.clone();
+                            self.verification_complete = true;
+
+                            let local_tampered = self.verification_events.iter()
+                                .any(|e| e.local_integrity_ok == Some(false));
+
+                            self.verify_status = if !verify_result.valid {
+                                VerifyStatus::Invalid
+                            } else if local_tampered {
+                                VerifyStatus::Partial
+                            } else {
+                                VerifyStatus::Valid
+                            };
+
+                            self.status = if !verify_result.valid {
+                                "❌ Обнаружены нарушения".to_string()
+                            } else if local_tampered {
+                                "⚠️ Backend OK, но локальные файлы изменены".to_string()
+                            } else {
+                                "✅ Проект успешно проверен".to_string()
+                            };
+
+                            self.verification_report = if !verify_result.valid {
+                                verify_result.errors.join("; ")
+                            } else if local_tampered {
+                                "Локальные файлы originals/ изменены или отсутствуют".to_string()
+                            } else {
+                                "Все события валидны. Локальная копия совпадает.".to_string()
+                            };
+
+                            self.screen = Screen::VerifyResult;
+                        }
+                        Err(e) => {
+                            self.network_error = true;
+                            self.status = format!("❌ {}", e);
+                            self.verify_status = VerifyStatus::Partial;
+                            self.verification_report = e;
+                            self.screen = Screen::VerifyResult;
+                        }
+                    }
+                }
+                WorkerResponse::VerifyChainDone(res) => {
+                    self.loading_verify_chain = false;
+                    match res {
+                        Ok(result) => {
+                            if result.valid {
+                                self.verify_status = VerifyStatus::Valid;
+                                self.verify_details = "✅ Доказательство действительно".to_string();
+                            } else {
+                                self.verify_status = VerifyStatus::Invalid;
+                                self.verify_details = result.errors.join("; ");
+                            }
+                        }
+                        Err(e) => {
+                            self.verify_status = VerifyStatus::Partial;
+                            self.verify_details = format!("⚠️ Ошибка проверки: {}", e);
+                        }
+                    }
+                }
+            }
+        }
+        // --- worker response handling end ---
+
         egui::CentralPanel::default().show(ui, |ui| {
             ui.painter().rect_filled(ui.max_rect(), 0.0, COLOR_BG);
             ui.add_space(12.0);
@@ -760,14 +844,17 @@ impl eframe::App for App {
                 ui.label("Выберите проект для проверки:");
                 ui.add_space(8.0);
 
-                if self.projects.is_empty() {
+                if self.loading_verify_project {
+                    ui.spinner();
+                    ui.label("Проверка...");
+                } else if self.projects.is_empty() {
                     ui.label("📭 Нет сохранённых проектов.");
                 } else {
                     let projects = self.projects.clone();
                     for project in projects {
                         if ui.button(&project).clicked() {
                             self.selected_project = project.clone();
-                            self.verify_project();
+                    self.verify_project(ui.ctx());
                         }
                     }
                 }
@@ -808,50 +895,52 @@ impl eframe::App for App {
                     }
                 };
 
-                match Self::validate_chain(&self.verification_events, self.state.head_event_id.as_deref()) {
-                    Ok(()) => {
-                        for event in &self.verification_events {
-                            ui.horizontal(|ui| {
-                                let label = if event.valid {
+                if !self.network_error {
+                    match Self::validate_chain(&self.verification_events, self.state.head_event_id.as_deref()) {
+                        Ok(()) => {
+                            for event in &self.verification_events {
+                                ui.horizontal(|ui| {
+                                    let label = if event.valid {
 format!(
     "✅ EVENT {:03}    {}   {}",
     event.sequence,
     event.file_name,
     local_marker(event.local_integrity_ok)
 )
-                                } else {
-                     format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.sequence, event.file_name, local_marker(event.local_integrity_ok), event.error.as_deref().unwrap_or("ошибка"))
-                                };
-                                if event.valid {
-                                    ui.label(label);
-                                } else {
-                                    ui.colored_label(COLOR_INVALID, label);
-                                }
-
-                                if ui.button("📄 PDF").clicked() {
-                                    let pdf_path = projects_dir
-                                        .join(&self.verification_project)
-                                        .join("proofs")
-                                        .join("proof.pdf");
-                                    if pdf_path.exists() {
-                                        let _ = Command::new("open").arg(&pdf_path).output();
-                                        self.status = format!("✅ PDF открыт для события {}", event.sequence);
                                     } else {
-                                        self.status = format!("❌ PDF не найден для события {}", event.sequence);
+                         format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.sequence, event.file_name, local_marker(event.local_integrity_ok), event.error.as_deref().unwrap_or("ошибка"))
+                                    };
+                                    if event.valid {
+                                        ui.label(label);
+                                    } else {
+                                        ui.colored_label(COLOR_INVALID, label);
                                     }
-                                }
+
+                                    if ui.button("📄 PDF").clicked() {
+                                        let pdf_path = projects_dir
+                                            .join(&self.verification_project)
+                                            .join("proofs")
+                                            .join("proof.pdf");
+                                        if pdf_path.exists() {
+                                            let _ = Command::new("open").arg(&pdf_path).output();
+                                            self.status = format!("✅ PDF открыт для события {}", event.sequence);
+                                        } else {
+                                            self.status = format!("❌ PDF не найден для события {}", event.sequence);
+                                        }
+                                    }
 
 ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
     .on_disabled_hover_text("Экспорт в ZIP появится в следующей версии");
-                            });
+                                });
 
-                            if !event.valid && event.error_type != ErrorType::None {
-                                ui.label(format!("   └─ Тип: {:?}", event.error_type));
+                                if !event.valid && event.error_type != ErrorType::None {
+                                    ui.label(format!("   └─ Тип: {:?}", event.error_type));
+                                }
                             }
                         }
-                    }
-                    Err(error) => {
-                        self.render_chain_error(ui, &error);
+                        Err(error) => {
+                            self.render_chain_error(ui, &error);
+                        }
                     }
                 }
 
@@ -1029,8 +1118,11 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("🔍 Проверить").clicked() {
-                        self.do_verify();
+                    if self.loading_verify_chain {
+                        ui.spinner();
+                        ui.label("Проверка...");
+                    } else if ui.button("🔍 Проверить").clicked() {
+                        self.do_verify(ui.ctx());
                     }
                     if !self.proof_path.is_empty() {
                         if ui.button("📄 Открыть PDF").clicked() {
@@ -1060,7 +1152,7 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                         } else {
                             self.selected_project.clone()
                         };
-                        self.verify_project();
+                   self.verify_project(ui.ctx());
                     }
                 });
 
