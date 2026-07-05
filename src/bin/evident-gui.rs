@@ -151,6 +151,7 @@ struct App {
     loading_verify_project: bool,
     loading_verify_chain: bool,
     network_error: bool,
+    loading_commit: bool,
 }
 
 impl Default for App {
@@ -187,6 +188,7 @@ impl Default for App {
             loading_verify_project: Default::default(),
             loading_verify_chain: false,
             network_error: false,
+            loading_commit: false,
         }
     }
 }
@@ -229,9 +231,30 @@ enum Screen {
     VerifyResult,   // новый экран
 }
 
+#[derive(Debug)]
+struct CommitSuccess {
+    commit: client::CommitResponse,
+    proof_path: PathBuf,
+    file_hash: String,
+    project_path: PathBuf,
+    proofs_dir: PathBuf,
+    chain_uuid: Uuid,
+    source_file_path: String,
+    file_name: String,
+}
+
+#[derive(Debug)]
+struct CommitFailure {
+    error: String,
+    project_path: PathBuf,
+    chain_uuid: Uuid,
+    file_hash: String,
+}
+
 enum WorkerResponse {
     VerifyProjectDone(Result<(evident_ledger::client::VerifyResponse, evident_ledger::client::ProofFile, PathBuf), String>),
     VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
+    CommitDone(Result<CommitSuccess, CommitFailure>),
 }
 
 impl App {
@@ -464,7 +487,7 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
     // ================================================================
     // ФИКСАЦИЯ
     // ================================================================
-    fn do_commit(&mut self) {
+    fn do_commit(&mut self, ctx: &egui::Context) {
         if self.file_path.is_empty() {
             self.status = "❌ Выберите файл".to_string();
             return;
@@ -531,12 +554,14 @@ let project = Project {
         self.step = Step::Committing;
         self.status = "⏳ Отправка на сервер...".to_string();
         self.screen = Screen::CommitProgress;
+        self.loading_commit = true;
 
         let file_bytes = match fs::read(&self.file_path) {
             Ok(bytes) => bytes,
             Err(e) => {
                 self.step = Step::Failed;
                 self.status = format!("❌ Ошибка чтения файла: {}", e);
+                self.loading_commit = false;
                 return;
             }
         };
@@ -546,87 +571,45 @@ let project = Project {
             Err(_) => {
                 self.step = Step::Failed;
                 self.status = "❌ Неправильный chain_id".to_string();
+                self.loading_commit = false;
                 return;
             }
         };
 
-        let client = EvidentClient::new("http://127.0.0.1:3000");
-        let (commit, proof_path, file_hash) = match client.submit_event(chain_uuid, &file_bytes) {
-            Ok(result) => result,
-            Err(e) => {
-                let _ = self.append_audit_event(&project_path, AuditEvent::failed(
-                    Uuid::new_v4(),
-                    chain_uuid,
-                    file_hash_from_bytes(&file_bytes),
-                    None,
-                    format!("submit failed: {e}"),
-                ));
-                self.step = Step::Failed;
-         self.status = format!("❌ {}", friendly_error(&e));
-                return;
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let project_path_clone = project_path.clone();
+        let proofs_dir_clone = proofs_dir.clone();
+        let source_file_path = self.file_path.clone();
+        let file_name = self.file_name.clone();
+
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new("http://127.0.0.1:3000");
+            match client.submit_event(chain_uuid, &file_bytes) {
+                Ok((commit, proof_path, file_hash)) => {
+                    let _ = tx.send(WorkerResponse::CommitDone(Ok(CommitSuccess {
+                        commit,
+                        proof_path,
+                        file_hash,
+                        project_path: project_path_clone,
+                        proofs_dir: proofs_dir_clone,
+                        chain_uuid,
+                        source_file_path,
+                        file_name,
+                    })));
+                }
+                Err(e) => {
+                    let file_hash = file_hash_from_bytes(&file_bytes);
+                    let _ = tx.send(WorkerResponse::CommitDone(Err(CommitFailure {
+                        error: friendly_error(&e),
+                        project_path: project_path_clone,
+                        chain_uuid,
+                        file_hash,
+                    })));
+                }
             }
-        };
-
-        self.state.head_event_id = Some(commit.head_event_id.clone());
-
-        let original_name = match self.persist_original(&project_path, Path::new(&self.file_path), commit.sequence) {
-            Ok(name) => name,
-            Err(err) => {
-                self.step = Step::Failed;
-                self.status = format!("❌ {err}");
-                return;
-            }
-        };
-
-        self.event_id = commit.event_id.clone();
-        let proof_name = format!("{}.json", self.event_id);
-        let dest_proof = proofs_dir.join(&proof_name);
-        let _ = fs::copy(&proof_path, &dest_proof);
-        self.proof_path = dest_proof.display().to_string();
-
-        if let Ok(event_id) = Uuid::parse_str(&commit.event_id) {
-            let audit_event = AuditEvent::submitted(
-                event_id,
-                chain_uuid,
-                file_hash.clone(),
-                None,
-                format!("{}:{}", original_name, self.file_name),
-            );
-            let _ = self.append_audit_event(&project_path, audit_event);
-
-            // Find the matching EventLeaf to get parent_event_id
-            let parent_event_id = commit.events.iter()
-                .find(|leaf| leaf.event_id == commit.event_id)
-                .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
-
-            // Create TsaAttestation from commit.tsa and commit.proof if available
-            let proof = commit.tsa.as_ref().map(|tsa| {
-                TsaAttestation::new(
-                    commit.proof.root.clone(),
-                    commit.proof.signature.clone(),
-                    "".to_string() // TSA field placeholder for now
-                )
-            });
-
-            if let Ok(server_event_id) = Uuid::parse_str(&commit.event_id) {
-                let anchored_event = AuditEvent::anchored(
-                    Uuid::new_v4(), // new event_id for the anchored event
-                    chain_uuid,
-                    file_hash,
-                    parent_event_id,
-                    commit.sequence,
-                    server_event_id,
-                    proof,
-                );
-                let _ = self.append_audit_event(&project_path, anchored_event);
-            }
-        }
-
-        self.step = Step::Done;
-        self.status = "✅ Фиксация завершена".to_string();
-        self.commit_success = true;
-        self.screen = Screen::Result;
-        self.load_projects();
+            ctx.request_repaint();
+        });
     }
 
     fn do_verify(&mut self, ctx: &egui::Context) {
@@ -778,6 +761,92 @@ impl eframe::App for App {
                         Err(e) => {
                             self.verify_status = VerifyStatus::Partial;
                             self.verify_details = format!("⚠️ Ошибка проверки: {}", e);
+                        }
+                    }
+                }
+                WorkerResponse::CommitDone(res) => {
+                    self.loading_commit = false;
+                    match res {
+                        Ok(success) => {
+                            let CommitSuccess {
+                                commit, proof_path, file_hash,
+                                project_path, proofs_dir, chain_uuid,
+                                source_file_path, file_name,
+                            } = success;
+
+                            self.state.head_event_id = Some(commit.head_event_id.clone());
+
+                            let original_name = match self.persist_original(
+                                &project_path, Path::new(&source_file_path), commit.sequence,
+                            ) {
+                                Ok(name) => Some(name),
+                                Err(err) => {
+                                    self.step = Step::Failed;
+                                    self.status = format!("❌ {err}");
+                                    None
+                                }
+                            };
+
+                            if let Some(original_name) = original_name {
+                                self.event_id = commit.event_id.clone();
+                                let proof_name = format!("{}.json", self.event_id);
+                                let dest_proof = proofs_dir.join(&proof_name);
+                                let _ = fs::copy(&proof_path, &dest_proof);
+                                self.proof_path = dest_proof.display().to_string();
+
+                                if let Ok(event_id) = Uuid::parse_str(&commit.event_id) {
+                                    let audit_event = AuditEvent::submitted(
+                                        event_id,
+                                        chain_uuid,
+                                        file_hash.clone(),
+                                        None,
+                                        format!("{}:{}", original_name, file_name),
+                                    );
+                                    let _ = self.append_audit_event(&project_path, audit_event);
+
+                                    let parent_event_id = commit.events.iter()
+                                        .find(|leaf| leaf.event_id == commit.event_id)
+                                        .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
+
+                                    let proof = commit.tsa.as_ref().map(|_tsa| {
+                                        TsaAttestation::new(
+                                            commit.proof.root.clone(),
+                                            commit.proof.signature.clone(),
+                                            "".to_string()
+                                        )
+                                    });
+
+                                    if let Ok(server_event_id) = Uuid::parse_str(&commit.event_id) {
+                                        let anchored_event = AuditEvent::anchored(
+                                            Uuid::new_v4(),
+                                            chain_uuid,
+                                            file_hash,
+                                            parent_event_id,
+                                            commit.sequence,
+                                            server_event_id,
+                                            proof,
+                                        );
+                                        let _ = self.append_audit_event(&project_path, anchored_event);
+                                    }
+                                }
+
+                                self.step = Step::Done;
+                                self.status = "✅ Фиксация завершена".to_string();
+                                self.commit_success = true;
+                                self.screen = Screen::Result;
+                                self.load_projects();
+                            }
+                        }
+                        Err(failure) => {
+                            let _ = self.append_audit_event(&failure.project_path, AuditEvent::failed(
+                                Uuid::new_v4(),
+                                failure.chain_uuid,
+                                failure.file_hash,
+                                None,
+                                format!("submit failed: {}", failure.error),
+                            ));
+                            self.step = Step::Failed;
+                            self.status = format!("❌ {}", failure.error);
                         }
                     }
                 }
@@ -1044,8 +1113,11 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                     && ((self.project_mode == ProjectMode::New && !self.project_name.is_empty())
                         || (self.project_mode == ProjectMode::Existing && !self.selected_project.is_empty()));
 
-                if ui.add_enabled(can_commit, egui::Button::new("✅ Зафиксировать")).clicked() {
-                    self.do_commit();
+                if self.loading_commit {
+                    ui.spinner();
+                    ui.label("Отправка...");
+                } else if ui.add_enabled(can_commit, egui::Button::new("✅ Зафиксировать")).clicked() {
+                    self.do_commit(ui.ctx());
                 }
 
                 if ui.button("⬅ Назад к файлу").clicked() {
@@ -1234,3 +1306,4 @@ fn main() -> Result<(), eframe::Error> {
         Box::new(|_cc| Ok(Box::new(app))),
     )
 }
+
