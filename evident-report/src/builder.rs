@@ -1,10 +1,11 @@
 use std::path::Path;
-use crate::{ProofData, Result, ReportError};
+use crate::{ProofData, Result, ReportError, VerificationContext};
 use crate::pdf::write_pdf;
 
 pub fn generate_report(
     chain_id: &str,
     proof_data: &ProofData,
+    verification: &VerificationContext,
     output_path: &Path,
 ) -> Result<()> {
     // Проверка: chain_id должен совпадать
@@ -17,5 +18,5 @@ pub fn generate_report(
         return Err(ReportError::InvalidProofData);
     }
 
-    write_pdf(proof_data, output_path)
+    write_pdf(proof_data, verification, output_path)
 }
