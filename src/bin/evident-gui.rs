@@ -8,6 +8,7 @@ use evident_ledger::audit::{AuditEvent, AuditStore, TsaAttestation};
 use sha2::{Digest, Sha256};
 use evident_ledger::client::{self, EvidentClient};
 use uuid::Uuid;
+use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
 
 // ============================================================================
 // МОДЕЛЬ ПРОЕКТА
@@ -152,6 +153,7 @@ struct App {
     loading_verify_chain: bool,
     network_error: bool,
     loading_commit: bool,
+    last_proof: Option<client::ProofFile>,
 }
 
 impl Default for App {
@@ -189,6 +191,7 @@ impl Default for App {
             loading_verify_chain: false,
             network_error: false,
             loading_commit: false,
+            last_proof: None,
         }
     }
 }
@@ -281,6 +284,59 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
         .flatten()
         .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
         .map(|e| e.file_name().to_string_lossy().into_owned())
+}
+
+fn build_certificate_input(
+    proof: &client::ProofFile,
+    events: &[VerificationEvent],
+    originals_dir: &Path,
+    verify_valid: bool,
+) -> CertificateInput {
+    let head_event = events.iter().find(|e| e.event_id == proof.head_event_id);
+
+    let file_name = head_event
+        .map(|e| e.file_name.clone())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let file_size_kb = fs::metadata(originals_dir.join(&file_name))
+        .map(|m| m.len() / 1024)
+        .unwrap_or(0);
+
+    let sha256 = proof.events.iter()
+        .find(|e| e.event_id == proof.head_event_id)
+        .map(|e| e.file_hash.clone())
+        .or_else(|| proof.events.last().map(|e| e.file_hash.clone()))
+        .unwrap_or_default();
+
+    let status = if !verify_valid {
+        CertificateStatus::InvalidHash
+    } else if proof.tsa.is_none() {
+        CertificateStatus::MissingTsa
+    } else {
+        CertificateStatus::Valid
+    };
+
+    let tsa_timestamp_utc = match proof.tsa.as_ref().and_then(|t| t.timestamp) {
+        Some(ts) => CertificateInput::format_timestamp_unix(ts as u64),
+        None => "не подтверждено".to_string(),
+    };
+    let tsa_token = proof.tsa.as_ref().and_then(|t| t.token_bytes).unwrap_or(0).to_string();
+
+    CertificateInput {
+        status,
+        file_hash_valid: verify_valid,
+        tsa_valid: proof.tsa.is_some(),
+        proof_id: proof.chain_id.clone(),
+        sha256,
+        object_type: "file".into(),
+        created_at_utc: Utc::now().to_rfc3339(),
+        tsa_provider: "FreeTSA".into(),
+        tsa_timestamp_utc,
+        tsa_token_base64: tsa_token,
+        verify_url: format!("https://example.com/verify/{}", proof.chain_id),
+        file_size_kb,
+        file_name,
+    }
 }
 
     fn new() -> Self {
@@ -678,6 +734,7 @@ impl eframe::App for App {
                     match res {
                         Ok((verify_result, proof, originals_dir)) => {
                             self.network_error = false;
+                            self.last_proof = Some(proof.clone());
                             self.state.head_event_id = Some(verify_result.head_event_id.clone());
 
                             for event in proof.events.iter() {
@@ -985,18 +1042,8 @@ format!(
                                         ui.colored_label(COLOR_INVALID, label);
                                     }
 
-                                    if ui.button("📄 PDF").clicked() {
-                                        let pdf_path = projects_dir
-                                            .join(&self.verification_project)
-                                            .join("proofs")
-                                            .join("proof.pdf");
-                                        if pdf_path.exists() {
-                                            let _ = Command::new("open").arg(&pdf_path).output();
-                                            self.status = format!("✅ PDF открыт для события {}", event.sequence);
-                                        } else {
-                                            self.status = format!("❌ PDF не найден для события {}", event.sequence);
-                                        }
-                                    }
+                                    ui.add_enabled(false, egui::Button::new("📄 PDF"))
+                                        .on_disabled_hover_text("Доступно в event-level экспорте (скоро)");
 
 ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
     .on_disabled_hover_text("Экспорт в ZIP появится в следующей версии");
@@ -1016,7 +1063,36 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("📄 Скачать заключение (PDF)").clicked() {
-                        self.status = "⏳ Генерация заключения...".to_string();
+                        match &self.last_proof {
+                            Some(proof) => {
+                                let originals_dir = projects_dir.join(&self.verification_project).join("originals");
+                                let proofs_dir = projects_dir.join(&self.verification_project).join("proofs");
+                                let _ = fs::create_dir_all(&proofs_dir);
+
+                                let verify_valid = self.verify_status == VerifyStatus::Valid;
+                                let input = Self::build_certificate_input(proof, &self.verification_events, &originals_dir, verify_valid);
+
+                                match generate_certificate_pdf(&input) {
+                                    Ok(pdf_bytes) => {
+                                        let pdf_path = proofs_dir.join("certificate.pdf");
+                                        match fs::write(&pdf_path, pdf_bytes) {
+                                            Ok(()) => {
+                                                self.status = format!("✅ Заключение сохранено: {}", pdf_path.display());
+                                            }
+                                            Err(e) => {
+                                                self.status = format!("❌ Не удалось сохранить PDF: {}", e);
+                                            }
+                                        }
+                                    }
+                                    Err(e) => {
+                                        self.status = format!("❌ Ошибка генерации PDF: {}", e);
+                                    }
+                                }
+                            }
+                            None => {
+                                self.status = "❌ Нет данных для заключения — сначала выполните проверку".to_string();
+                            }
+                        }
                     }
                     if ui.button("📦 Скачать проект (ZIP)").clicked() {
                         self.status = "⏳ Упаковка проекта...".to_string();
