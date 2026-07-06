@@ -48,6 +48,11 @@ pub fn router(state: AppState) -> Router {
         .merge(
             Router::new()
                 .route("/:chain_id/attestation", get(handler_attestation))
+                .with_state(state.clone())
+        )
+        .merge(
+            Router::new()
+                .route("/:chain_id/attestation.pdf", get(handler_attestation_pdf))
                 .with_state(state)
         )
 }
@@ -70,6 +75,28 @@ async fn handler_attestation(
         .await
         .map(Json)
         .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+async fn handler_attestation_pdf(
+    State(state): State<AppState>,
+    Path(chain_id): Path<Uuid>,
+) -> Result<impl IntoResponse, ApiError> {
+    let doc = build_attestation(&state.db, &state.signer, chain_id)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let pdf_bytes = crate::sac_pdf::render_sac_pdf(&doc);
+
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/pdf".to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"sac-{}.pdf\"", chain_id),
+            ),
+        ],
+        pdf_bytes,
+    ))
 }
 
 async fn handler_proof(

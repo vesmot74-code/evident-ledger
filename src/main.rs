@@ -11,6 +11,7 @@ mod signing;
 mod state;
 mod tsa_worker;
 mod sac;
+mod sac_pdf;
 
 #[tokio::main]
 async fn main() {
