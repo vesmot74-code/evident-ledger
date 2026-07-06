@@ -9,7 +9,7 @@ pub struct ProofData {
     pub signature: String,
     pub public_key: String,
     pub tsa: Option<TsaData>,
-    pub created_at: DateTime<Utc>,
+    pub created_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Debug, Clone)]

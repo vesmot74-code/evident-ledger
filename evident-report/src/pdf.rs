@@ -47,6 +47,10 @@ pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_p
 
 fn add_header(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, verification: &VerificationContext, y: &mut f32) {
     let status_text = if verification.is_valid { "VALID" } else { "INVALID" };
+    let trusted_timestamp_text = match proof.created_at {
+        Some(ts) => ts.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
+        None => "UNANCHORED — no external timestamp evidence".to_string(),
+    };
     let text = format!(
         "EVIDENT LEDGER PROOF REPORT\n\
          ─────────────────────────────\n\
@@ -55,7 +59,7 @@ fn add_header(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofDa
          Verification Time: {}\n\
          Chain Status: {}",
         proof.chain_id,
-        proof.created_at.format("%Y-%m-%d %H:%M:%S UTC"),
+        trusted_timestamp_text,
         verification.verified_at.format("%Y-%m-%d %H:%M:%S UTC"),
         status_text
     );
