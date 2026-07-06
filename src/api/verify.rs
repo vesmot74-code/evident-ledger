@@ -11,6 +11,8 @@ use serde_json::json;
 use uuid::Uuid;
 use crate::state::AppState;
 use crate::service::verification::{verify_chain, export_proof};
+use crate::service::attestation::build_attestation;
+use crate::sac::SacDocument;
 
 pub enum ApiError {
     BadRequest(String),
@@ -41,6 +43,11 @@ pub fn router(state: AppState) -> Router {
         .merge(
             Router::new()
                 .route("/hash", post(handler_verify_hash))
+                .with_state(state.clone())
+        )
+        .merge(
+            Router::new()
+                .route("/:chain_id/attestation", get(handler_attestation))
                 .with_state(state)
         )
 }
@@ -50,6 +57,16 @@ async fn handler_verify(
     Path(chain_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     verify_chain(&state.db, &state.signer, chain_id)
+        .await
+        .map(Json)
+        .map_err(|e| ApiError::Internal(e.to_string()))
+}
+
+async fn handler_attestation(
+    State(state): State<AppState>,
+    Path(chain_id): Path<Uuid>,
+) -> Result<Json<SacDocument>, ApiError> {
+    build_attestation(&state.db, &state.signer, chain_id)
         .await
         .map(Json)
         .map_err(|e| ApiError::Internal(e.to_string()))

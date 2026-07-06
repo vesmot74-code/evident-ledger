@@ -5,6 +5,7 @@ pub mod freeze;
 pub mod merkle;
 pub mod models;
 pub mod product;
+pub mod sac;
 pub mod service;
 pub mod signing;
 pub mod state;

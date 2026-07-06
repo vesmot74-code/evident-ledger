@@ -13,6 +13,7 @@ pub struct VerificationReport {
     pub head_event_id: Option<Uuid>,
     pub merkle_recomputed: String,
     pub merkle_match: bool,
+    pub last_event_created_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
 pub async fn verify_chain_hardened(
@@ -41,6 +42,7 @@ pub async fn verify_chain_hardened(
         head_event_id: None,
         merkle_recomputed: String::new(),
         merkle_match: false,
+        last_event_created_at: None,
     };
 
     if records.is_empty() {
@@ -108,6 +110,7 @@ pub async fn verify_chain_hardened(
     report.merkle_recomputed = recomputed_root.clone();
 
     report.head_event_id = events.last().map(|e| e.event_id);
+    report.last_event_created_at = events.last().map(|e| e.created_at);
 
     Ok(report)
 }

@@ -10,6 +10,7 @@ mod merkle;
 mod signing;
 mod state;
 mod tsa_worker;
+mod sac;
 
 #[tokio::main]
 async fn main() {
