@@ -7,6 +7,17 @@ pub struct TsaAttestation {
     pub tsr_hash: String,
     pub signature_valid: bool,
     pub raw_token_b64: String,
+    pub trust_level: TsaTrustLevel,
+}
+
+/// Distinguishes a deterministic offline simulation from a real
+/// external TSA provider response. `signature_valid` is only a
+/// cryptographic guarantee when `trust_level == External`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TsaTrustLevel {
+    Stub,
+    External,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

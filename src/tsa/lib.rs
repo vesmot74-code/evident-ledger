@@ -11,6 +11,6 @@ mod writer;
 
 pub use attest::{create_stub_attestation, submit_bundle_hash_stub};
 pub use job_store::{process_pending_job, FileSystemTsaJobStore, TsaJobStore};
-pub use types::{TsaAttestation, TsaJob, TsaJobState, TsaStatus};
+pub use types::{TsaAttestation, TsaJob, TsaJobState, TsaStatus, TsaTrustLevel};
 pub use verify::{tsa_status_for_bundle, verify_tsa_attestation};
 pub use writer::FileSystemTsaWriter;

@@ -4,7 +4,7 @@ use anyhow::Result;
 use base64::Engine;
 use sha2::{Digest, Sha256};
 
-use super::types::TsaAttestation;
+use super::types::{TsaAttestation, TsaTrustLevel};
 
 fn unix_now() -> i64 {
     SystemTime::now()
@@ -25,6 +25,7 @@ pub fn create_stub_attestation(bundle_hash: &str, provider: &str) -> TsaAttestat
         tsr_hash: bundle_hash.to_string(),
         signature_valid: true,
         raw_token_b64,
+        trust_level: TsaTrustLevel::Stub,
     }
 }
 

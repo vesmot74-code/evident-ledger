@@ -3,12 +3,13 @@ use std::process::Command;
 use std::fs;
 use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
-use chrono::Utc;
-use evident_ledger::audit::{AuditEvent, AuditStore, TsaAttestation};
+use chrono::{Utc, TimeZone};
+use evident_ledger::audit::{AuditEvent, AuditStore, ChainAnchorProof};
 use sha2::{Digest, Sha256};
 use evident_ledger::client::{self, EvidentClient};
 use uuid::Uuid;
 use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
+use evident_report::{ProofData, EventSummary, TsaData as ReportTsaData, VerificationContext, generate_report};
 
 // ============================================================================
 // МОДЕЛЬ ПРОЕКТА
@@ -337,6 +338,57 @@ fn build_certificate_input(
         file_size_kb,
         file_name,
     }
+}
+
+fn build_evidence_snapshot(
+    proof: &client::ProofFile,
+    events: &[VerificationEvent],
+    verify_valid: bool,
+) -> (ProofData, VerificationContext) {
+    let report_events: Vec<EventSummary> = proof.events.iter()
+        .map(|e| EventSummary {
+            event_id: e.event_id.clone(),
+            file_hash: e.file_hash.clone(),
+            sequence: Some(e.sequence),
+        })
+        .collect();
+
+    let tsa_complete = proof.tsa.as_ref().and_then(|t| {
+        match (t.timestamp, &t.serial, t.token_bytes) {
+            (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
+                timestamp: ts,
+                serial: serial.clone(),
+                token_bytes: tb as usize,
+            }),
+            _ => None,
+        }
+    });
+
+    let created_at = proof.tsa.as_ref()
+        .and_then(|t| t.timestamp)
+        .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
+
+    let proof_data = ProofData {
+        chain_id: proof.chain_id.clone(),
+        head_event_id: proof.head_event_id.clone(),
+        events: report_events,
+        root: proof.proof.root.clone(),
+        signature: proof.proof.signature.clone(),
+        public_key: proof.proof.public_key.clone(),
+        tsa: tsa_complete,
+        created_at,
+    };
+
+    let first_failure = events.iter().find(|e| !e.valid);
+
+    let verification = VerificationContext {
+        is_valid: verify_valid,
+        verified_at: Utc::now(),
+        first_failure_sequence: first_failure.map(|e| e.sequence),
+        first_failure_error: first_failure.and_then(|e| e.error.clone()),
+    };
+
+    (proof_data, verification)
 }
 
     fn new() -> Self {
@@ -866,10 +918,10 @@ impl eframe::App for App {
                                         .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
 
                                     let proof = commit.tsa.as_ref().map(|_tsa| {
-                                        TsaAttestation::new(
+                                        ChainAnchorProof::new(
                                             commit.proof.root.clone(),
                                             commit.proof.signature.clone(),
-                                            "".to_string()
+                                            "evident-ledger".to_string()
                                         )
                                     });
 
@@ -1065,24 +1117,16 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                     if ui.button("📄 Скачать заключение (PDF)").clicked() {
                         match &self.last_proof {
                             Some(proof) => {
-                                let originals_dir = projects_dir.join(&self.verification_project).join("originals");
                                 let proofs_dir = projects_dir.join(&self.verification_project).join("proofs");
                                 let _ = fs::create_dir_all(&proofs_dir);
 
                                 let verify_valid = self.verify_status == VerifyStatus::Valid;
-                                let input = Self::build_certificate_input(proof, &self.verification_events, &originals_dir, verify_valid);
+                                let (proof_data, verification) = Self::build_evidence_snapshot(proof, &self.verification_events, verify_valid);
+                                let pdf_path = proofs_dir.join("evidence_snapshot.pdf");
 
-                                match generate_certificate_pdf(&input) {
-                                    Ok(pdf_bytes) => {
-                                        let pdf_path = proofs_dir.join("certificate.pdf");
-                                        match fs::write(&pdf_path, pdf_bytes) {
-                                            Ok(()) => {
-                                                self.status = format!("✅ Заключение сохранено: {}", pdf_path.display());
-                                            }
-                                            Err(e) => {
-                                                self.status = format!("❌ Не удалось сохранить PDF: {}", e);
-                                            }
-                                        }
+                                match generate_report(&proof_data.chain_id.clone(), &proof_data, &verification, &pdf_path) {
+                                    Ok(()) => {
+                                        self.status = format!("✅ Заключение сохранено: {}", pdf_path.display());
                                     }
                                     Err(e) => {
                                         self.status = format!("❌ Ошибка генерации PDF: {}", e);

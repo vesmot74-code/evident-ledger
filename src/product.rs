@@ -8,7 +8,7 @@ use serde_json::json;
 use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
-use crate::audit::{AuditEvent, AuditStore, TsaAttestation};
+use crate::audit::{AuditEvent, AuditStore, ChainAnchorProof};
 
 #[derive(Debug, Clone)]
 pub struct FixationResult {
@@ -133,7 +133,7 @@ let sequence = leaf.sequence;
         parent_event_id,
         sequence,
         server_event_id,
-        Some(TsaAttestation::new(commit.proof.root.clone(), commit.proof.signature.clone(), "evident-ledger".into())),
+        Some(ChainAnchorProof::new(commit.proof.root.clone(), commit.proof.signature.clone(), "evident-ledger".into())),
     );
     store.append(&anchored)?;
 

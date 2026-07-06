@@ -22,7 +22,7 @@ pub enum AuditEventKind {
     Submitted { idempotency_key: String },
     Anchored {
         server_event_id: Uuid,
-        proof: Option<TsaAttestation>,
+        proof: Option<ChainAnchorProof>,
     },
     Failed { error: String },
 }
@@ -35,16 +35,19 @@ pub enum EventState {
     Failed,
 }
 
+/// Internal proof that a chain's Merkle root was anchored and signed
+/// by this ledger at a given point. This is NOT a TSA (external time
+/// authority) attestation — see `crate::tsa::TsaAttestation` for that.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct TsaAttestation {
+pub struct ChainAnchorProof {
     pub root: String,
     pub signature: String,
-    pub tsa: String,
+    pub anchored_by: String,
 }
 
-impl TsaAttestation {
-    pub fn new(root: String, signature: String, tsa: String) -> Self {
-        Self { root, signature, tsa }
+impl ChainAnchorProof {
+    pub fn new(root: String, signature: String, anchored_by: String) -> Self {
+        Self { root, signature, anchored_by }
     }
 }
 
@@ -86,7 +89,7 @@ impl AuditEvent {
         parent_event_id: Option<Uuid>,
         sequence: i64,
         server_event_id: Uuid,
-        proof: Option<TsaAttestation>,
+        proof: Option<ChainAnchorProof>,
     ) -> Self {
         Self {
             event_id,
@@ -199,7 +202,7 @@ mod tests {
             None,
             1, // sequence number
             Uuid::new_v4(),
-            Some(TsaAttestation::new("root".into(), "sig".into(), "tsa".into())),
+            Some(ChainAnchorProof::new("root".into(), "sig".into(), "evident-ledger".into())),
         );
 
         store.append(&anchored).unwrap();
