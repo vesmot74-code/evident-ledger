@@ -6,7 +6,7 @@ use chrono::Utc;
 
 use crate::{ProofData, VerificationContext};
 
-const LINE_HEIGHT: f32 = 20.0;
+const LINE_HEIGHT: f32 = 6.0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReportError {
@@ -20,6 +20,26 @@ pub enum ReportError {
 
 pub type Result<T> = std::result::Result<T, ReportError>;
 
+const MM_TO_PT: f32 = 2.834_646;
+
+fn draw_multiline_text(layer: &PdfLayerReference, font: &IndirectFontRef, text: &str, size: f32, x: Mm, y: Mm, line_height_mm: f32) {
+    layer.begin_text_section();
+    layer.set_font(font, size);
+    layer.set_text_cursor(x, y);
+    layer.set_line_height(line_height_mm * MM_TO_PT);
+
+    let mut lines = text.split('\n');
+    if let Some(first) = lines.next() {
+        layer.write_text(first, font);
+    }
+    for line in lines {
+        layer.add_line_break();
+        layer.write_text(line, font);
+    }
+
+    layer.end_text_section();
+}
+
 pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_path: &Path) -> Result<()> {
     let (doc, page1, layer1) = PdfDocument::new(
         "Evident Ledger Proof Report",
@@ -30,7 +50,7 @@ pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_p
     let layer = doc.get_page(page1).get_layer(layer1);
     let font = doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
 
-    let mut y = 800.0;
+    let mut y = 270.0;
 
     add_header(&layer, &font, proof, verification, &mut y);
     add_summary(&layer, &font, proof, verification, &mut y);
@@ -63,8 +83,9 @@ fn add_header(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofDa
         verification.verified_at.format("%Y-%m-%d %H:%M:%S UTC"),
         status_text
     );
-    layer.use_text(&text, 14.0, Mm(50.0), Mm(*y), font);
-    *y -= LINE_HEIGHT * 6.0;
+    let lines = text.matches('\n').count() as f32 + 1.0;
+    draw_multiline_text(layer, font, &text, 14.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
+    *y -= LINE_HEIGHT * (lines + 1.0);
 }
 
 fn add_summary(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, verification: &VerificationContext, y: &mut f32) {
@@ -93,8 +114,9 @@ fn add_summary(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofD
         }
     }
 
-    layer.use_text(&text, 11.0, Mm(50.0), Mm(*y), font);
-    *y -= LINE_HEIGHT * 9.0;
+    let lines = text.matches('\n').count() as f32 + 1.0;
+    draw_multiline_text(layer, font, &text, 11.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
+    *y -= LINE_HEIGHT * (lines + 1.0);
 }
 
 fn add_events(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, y: &mut f32) {
@@ -115,8 +137,9 @@ fn add_events(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofDa
         ));
     }
 
-    layer.use_text(&table, 8.0, Mm(50.0), Mm(*y), font);
-    *y -= LINE_HEIGHT * (proof.events.len() as f32 + 2.0);
+    let lines = table.matches('\n').count() as f32 + 1.0;
+    draw_multiline_text(layer, font, &table, 8.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
+    *y -= LINE_HEIGHT * (lines + 1.0);
 }
 
 fn add_proof_block(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, y: &mut f32) {
@@ -138,8 +161,9 @@ fn add_proof_block(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &Pr
         }
     }
 
-    layer.use_text(&text, 9.0, Mm(50.0), Mm(*y), font);
-    *y -= LINE_HEIGHT * 7.0;
+    let lines = text.matches('\n').count() as f32 + 1.0;
+    draw_multiline_text(layer, font, &text, 9.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
+    *y -= LINE_HEIGHT * (lines + 1.0);
 }
 
 fn add_instructions(layer: &PdfLayerReference, font: &IndirectFontRef, y: &mut f32) {
@@ -153,6 +177,7 @@ fn add_instructions(layer: &PdfLayerReference, font: &IndirectFontRef, y: &mut f
          This proof is self-contained and can be verified\n\
          without server access."
     );
-    layer.use_text(&text, 10.0, Mm(50.0), Mm(*y), font);
-    *y -= LINE_HEIGHT * 8.0;
+    let lines = text.matches('\n').count() as f32 + 1.0;
+    draw_multiline_text(layer, font, &text, 10.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
+    *y -= LINE_HEIGHT * (lines + 1.0);
 }
