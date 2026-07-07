@@ -12,6 +12,8 @@ mod state;
 mod tsa_worker;
 mod sac;
 mod sac_pdf;
+mod hash_attestation;
+mod hash_attestation_pdf;
 
 #[tokio::main]
 async fn main() {

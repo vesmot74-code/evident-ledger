@@ -12,6 +12,8 @@ use uuid::Uuid;
 use crate::state::AppState;
 use crate::service::verification::{verify_chain, export_proof};
 use crate::service::attestation::build_attestation;
+use crate::hash_attestation::build_hash_attestation;
+use crate::hash_attestation_pdf::render_hash_attestation_pdf;
 use crate::sac::SacDocument;
 
 pub enum ApiError {
@@ -53,6 +55,11 @@ pub fn router(state: AppState) -> Router {
         .merge(
             Router::new()
                 .route("/:chain_id/attestation.pdf", get(handler_attestation_pdf))
+                .with_state(state.clone())
+        )
+        .merge(
+            Router::new()
+                .route("/hash/:hash/attestation.pdf", get(handler_hash_attestation_pdf))
                 .with_state(state)
         )
 }
@@ -165,4 +172,31 @@ async fn handler_verify_hash(
         found: !matches.is_empty(),
         matches,
     }))
+}
+
+async fn handler_hash_attestation_pdf(
+    State(state): State<AppState>,
+    Path(hash): Path<String>,
+) -> Result<impl IntoResponse, ApiError> {
+    let hash = hash.trim().to_lowercase();
+    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(ApiError::BadRequest("invalid sha256 hash format".to_string()));
+    }
+
+    let doc = build_hash_attestation(&state.db, &state.signer, &hash)
+        .await
+        .map_err(|e| ApiError::Internal(e.to_string()))?;
+
+    let pdf_bytes = render_hash_attestation_pdf(&doc);
+
+    Ok((
+        [
+            (axum::http::header::CONTENT_TYPE, "application/pdf".to_string()),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"hash-attestation-{}.pdf\"", &hash[..16]),
+            ),
+        ],
+        pdf_bytes,
+    ))
 }

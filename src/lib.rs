@@ -7,6 +7,8 @@ pub mod models;
 pub mod product;
 pub mod sac;
 pub mod sac_pdf;
+pub mod hash_attestation;
+pub mod hash_attestation_pdf;
 pub mod service;
 pub mod signing;
 pub mod state;
