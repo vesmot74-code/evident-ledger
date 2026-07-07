@@ -27,9 +27,17 @@ pub struct TsaData {
 }
 
 #[derive(Debug, Clone)]
+pub struct FileStatus {
+    pub file_name: String,
+    pub chain_valid: bool,
+    pub local_integrity_ok: Option<bool>,
+}
+
+#[derive(Debug, Clone)]
 pub struct VerificationContext {
     pub is_valid: bool,
     pub verified_at: DateTime<Utc>,
     pub first_failure_sequence: Option<i64>,
     pub first_failure_error: Option<String>,
+    pub files: Vec<FileStatus>,
 }

@@ -6,7 +6,13 @@ use chrono::Utc;
 
 use crate::{ProofData, VerificationContext};
 
+const PAGE_WIDTH: f32 = 210.0;
+const PAGE_HEIGHT: f32 = 297.0;
+const MARGIN_LEFT: f32 = 50.0;
+const MARGIN_TOP: f32 = 27.0;
+const MARGIN_BOTTOM: f32 = 20.0;
 const LINE_HEIGHT: f32 = 6.0;
+const SECTION_GAP: f32 = 6.0;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ReportError {
@@ -22,42 +28,121 @@ pub type Result<T> = std::result::Result<T, ReportError>;
 
 const MM_TO_PT: f32 = 2.834_646;
 
-fn draw_multiline_text(layer: &PdfLayerReference, font: &IndirectFontRef, text: &str, size: f32, x: Mm, y: Mm, line_height_mm: f32) {
-    layer.begin_text_section();
-    layer.set_font(font, size);
-    layer.set_text_cursor(x, y);
-    layer.set_line_height(line_height_mm * MM_TO_PT);
-
-    let mut lines = text.split('\n');
-    if let Some(first) = lines.next() {
-        layer.write_text(first, font);
+fn wrap_text(text: &str, max_chars: usize) -> String {
+    let mut result = String::new();
+    for line in text.split('\n') {
+        if line.chars().count() <= max_chars {
+            result.push_str(line);
+            result.push('\n');
+            continue;
+        }
+        let mut current = String::new();
+        for word in line.split(' ') {
+            let candidate_len = if current.is_empty() {
+                word.chars().count()
+            } else {
+                current.chars().count() + 1 + word.chars().count()
+            };
+            if candidate_len <= max_chars {
+                if !current.is_empty() {
+                    current.push(' ');
+                }
+                current.push_str(word);
+            } else {
+                if !current.is_empty() {
+                    result.push_str(&current);
+                    result.push('\n');
+                }
+                current = word.to_string();
+            }
+        }
+        result.push_str(&current);
+        result.push('\n');
     }
-    for line in lines {
-        layer.add_line_break();
-        layer.write_text(line, font);
+    if result.ends_with('\n') {
+        result.pop();
+    }
+    result
+}
+
+/// Rendering context with automatic pagination. All text output goes
+/// through this struct so no section can silently render off-page again.
+struct Ctx {
+    doc: PdfDocumentReference,
+    layer: PdfLayerReference,
+    font: IndirectFontRef,
+    y: f32,
+}
+
+impl Ctx {
+    fn new(doc: PdfDocumentReference, layer: PdfLayerReference, font: IndirectFontRef) -> Self {
+        Self { doc, layer, font, y: PAGE_HEIGHT - MARGIN_TOP }
     }
 
-    layer.end_text_section();
+    fn ensure_space(&mut self, lines_needed: f32) {
+        let needed = LINE_HEIGHT * lines_needed;
+        if self.y - needed < MARGIN_BOTTOM {
+            let (page, layer) = self.doc.add_page(Mm(PAGE_WIDTH), Mm(PAGE_HEIGHT), "Layer");
+            self.layer = self.doc.get_page(page).get_layer(layer);
+            self.y = PAGE_HEIGHT - MARGIN_TOP;
+        }
+    }
+
+    /// Raw line-by-line output, NO word-wrapping. Use this for pre-formatted
+    /// content (tables) whose column widths are already fixed by the caller —
+    /// running such content through wrap_text() breaks column alignment.
+    fn raw_line(&mut self, text: &str, size: f32) {
+        self.ensure_space(1.0);
+        self.layer.use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.font);
+        self.y -= LINE_HEIGHT;
+    }
+
+    fn raw_block(&mut self, text: &str, size: f32) {
+        for line in text.split('\n') {
+            self.raw_line(line, size);
+        }
+    }
+
+    /// Word-wrapped, paginated block for prose content.
+    fn wrapped_block(&mut self, text: &str, size: f32) {
+        let usable_width_mm = PAGE_WIDTH - MARGIN_LEFT - 20.0;
+        let avg_char_width_mm = size * 0.5 / MM_TO_PT;
+        let max_chars = (usable_width_mm / avg_char_width_mm).floor().max(10.0) as usize;
+        let wrapped = wrap_text(text, max_chars);
+        for line in wrapped.split('\n') {
+            self.raw_line(line, size);
+        }
+    }
+
+    fn gap(&mut self) {
+        self.y -= SECTION_GAP;
+    }
+
+    fn finish(self) -> PdfDocumentReference {
+        self.doc
+    }
 }
 
 pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_path: &Path) -> Result<()> {
     let (doc, page1, layer1) = PdfDocument::new(
         "Evident Ledger Proof Report",
-        Mm(210.0),
-        Mm(297.0),
+        Mm(PAGE_WIDTH),
+        Mm(PAGE_HEIGHT),
         "Layer 1",
     );
     let layer = doc.get_page(page1).get_layer(layer1);
     let font = doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
 
-    let mut y = 270.0;
+    let mut ctx = Ctx::new(doc, layer, font);
 
-    add_header(&layer, &font, proof, verification, &mut y);
-    add_summary(&layer, &font, proof, verification, &mut y);
-    add_events(&layer, &font, proof, &mut y);
-    add_proof_block(&layer, &font, proof, &mut y);
-    add_instructions(&layer, &font, &mut y);
+    add_header(&mut ctx, proof, verification);
+    add_events(&mut ctx, verification);
+    add_proof_block(&mut ctx, proof);
+    add_tsa_details_block(&mut ctx, proof);
+    add_verification_scope(&mut ctx);
+    add_instructions(&mut ctx);
 
+    let doc = ctx.finish();
     let file = File::create(output_path).map_err(|_| ReportError::IoError)?;
     doc.save(&mut BufWriter::new(file))
         .map_err(|_| ReportError::PdfGenerationFailed)?;
@@ -65,119 +150,157 @@ pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_p
     Ok(())
 }
 
-fn add_header(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, verification: &VerificationContext, y: &mut f32) {
+fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationContext) {
     let status_text = if verification.is_valid { "VALID" } else { "INVALID" };
-    let trusted_timestamp_text = match proof.created_at {
-        Some(ts) => ts.format("%Y-%m-%d %H:%M:%S UTC").to_string(),
-        None => "UNANCHORED — no external timestamp evidence".to_string(),
+    let (trusted_timestamp_text, external_tsa_note) = match proof.created_at {
+        Some(ts) => (ts.format("%Y-%m-%d %H:%M:%S UTC").to_string(), None),
+        None => (
+            "Not Available".to_string(),
+            Some("External TSA Evidence: No RFC3161 timestamp was attached to this ledger state."),
+        ),
     };
-    let text = format!(
-        "EVIDENT LEDGER PROOF REPORT\n\
+    let covered_events_text = if proof.events.is_empty() {
+        "none".to_string()
+    } else {
+        format!("1-{}", proof.events.len())
+    };
+    let tsa_note_line = match external_tsa_note {
+        Some(note) => format!("\n{}", note),
+        None => String::new(),
+    };
+    let mut text = format!(
+        "EVIDENT LEDGER\n\
+         Independent Evidence Verification Report\n\
          ─────────────────────────────\n\
-         Chain ID: {}\n\
-         Last Trusted Timestamp: {}\n\
-         Verification Time: {}\n\
-         Chain Status: {}",
+         Chain Identifier: {}\n\
+         \n\
+         EVIDENCE SNAPSHOT\n\
+         ─────────────────────────────\n\
+         Last Trusted Timestamp: {}{}\n\
+         Events Covered: {}\n\
+         \n\
+         CURRENT VERIFICATION\n\
+         ─────────────────────────────\n\
+         Verification Performed: {}\n\
+         Ledger Integrity: {}",
         proof.chain_id,
         trusted_timestamp_text,
+        tsa_note_line,
+        covered_events_text,
         verification.verified_at.format("%Y-%m-%d %H:%M:%S UTC"),
-        status_text
-    );
-    let lines = text.matches('\n').count() as f32 + 1.0;
-    draw_multiline_text(layer, font, &text, 14.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
-    *y -= LINE_HEIGHT * (lines + 1.0);
-}
-
-fn add_summary(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, verification: &VerificationContext, y: &mut f32) {
-    let status_text = if verification.is_valid { "VALID" } else { "INVALID" };
-    let mut text = format!(
-        "SUMMARY\n\
-         ────────\n\
-         Chain ID:      {}\n\
-         Head Event:    {}\n\
-         Events:        {}\n\
-         Merkle Root:   {}\n\
-         Status:        {}",
-        proof.chain_id,
-        proof.head_event_id,
-        proof.events.len(),
-        proof.root,
         status_text
     );
 
     if !verification.is_valid {
         if let Some(seq) = verification.first_failure_sequence {
-            text.push_str(&format!("\nFirst Failure Event: {}", seq));
+            text.push_str(&format!("\nFirst Integrity Failure: Event #{}", seq));
         }
         if let Some(err) = &verification.first_failure_error {
-            text.push_str(&format!("\nFirst Failure Error: {}", err));
+            text.push_str(&format!("\nFailure Reason: {}", err));
         }
     }
 
-    let lines = text.matches('\n').count() as f32 + 1.0;
-    draw_multiline_text(layer, font, &text, 11.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
-    *y -= LINE_HEIGHT * (lines + 1.0);
+    ctx.wrapped_block(&text, 14.0);
+    ctx.gap();
 }
 
-fn add_events(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, y: &mut f32) {
-    layer.use_text("EVENTS", 12.0, Mm(50.0), Mm(*y), font);
-    *y -= LINE_HEIGHT;
+fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
+    ctx.ensure_space(3.0);
+    ctx.raw_line("REGISTERED EVIDENCE ITEMS", 12.0);
 
-    let mut table = String::new();
-    table.push_str(&format!("{:>4} | {:36} | {}\n", "#", "Event ID", "File Hash"));
-    table.push_str(&format!("{}", "-".repeat(80)));
-    table.push('\n');
+    let header = format!("{:>4} | {:30} | {:12} | {}", "#", "Evidence Item", "Chain Status", "Current File Integrity");
+    ctx.raw_line(&header, 8.0);
+    ctx.raw_line(&"-".repeat(80), 8.0);
 
-    for (i, event) in proof.events.iter().enumerate() {
-        table.push_str(&format!(
-            "{:>4} | {} | {}\n",
+    for (i, file) in verification.files.iter().enumerate() {
+        let chain_status = if file.chain_valid { "VALID" } else { "INVALID" };
+        let local_status = match file.local_integrity_ok {
+            Some(true) => "VALID",
+            Some(false) => "TAMPERED",
+            None => "UNKNOWN",
+        };
+        let display_name: String = file.file_name.chars().take(28).collect();
+        let row = format!(
+            "{:>4} | {:30} | {:12} | {}",
             i + 1,
-            &event.event_id[..8],
-           &event.file_hash.chars().take(16).collect::<String>()
-        ));
+            display_name,
+            chain_status,
+            local_status
+        );
+        ctx.raw_line(&row, 8.0);
     }
 
-    let lines = table.matches('\n').count() as f32 + 1.0;
-    draw_multiline_text(layer, font, &table, 8.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
-    *y -= LINE_HEIGHT * (lines + 1.0);
+    ctx.gap();
 }
 
-fn add_proof_block(layer: &PdfLayerReference, font: &IndirectFontRef, proof: &ProofData, y: &mut f32) {
-    let mut text = "PROOF BLOCK\n".to_string();
-    text.push_str(&format!("─────────────\n"));
-    text.push_str(&format!("Root:      {}\n", proof.root));
-    text.push_str(&format!("Signature: {}\n", &proof.signature[..64]));
-    text.push_str(&format!("Public Key: {}\n", &proof.public_key[..32]));
-
-    match &proof.tsa {
-        Some(tsa) => {
-            text.push_str(&format!("\nTSA: {}\n", tsa.serial));
-            text.push_str(&format!("Timestamp: {}\n", tsa.timestamp));
-            text.push_str(&format!("Token Size: {} bytes", tsa.token_bytes));
-        }
-        None => {
-            text.push_str("\nTSA Status: UNANCHORED\n");
-            text.push_str("External timestamp evidence: not available");
-        }
-    }
-
-    let lines = text.matches('\n').count() as f32 + 1.0;
-    draw_multiline_text(layer, font, &text, 9.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
-    *y -= LINE_HEIGHT * (lines + 1.0);
-}
-
-fn add_instructions(layer: &PdfLayerReference, font: &IndirectFontRef, y: &mut f32) {
+fn add_proof_block(ctx: &mut Ctx, proof: &ProofData) {
     let text = format!(
-        "VERIFY INSTRUCTION\n\
+        "CRYPTOGRAPHIC PROOF\n\
+         ────────────────────────────\n\
+         Merkle Root: {}\n\
+         Digital Signature: {}\n\
+         Public Key Fingerprint: {}",
+        proof.root,
+        &proof.signature[..64],
+        &proof.public_key[..32]
+    );
+
+    ctx.wrapped_block(&text, 9.0);
+    ctx.gap();
+}
+
+fn add_tsa_details_block(ctx: &mut Ctx, proof: &ProofData) {
+    let text = match &proof.tsa {
+        Some(tsa) => format!(
+            "EXTERNAL TIME ANCHOR DETAILS\n\
+             ────────────────────────────\n\
+             Provider: freetsa.org/tsr\n\
+             Status: VALID\n\
+             Timestamp: {}\n\
+             Serial: {}\n\
+             Token Size: {} bytes",
+            tsa.timestamp,
+            tsa.serial,
+            tsa.token_bytes
+        ),
+        None => "EXTERNAL TIME ANCHOR DETAILS\n\
+             ────────────────────────────\n\
+             Status: UNANCHORED\n\
+             External timestamp evidence: not available".to_string(),
+    };
+
+    ctx.wrapped_block(&text, 9.0);
+    ctx.gap();
+}
+
+fn add_verification_scope(ctx: &mut Ctx) {
+    let text = "VERIFICATION SCOPE\n\
+         ────────────────────────────\n\
+         This report confirms:\n\
+         - The integrity of the registered ledger chain.\n\
+         - The consistency of recorded evidence hashes.\n\
+         - The validity of the cryptographic signature.\n\
+         - The presence or absence of external timestamp evidence.\n\
+         \n\
+         This report does NOT confirm:\n\
+         - Document authorship.\n\
+         - Legal ownership.\n\
+         - Document meaning or interpretation.\n\
+         - Future immutability of external systems.";
+
+    ctx.wrapped_block(text, 9.0);
+    ctx.gap();
+}
+
+fn add_instructions(ctx: &mut Ctx) {
+    let text = "OFFLINE VERIFICATION\n\
          ──────────────────\n\
-         To verify this proof offline:\n\
+         This evidence package can be independently verified using:\n\
          \n\
          $ evident verify proof.json\n\
          \n\
          This proof is self-contained and can be verified\n\
-         without server access."
-    );
-    let lines = text.matches('\n').count() as f32 + 1.0;
-    draw_multiline_text(layer, font, &text, 10.0, Mm(50.0), Mm(*y), LINE_HEIGHT);
-    *y -= LINE_HEIGHT * (lines + 1.0);
+         without server access.";
+
+    ctx.wrapped_block(text, 10.0);
 }

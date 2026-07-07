@@ -2,7 +2,7 @@ mod report;
 mod builder;
 mod pdf;
 
-pub use report::{ProofData, EventSummary, TsaData, VerificationContext};
+pub use report::{ProofData, EventSummary, TsaData, VerificationContext, FileStatus};
 pub use builder::generate_report;
 pub use pdf::ReportError;
 

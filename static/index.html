@@ -1,22 +1,52 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Evident Ledger — детерминированный audit-ledger с криптографическим доказательством</title>
-  <style>
-    body { font-family: -apple-system, sans-serif; max-width: 800px; margin: 40px auto; padding: 0 20px; color: #0b1f3a; }
-    h1 { font-size: 1.4em; letter-spacing: 0.05em; }
-    .eyebrow { text-transform: uppercase; font-size: 0.8em; color: #64748b; letter-spacing: 0.1em; }
-    section { margin: 32px 0; }
-    a.cta { display: inline-block; padding: 12px 24px; background: #0b1f3a; color: white; text-decoration: none; border-radius: 6px; }
-    li { margin: 8px 0; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evident Ledger — детерминированный audit-ledger с криптографическим доказательством</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+:root {
+  --bg: #ffffff; --bg-secondary: #f8f9fa; --text: #1a1f24; --text-secondary: #5a6a7a;
+  --accent: #003366; --accent-light: #e8edf4; --border: #e0e4e8; --border-light: #f0f2f4;
+  --success: #0a7a5a; --error: #c72a2a;
+  --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  --content-width: 800px; --spacing-sm: 8px; --spacing-md: 16px; --spacing-lg: 32px; --spacing-xl: 48px; --spacing-xxl: 64px;
+  --radius-sm: 4px; --radius-md: 6px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body { font-family: var(--font-main); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg);
+  max-width: var(--content-width); margin: 0 auto; padding: 40px 24px 80px; min-height: 100vh; }
+h1 { font-size: 42px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; margin: 0 0 var(--spacing-sm) 0; }
+h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: var(--spacing-xl) 0 var(--spacing-md) 0; }
+h3 { font-size: 18px; font-weight: 600; margin: var(--spacing-lg) 0 var(--spacing-sm) 0; }
+p { color: var(--text-secondary); margin: 0 0 var(--spacing-md) 0; max-width: 640px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent);
+  margin: 0 0 var(--spacing-sm) 0; display: block; }
+section { margin: var(--spacing-xxl) 0; }
+section:first-of-type { margin-top: var(--spacing-xl); }
+hr { border: none; border-top: 1px solid var(--border); margin: var(--spacing-xxl) 0; }
+ul, ol { margin-left: 20px; color: var(--text-secondary); }
+li { margin: 8px 0; }
+li strong { color: var(--text); }
+.btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 24px; font-family: var(--font-main);
+  font-size: 15px; font-weight: 500; letter-spacing: -0.01em; border: none; border-radius: var(--radius-sm); cursor: pointer;
+  text-decoration: none; transition: all 0.2s ease; line-height: 1.4; }
+.btn-primary { background: var(--accent); color: #ffffff; }
+.btn-primary:hover { background: #002244; color: #ffffff; }
+footer { margin-top: var(--spacing-xxl); padding-top: var(--spacing-lg); border-top: 1px solid var(--border);
+  font-size: 14px; color: var(--text-secondary); }
+footer a { color: var(--accent); text-decoration: none; }
+footer a:hover { text-decoration: underline; }
+@media (max-width: 640px) { body { padding: 20px 16px 60px; } h1 { font-size: 30px; } h2 { font-size: 20px; } }
+</style>
 </head>
 <body>
-  <header><h1>EVIDENT LEDGER</h1></header>
+  <header><span class="eyebrow">Deterministic Event Ledger</span><h1>EVIDENT LEDGER</h1></header>
 
   <section>
-    <p class="eyebrow">Deterministic Event Ledger</p>
     <h2>Криптографическое доказательство фиксации файла во времени</h2>
     <p>
       Evident Ledger — локальная система фиксации цифровых объектов:
@@ -25,6 +55,8 @@
       Не облачный сервис — вы полностью контролируете свои данные локально.
     </p>
   </section>
+
+  <hr>
 
   <section>
     <h3>Зачем это нужно</h3>
@@ -35,11 +67,12 @@
       <li><strong>Независимая проверка</strong> — верификация (evident-verify)
         работает офлайн, не требует доверия к серверу: пересчитывает merkle root,
         проверяет подпись, сверяет файл с зафиксированным хэшем.</li>
-      <li><strong>Локальный контроль целостности</strong> — GUI дополнительно
-        проверяет, что файлы на вашем диске совпадают с зафиксированными хэшами,
-        обнаруживая случайную или намеренную подмену уже после фиксации.</li>
+      <li><strong>Hash-only проверка</strong> — можно узнать, зафиксирован ли файл
+        в системе, передав на сервер только его SHA-256, без загрузки самого документа.</li>
     </ul>
   </section>
+
+  <hr>
 
   <section>
     <h3>Когда это пригодится</h3>
@@ -51,6 +84,8 @@
     </ul>
   </section>
 
+  <hr>
+
   <section>
     <h3>Как это работает</h3>
     <ol>
@@ -61,7 +96,7 @@
   </section>
 
   <section>
-    <a class="cta" href="/verify-ui">Перейти к верификатору →</a>
+    <a class="btn btn-primary" href="/verify-ui">Перейти к верификатору →</a>
   </section>
 
   <footer><p>Evident Ledger — локальный open-source ledger.</p></footer>

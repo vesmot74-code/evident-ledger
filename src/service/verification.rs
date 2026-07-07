@@ -137,11 +137,11 @@ pub async fn export_proof(
             "chain_head": chain_head,
             "signature": signature,
             "public_key": public_key,
-            "tsa": tsa.map(|t| json!({
-                "timestamp": t.tsa_timestamp,
-                "serial": t.tsa_serial,
-                "token_bytes": t.token_bytes,
-            })),
-        }
+        },
+        "tsa": tsa.map(|t| json!({
+            "timestamp": t.tsa_timestamp,
+            "serial": t.tsa_serial,
+            "token_bytes": t.token_bytes,
+        })),
     }))
 }

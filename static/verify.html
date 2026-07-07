@@ -1,48 +1,224 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
-  <title>Evident Ledger — Верификатор</title>
-  <style>
-    body { font-family: -apple-system, sans-serif; max-width: 600px; margin: 40px auto; padding: 0 20px; color: #0b1f3a; }
-    input { width: 100%; padding: 10px; font-size: 1em; margin: 8px 0; box-sizing: border-box; }
-    button { padding: 10px 20px; background: #0b1f3a; color: white; border: none; border-radius: 6px; cursor: pointer; }
-    #result { margin-top: 20px; }
-  </style>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Evident Ledger — Верификатор</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+:root {
+  --bg: #ffffff; --bg-secondary: #f8f9fa; --text: #1a1f24; --text-secondary: #5a6a7a;
+  --accent: #003366; --accent-light: #e8edf4; --border: #e0e4e8; --border-light: #f0f2f4;
+  --success: #0a7a5a; --error: #c72a2a;
+  --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
+  --content-width: 800px; --spacing-sm: 8px; --spacing-md: 16px; --spacing-lg: 32px; --spacing-xl: 48px; --spacing-xxl: 64px;
+  --radius-sm: 4px; --radius-md: 6px;
+}
+* { margin: 0; padding: 0; box-sizing: border-box; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+body { font-family: var(--font-main); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg);
+  max-width: var(--content-width); margin: 0 auto; padding: 40px 24px 80px; min-height: 100vh; }
+h1 { font-size: 42px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; margin: 0 0 var(--spacing-sm) 0; }
+h2 { font-size: 24px; font-weight: 600; margin: var(--spacing-xl) 0 var(--spacing-md) 0; }
+p { color: var(--text-secondary); margin: 0 0 var(--spacing-md) 0; max-width: 640px; }
+.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent);
+  margin: 0 0 var(--spacing-sm) 0; display: block; }
+section { margin: var(--spacing-xxl) 0; }
+section:first-of-type { margin-top: var(--spacing-xl); }
+hr { border: none; border-top: 1px solid var(--border); margin: var(--spacing-xxl) 0; }
+.input-group { display: flex; gap: var(--spacing-sm); flex-wrap: wrap; margin: var(--spacing-md) 0; }
+.input-group input[type="text"] { flex: 1; min-width: 200px; padding: 10px 16px; font-family: var(--font-mono);
+  font-size: 14px; border: 1.5px solid var(--border); border-radius: var(--radius-sm); background: var(--bg);
+  color: var(--text); outline: none; }
+.input-group input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 51, 102, 0.1); }
+.btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 24px; font-family: var(--font-main);
+  font-size: 15px; font-weight: 500; border: none; border-radius: var(--radius-sm); cursor: pointer; line-height: 1.4; }
+.btn-primary { background: var(--accent); color: #ffffff; }
+.btn-primary:hover { background: #002244; }
+.result-card { background: var(--bg-secondary); border-radius: var(--radius-md); padding: var(--spacing-lg);
+  margin: var(--spacing-lg) 0; border: 1px solid var(--border-light); animation: fadeIn 0.3s ease-out; }
+.result-card dl { display: grid; grid-template-columns: 160px 1fr; gap: var(--spacing-sm) var(--spacing-lg); margin: 0; }
+.result-card dt { font-size: 13px; font-weight: 600; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--text-secondary); padding: var(--spacing-sm) 0; }
+.result-card dd { margin: 0; padding: var(--spacing-sm) 0; font-family: var(--font-mono); font-size: 14px;
+  color: var(--text); word-break: break-all; }
+.status-valid { color: var(--success); font-weight: 600; }
+.status-invalid { color: var(--error); font-weight: 600; }
+footer { margin-top: var(--spacing-xxl); padding-top: var(--spacing-lg); border-top: 1px solid var(--border);
+  font-size: 14px; color: var(--text-secondary); }
+footer a { color: var(--accent); text-decoration: none; }
+@keyframes fadeIn { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: translateY(0); } }
+@media (max-width: 640px) {
+  body { padding: 20px 16px 60px; }
+  h1 { font-size: 30px; }
+  .result-card dl { grid-template-columns: 1fr; gap: 0; }
+  .result-card dt { padding-bottom: 0; }
+  .result-card dd { padding-top: 0; padding-bottom: var(--spacing-md); border-bottom: 1px solid var(--border-light); }
+  .input-group { flex-direction: column; }
+  .input-group input[type="text"] { min-width: unset; width: 100%; }
+  .input-group .btn { width: 100%; }
+}
+
+.tabs { display: flex; gap: var(--spacing-sm); margin-bottom: var(--spacing-lg); border-bottom: 1px solid var(--border); }
+.tab-btn { background: none; border: none; padding: 10px 16px; font-family: var(--font-main); font-size: 15px;
+  font-weight: 500; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
+.tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+</style>
 </head>
 <body>
-  <h1>Проверка цепочки событий</h1>
-  <p>Введите chain_id для проверки криптографической целостности цепочки.</p>
+  <span class="eyebrow">Deterministic Event Ledger</span>
+  <h1>Верификатор<br>цепочки событий</h1>
+  <p>Проверка криптографической целостности цепочки по chain_id — merkle root, подпись, количество событий.</p>
 
-  <input type="text" id="chainIdInput" placeholder="chain_id (UUID)">
-  <button onclick="verify()">Проверить</button>
+  <hr>
 
-  <div id="result"></div>
+  <section>
+    <div class="tabs">
+      <button class="tab-btn active" id="tabChainBtn">По chain_id</button>
+      <button class="tab-btn" id="tabHashBtn">По хэшу файла</button>
+    </div>
+
+    <div id="chainTab">
+      <h2>Введите chain_id</h2>
+      <p>UUID цепочки, полученный при её создании (evident new-chain или GUI).</p>
+      <div class="input-group">
+        <input type="text" id="chainIdInput" placeholder="d81d8361-72b4-4dbd-a7b8-ebc1e51bf948">
+        <button class="btn btn-primary" id="verifyBtn">Проверить</button>
+      </div>
+    </div>
+
+    <div id="hashTab" style="display: none;">
+      <h2>Введите SHA-256 хэш файла</h2>
+      <p>Хэш вычисляется локально (sha256sum / evident hash), сам файл никогда не отправляется на сервер.</p>
+      <div class="input-group">
+        <input type="text" id="hashInput" placeholder="c832b998924577b355becd7892e3bb3a0ca513603e320b913c280f3a446e90c1">
+        <button class="btn btn-primary" id="verifyHashBtn">Проверить</button>
+      </div>
+    </div>
+  </section>
+
+  <section id="resultSection" style="display: none;">
+    <h2>Результат проверки</h2>
+    <div class="result-card">
+      <dl>
+        <dt>Статус</dt>
+        <dd id="statusValue"></dd>
+        <dt>Chain ID</dt>
+        <dd class="mono" id="chainIdValue"></dd>
+        <dt>Событий в цепочке</dt>
+        <dd id="blocksValue"></dd>
+        <dt>Head Event ID</dt>
+        <dd class="mono" id="headEventValue"></dd>
+        <dt>Merkle Root</dt>
+        <dd class="mono" id="rootValue"></dd>
+      </dl>
+    </div>
+  </section>
+
+  <section id="hashResultSection" style="display: none;">
+    <h2>Результат проверки хэша</h2>
+    <div class="result-card">
+      <dl id="hashResultDl"></dl>
+    </div>
+  </section>
+
+  <hr>
+
+  <footer><p><a href="/">← На главную</a></p></footer>
 
   <script>
     async function verify() {
       const chainId = document.getElementById('chainIdInput').value.trim();
-      const resultDiv = document.getElementById('result');
-      resultDiv.textContent = 'Проверка...';
+      const resultSection = document.getElementById('resultSection');
+      if (!chainId) { return; }
       try {
         const resp = await fetch(`/verify/${chainId}`);
         const data = await resp.json();
+        resultSection.style.display = 'block';
+        const statusEl = document.getElementById('statusValue');
         if (data.valid) {
-          resultDiv.innerHTML = `
-            <p style="color: green">✅ ВАЛИДНО</p>
-            <p>Событий: ${data.blocks}</p>
-            <p>Head event: ${data.head_event_id}</p>
-          `;
+          statusEl.textContent = '✅ ВАЛИДНО';
+          statusEl.className = 'status-valid';
         } else {
-          resultDiv.innerHTML = `
-            <p style="color: red">❌ НЕВАЛИДНО</p>
-            <p>Ошибки: ${(data.errors || []).join('; ')}</p>
-          `;
+          statusEl.textContent = '❌ НЕВАЛИДНО' + (data.errors && data.errors.length ? ' — ' + data.errors.join('; ') : '');
+          statusEl.className = 'status-invalid';
         }
+        document.getElementById('chainIdValue').textContent = data.chain_id || '—';
+        document.getElementById('blocksValue').textContent = data.blocks ?? '—';
+        document.getElementById('headEventValue').textContent = data.head_event_id || '—';
+        document.getElementById('rootValue').textContent = (data.proof && data.proof.root) || '—';
       } catch (e) {
-        resultDiv.innerHTML = `<p style="color: orange">⚠️ Ошибка запроса: ${e}</p>`;
+        resultSection.style.display = 'block';
+        document.getElementById('statusValue').textContent = '⚠️ Ошибка запроса: ' + e;
+        document.getElementById('statusValue').className = 'status-invalid';
       }
     }
+    document.getElementById('verifyBtn').addEventListener('click', verify);
+    document.getElementById('chainIdInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') verify(); });
+
+    function switchTab(tab) {
+      const chainTab = document.getElementById('chainTab');
+      const hashTab = document.getElementById('hashTab');
+      const tabChainBtn = document.getElementById('tabChainBtn');
+      const tabHashBtn = document.getElementById('tabHashBtn');
+      document.getElementById('resultSection').style.display = 'none';
+      document.getElementById('hashResultSection').style.display = 'none';
+      if (tab === 'chain') {
+        chainTab.style.display = 'block';
+        hashTab.style.display = 'none';
+        tabChainBtn.classList.add('active');
+        tabHashBtn.classList.remove('active');
+      } else {
+        chainTab.style.display = 'none';
+        hashTab.style.display = 'block';
+        tabChainBtn.classList.remove('active');
+        tabHashBtn.classList.add('active');
+      }
+    }
+    document.getElementById('tabChainBtn').addEventListener('click', () => switchTab('chain'));
+    document.getElementById('tabHashBtn').addEventListener('click', () => switchTab('hash'));
+
+    async function verifyHash() {
+      const hash = document.getElementById('hashInput').value.trim().toLowerCase();
+      const resultSection = document.getElementById('hashResultSection');
+      const dl = document.getElementById('hashResultDl');
+      if (!hash) { return; }
+      try {
+        const resp = await fetch('/verify/hash', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ hash: hash })
+        });
+        const data = await resp.json();
+        resultSection.style.display = 'block';
+
+        if (!resp.ok) {
+          dl.innerHTML = `<dt>Статус</dt><dd class="status-invalid">⚠️ ${data.error || 'Ошибка запроса'}</dd>`;
+          return;
+        }
+
+        if (!data.found) {
+          dl.innerHTML = `<dt>Статус</dt><dd class="status-invalid">❌ Не найдено</dd>
+            <dt>Хэш</dt><dd class="mono">${hash}</dd>`;
+          return;
+        }
+
+        let rows = `<dt>Статус</dt><dd class="status-valid">✅ Найдено (${data.matches.length} совпадение(-й))</dd>
+          <dt>Хэш</dt><dd class="mono">${hash}</dd>`;
+        data.matches.forEach((m, i) => {
+          rows += `<dt>Chain ID #${i + 1}</dt><dd class="mono">${m.chain_id}</dd>
+            <dt>Sequence #${i + 1}</dt><dd>${m.sequence}</dd>
+            <dt>Зафиксировано #${i + 1}</dt><dd>${m.created_at}</dd>`;
+        });
+        dl.innerHTML = rows;
+      } catch (e) {
+        resultSection.style.display = 'block';
+        dl.innerHTML = `<dt>Статус</dt><dd class="status-invalid">⚠️ Ошибка запроса: ${e}</dd>`;
+      }
+    }
+    document.getElementById('verifyHashBtn').addEventListener('click', verifyHash);
+    document.getElementById('hashInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyHash(); });
   </script>
 </body>
 </html>
