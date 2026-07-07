@@ -9,7 +9,7 @@ use sha2::{Digest, Sha256};
 use evident_ledger::client::{self, EvidentClient};
 use uuid::Uuid;
 use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
-use evident_report::{ProofData, EventSummary, TsaData as ReportTsaData, VerificationContext, generate_report};
+use evident_report::{ProofData, EventSummary, TsaData as ReportTsaData, VerificationContext, FileStatus, generate_report};
 
 // ============================================================================
 // МОДЕЛЬ ПРОЕКТА
@@ -381,11 +381,20 @@ fn build_evidence_snapshot(
 
     let first_failure = events.iter().find(|e| !e.valid);
 
+    let files: Vec<FileStatus> = events.iter()
+        .map(|e| FileStatus {
+            file_name: e.file_name.clone(),
+            chain_valid: e.valid,
+            local_integrity_ok: e.local_integrity_ok,
+        })
+        .collect();
+
     let verification = VerificationContext {
         is_valid: verify_valid,
         verified_at: Utc::now(),
         first_failure_sequence: first_failure.map(|e| e.sequence),
         first_failure_error: first_failure.and_then(|e| e.error.clone()),
+        files,
     };
 
     (proof_data, verification)
@@ -1115,7 +1124,17 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui.button("📄 Скачать заключение (PDF)").clicked() {
-                        match &self.last_proof {
+                        let fresh_proof = match &self.last_proof {
+                            Some(cached_proof) => {
+                                Uuid::parse_str(&cached_proof.chain_id).ok().and_then(|chain_uuid| {
+                                    let client = EvidentClient::new("http://127.0.0.1:3000");
+                                    client::fetch_proof(&client, chain_uuid).ok()
+                                })
+                            }
+                            None => None,
+                        };
+
+                        match fresh_proof.as_ref().or(self.last_proof.as_ref()) {
                             Some(proof) => {
                                 let proofs_dir = projects_dir.join(&self.verification_project).join("proofs");
                                 let _ = fs::create_dir_all(&proofs_dir);
