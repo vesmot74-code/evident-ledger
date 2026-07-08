@@ -20,3 +20,18 @@ proofs/
 *.pdf
 *.backup
 *.backup_*
+
+# Build
+target/
+
+# Secrets
+.env
+*.key
+*.pem
+signing_key.bin
+
+# Local proofs
+proofs/
+
+# Editor / backup files
+*.backup*
