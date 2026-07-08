@@ -7,6 +7,10 @@ on:
 permissions:
   contents: write
 
+defaults:
+  run:
+    shell: bash
+
 jobs:
   build:
     strategy:
@@ -37,17 +41,14 @@ jobs:
           targets: ${{ matrix.target }}
 
       - name: Enable SQLx offline
-        shell: bash
         run: echo "SQLX_OFFLINE=true" >> $GITHUB_ENV
 
       - name: Build all binaries
-        shell: bash
         run: cargo build --release --target ${{ matrix.target }} --bins
 
       - name: Prepare release folder
-        shell: bash
         run: |
-          mkdir artifact
+          mkdir -p artifact
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
             cp target/${{ matrix.target }}/release/evident.exe artifact/
             cp target/${{ matrix.target }}/release/evident-verify.exe artifact/
@@ -61,7 +62,6 @@ jobs:
           fi
 
       - name: Generate SHA256SUMS
-        shell: bash
         run: |
           cd artifact
           sha256sum * > SHA256SUMS
