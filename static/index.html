@@ -3,102 +3,283 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="description" content="Evident Ledger — детерминированный audit-ledger. SHA-256 + RFC 3161 TSA. Локальная фиксация, независимая офлайн-верификация.">
 <title>Evident Ledger — детерминированный audit-ledger с криптографическим доказательством</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
 :root {
-  --bg: #ffffff; --bg-secondary: #f8f9fa; --text: #1a1f24; --text-secondary: #5a6a7a;
-  --accent: #003366; --accent-light: #e8edf4; --border: #e0e4e8; --border-light: #f0f2f4;
-  --success: #0a7a5a; --error: #c72a2a;
-  --font-main: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-  --font-mono: 'SF Mono', 'Menlo', 'Monaco', 'Cascadia Code', 'Roboto Mono', monospace;
-  --content-width: 800px; --spacing-sm: 8px; --spacing-md: 16px; --spacing-lg: 32px; --spacing-xl: 48px; --spacing-xxl: 64px;
-  --radius-sm: 4px; --radius-md: 6px;
+  --bg: #ffffff;
+  --bg-hero: #16213e;
+  --bg-alt: #f5f7fb;
+  --text: #0f172a;
+  --text-secondary: #64748b;
+  --on-dark: #e7ebf5;
+  --on-dark-secondary: #94a3b8;
+  --accent: #3652f6;
+  --accent-dark: #2740d6;
+  --border: #e2e8f0;
+  --border-dark: rgba(255, 255, 255, 0.14);
+  --success: #16a34a;
+  --font-main: 'IBM Plex Sans', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  --font-mono: 'IBM Plex Mono', 'SF Mono', Menlo, monospace;
+  --radius-sm: 4px;
+  --radius-md: 8px;
+  --container: 1120px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
 html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
-body { font-family: var(--font-main); font-size: 16px; line-height: 1.7; color: var(--text); background: var(--bg);
-  max-width: var(--content-width); margin: 0 auto; padding: 40px 24px 80px; min-height: 100vh; }
-h1 { font-size: 42px; font-weight: 800; letter-spacing: -0.03em; line-height: 1.1; margin: 0 0 var(--spacing-sm) 0; }
-h2 { font-size: 24px; font-weight: 600; letter-spacing: -0.01em; margin: var(--spacing-xl) 0 var(--spacing-md) 0; }
-h3 { font-size: 18px; font-weight: 600; margin: var(--spacing-lg) 0 var(--spacing-sm) 0; }
-p { color: var(--text-secondary); margin: 0 0 var(--spacing-md) 0; max-width: 640px; }
-.eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--accent);
-  margin: 0 0 var(--spacing-sm) 0; display: block; }
-section { margin: var(--spacing-xxl) 0; }
-section:first-of-type { margin-top: var(--spacing-xl); }
-hr { border: none; border-top: 1px solid var(--border); margin: var(--spacing-xxl) 0; }
-ul, ol { margin-left: 20px; color: var(--text-secondary); }
-li { margin: 8px 0; }
-li strong { color: var(--text); }
-.btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 24px; font-family: var(--font-main);
-  font-size: 15px; font-weight: 500; letter-spacing: -0.01em; border: none; border-radius: var(--radius-sm); cursor: pointer;
-  text-decoration: none; transition: all 0.2s ease; line-height: 1.4; }
-.btn-primary { background: var(--accent); color: #ffffff; }
-.btn-primary:hover { background: #002244; color: #ffffff; }
-footer { margin-top: var(--spacing-xxl); padding-top: var(--spacing-lg); border-top: 1px solid var(--border);
-  font-size: 14px; color: var(--text-secondary); }
-footer a { color: var(--accent); text-decoration: none; }
-footer a:hover { text-decoration: underline; }
-@media (max-width: 640px) { body { padding: 20px 16px 60px; } h1 { font-size: 30px; } h2 { font-size: 20px; } }
+body { font-family: var(--font-main); font-size: 16px; line-height: 1.65; color: var(--text); background: var(--bg); }
+.el-container { max-width: var(--container); margin: 0 auto; padding: 0 24px; }
+a { color: inherit; }
+code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6px; border-radius: 4px; font-size: 0.9em; }
+
+/* Header */
+.el-header { border-bottom: 1px solid var(--border); position: sticky; top: 0; background: rgba(255,255,255,0.92); backdrop-filter: blur(8px); z-index: 10; }
+.el-header__inner { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; gap: 24px; }
+.el-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 700; font-size: 15px; letter-spacing: 0.02em; color: var(--text); }
+.el-logo__mark { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1.5px solid var(--text); border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: -0.02em; }
+.el-header__nav { flex: 1; display: flex; }
+.el-header__nav a { color: var(--text-secondary); text-decoration: none; font-size: 14.5px; font-weight: 500; }
+.el-header__nav a:hover { color: var(--text); }
+
+/* Buttons */
+.el-btn { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 10px 20px; border-radius: var(--radius-sm); text-decoration: none; border: none; cursor: pointer; font-family: var(--font-main); line-height: 1.3; }
+.el-btn__main { font-size: 14.5px; font-weight: 700; }
+.el-btn__sub { font-size: 11.5px; font-weight: 400; opacity: 0.85; }
+.el-btn--primary { background: var(--accent); color: #ffffff; }
+.el-btn--primary:hover { background: var(--accent-dark); }
+.el-btn--light { background: #ffffff; color: var(--bg-hero); }
+.el-btn--light:hover { background: #eef1fa; }
+
+/* Hero */
+.el-hero { background: var(--bg-hero); color: var(--on-dark); padding: 72px 0 64px; }
+.el-hero__eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--on-dark-secondary); margin-bottom: 20px; }
+.el-hero__title { font-size: 44px; font-weight: 700; letter-spacing: -0.02em; line-height: 1.18; max-width: 780px; margin-bottom: 24px; }
+.el-hero__subtitle { font-size: 17px; color: var(--on-dark-secondary); max-width: 640px; margin-bottom: 32px; }
+.el-hero__note { margin-top: 18px; font-size: 13.5px; color: var(--on-dark-secondary); }
+
+/* Privacy strip */
+.el-strip { background: var(--bg-alt); border-bottom: 1px solid var(--border); padding: 22px 0; }
+.el-strip__text { font-size: 15px; }
+.el-strip__text strong { color: var(--text); }
+.el-strip__sub { font-size: 13.5px; color: var(--text-secondary); margin-top: 4px; }
+
+/* Sections */
+.el-section { padding: 64px 0; }
+.el-section--alt { background: var(--bg-alt); }
+.el-section__title { font-size: 28px; font-weight: 700; letter-spacing: -0.01em; margin-bottom: 12px; }
+.el-section__lead { font-size: 15.5px; color: var(--text-secondary); max-width: 680px; margin-bottom: 36px; }
+
+/* Two-layer architecture */
+.el-arch { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+.el-arch__card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 28px; border-top: 3px solid var(--border); }
+.el-arch__card--accent { border-top-color: var(--accent); }
+.el-arch__label { display: block; font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 10px; }
+.el-arch__name { font-size: 19px; font-weight: 700; margin-bottom: 14px; }
+.el-arch__list { list-style: none; margin: 0 0 16px; padding: 0; color: var(--text-secondary); font-size: 14.5px; }
+.el-arch__list li { padding-left: 16px; position: relative; margin: 7px 0; }
+.el-arch__list li::before { content: "—"; position: absolute; left: 0; color: var(--text-secondary); }
+.el-arch__note { font-size: 13.5px; color: var(--text-secondary); font-style: italic; border-top: 1px solid var(--border-light, var(--border)); padding-top: 12px; margin-top: 4px; }
+
+/* Trust model quote */
+.el-trust { border-left: 4px solid var(--accent); background: var(--bg); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-md); padding: 24px 28px; }
+.el-trust p { font-weight: 600; margin-bottom: 12px; }
+.el-trust ul { list-style: none; padding: 0; }
+.el-trust li { position: relative; padding-left: 18px; margin: 8px 0; color: var(--text-secondary); font-size: 15px; }
+.el-trust li::before { content: ""; position: absolute; left: 0; top: 9px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+
+/* 3-card grid */
+.el-grid-3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 20px; margin-top: 36px; }
+.el-card { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 22px; }
+.el-card__title { font-size: 16px; font-weight: 700; margin-bottom: 8px; }
+.el-card__text { font-size: 14px; color: var(--text-secondary); }
+
+/* Steps */
+.el-steps { display: grid; grid-template-columns: repeat(3, 1fr); gap: 32px; }
+.el-step { border-top: 2px solid var(--text); padding-top: 16px; }
+.el-step__num { display: block; font-size: 11.5px; font-weight: 600; letter-spacing: 0.1em; text-transform: uppercase; color: var(--text-secondary); margin-bottom: 8px; }
+.el-step__title { font-size: 19px; font-weight: 700; margin-bottom: 8px; }
+.el-step__text { font-size: 14.5px; color: var(--text-secondary); }
+
+/* Use-case grid */
+.el-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
+.el-usecase { border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius-md); padding: 20px; font-size: 14px; color: var(--text-secondary); }
+
+/* CTA */
+.el-cta { background: var(--bg-hero); color: var(--on-dark); padding: 56px 0; text-align: center; }
+.el-cta__title { font-size: 26px; font-weight: 700; margin-bottom: 24px; }
+
+/* Footer */
+.el-footer { border-top: 1px solid var(--border); padding: 32px 0; }
+.el-footer__inner { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+.el-footer__copy { font-size: 13px; color: var(--text-secondary); max-width: 480px; }
+.el-footer__copy p { margin-bottom: 6px; }
+
+@media (max-width: 860px) {
+  .el-arch, .el-grid-3, .el-steps { grid-template-columns: 1fr; }
+  .el-grid-4 { grid-template-columns: 1fr 1fr; }
+  .el-hero__title { font-size: 32px; }
+  .el-section__title { font-size: 22px; }
+}
 </style>
 </head>
 <body>
-  <header><span class="eyebrow">Deterministic Event Ledger</span><h1>EVIDENT LEDGER</h1></header>
 
-  <section>
-    <h2>Криптографическое доказательство фиксации файла во времени</h2>
-    <p>
-      Evident Ledger — локальная система фиксации цифровых объектов:
-      SHA-256 хеширование, hash-linked цепочка событий, опциональная внешняя
-      временная метка RFC 3161 (TSA) и независимая офлайн-верификация.
-      Не облачный сервис — вы полностью контролируете свои данные локально.
-    </p>
+  <header class="el-header">
+    <div class="el-container el-header__inner">
+      <a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
+      <nav class="el-header__nav"><a href="/verify-ui">Verify</a></nav>
+      <a href="/verify-ui" class="el-btn el-btn--primary">
+        <span class="el-btn__main">Открыть верификатор</span>
+        <span class="el-btn__sub">chain_id или SHA-256</span>
+      </a>
+    </div>
+  </header>
+
+  <section class="el-hero">
+    <div class="el-container">
+      <p class="el-hero__eyebrow">Deterministic Event Ledger</p>
+      <h1 class="el-hero__title">Криптографическое доказательство фиксации файла во времени</h1>
+      <p class="el-hero__subtitle">
+        Evident Ledger — локальная система фиксации цифровых объектов: SHA-256 хеширование,
+        hash-linked цепочка событий, опциональная внешняя временная метка RFC 3161 (TSA)
+        и независимая офлайн-верификация. Не облачный сервис — вы полностью контролируете
+        свои данные локально.
+      </p>
+      <a href="/verify-ui" class="el-btn el-btn--light">
+        <span class="el-btn__main">Открыть верификатор</span>
+        <span class="el-btn__sub">проверка по chain_id или хэшу</span>
+      </a>
+    </div>
   </section>
 
-  <hr>
-
-  <section>
-    <h3>Зачем это нужно</h3>
-    <ul>
-      <li><strong>Доказательство существования файла в момент времени</strong> —
-        если позже возникнет спор о том, менялся ли документ, у вас есть
-        криптографически проверяемая цепочка событий с merkle-доказательством.</li>
-      <li><strong>Независимая проверка</strong> — верификация (evident-verify)
-        работает офлайн, не требует доверия к серверу: пересчитывает merkle root,
-        проверяет подпись, сверяет файл с зафиксированным хэшем.</li>
-      <li><strong>Hash-only проверка</strong> — можно узнать, зафиксирован ли файл
-        в системе, передав на сервер только его SHA-256, без загрузки самого документа.</li>
-    </ul>
+  <section class="el-strip">
+    <div class="el-container">
+      <p class="el-strip__text"><strong>Файл никогда не покидает вашу среду.</strong> На сервер передаётся только SHA-256 хэш.</p>
+      <p class="el-strip__sub">Hash-only проверка — можно узнать, зафиксирован ли файл, не загружая сам документ.</p>
+    </div>
   </section>
 
-  <hr>
-
-  <section>
-    <h3>Когда это пригодится</h3>
-    <ul>
-      <li>Фиксация версии документа перед отправкой на согласование/подпись</li>
-      <li>Доказательство даты создания артефакта (черновик, договор, чертёж)</li>
-      <li>Аудиторский след изменений в проекте с восстановимой историей</li>
-      <li>Локальная альтернатива, когда нельзя/не хочется отправлять файл в облачный сервис</li>
-    </ul>
+  <section class="el-section" id="architecture">
+    <div class="el-container">
+      <h2 class="el-section__title">Два независимых компонента</h2>
+      <p class="el-section__lead">Локальный клиент и серверный ledger решают разные задачи и не заменяют друг друга.</p>
+      <div class="el-arch">
+        <article class="el-arch__card">
+          <span class="el-arch__label">Локальный клиент</span>
+          <h3 class="el-arch__name">evident (CLI / GUI)</h3>
+          <ul class="el-arch__list">
+            <li>хеширует файл (SHA-256) локально</li>
+            <li>отправляет событие в цепочку</li>
+            <li>офлайн-верификация proof, без обращения к серверу</li>
+          </ul>
+          <p class="el-arch__note">Работает локально. Файл никогда не отправляется на сервер.</p>
+        </article>
+        <article class="el-arch__card el-arch__card--accent">
+          <span class="el-arch__label">Серверный ledger</span>
+          <h3 class="el-arch__name">Evident Ledger Server</h3>
+          <ul class="el-arch__list">
+            <li>назначает sequence, строит Merkle root</li>
+            <li>подписывает результат (Ed25519)</li>
+            <li>опционально запрашивает RFC 3161 TSA-метку у FreeTSA</li>
+            <li>выдаёт независимо проверяемый сертификат (SAC)</li>
+          </ul>
+        </article>
+      </div>
+    </div>
   </section>
 
-  <hr>
-
-  <section>
-    <h3>Как это работает</h3>
-    <ol>
-      <li><strong>Commit</strong> — файл хешируется (SHA-256) локально, событие отправляется в цепочку</li>
-      <li><strong>Anchor</strong> — сервер назначает sequence, строит merkle root, подписывает результат; опционально запрашивает TSA-метку у FreeTSA</li>
-      <li><strong>Verify</strong> — proof можно проверить в любой момент: через GUI (backend + локальная сверка файла) или офлайн через CLI</li>
-    </ol>
+  <section class="el-section el-section--alt" id="trust-model">
+    <div class="el-container">
+      <h2 class="el-section__title">Модель доверия</h2>
+      <div class="el-trust">
+        <p>Доверие строится на:</p>
+        <ul>
+          <li>криптографическом хешировании (SHA-256)</li>
+          <li>hash-linked цепочке событий с Merkle-доказательством</li>
+          <li>внешнем источнике времени (RFC 3161 TSA)</li>
+          <li>возможности независимой офлайн-верификации</li>
+        </ul>
+      </div>
+    </div>
   </section>
 
-  <section>
-    <a class="btn btn-primary" href="/verify-ui">Перейти к верификатору →</a>
+  <section class="el-section" id="why">
+    <div class="el-container">
+      <h2 class="el-section__title">Зачем это нужно</h2>
+      <div class="el-grid-3">
+        <article class="el-card">
+          <h3 class="el-card__title">Доказательство во времени</h3>
+          <p class="el-card__text">Если позже возникнет спор о том, менялся ли документ — у вас есть криптографически проверяемая цепочка событий с Merkle-доказательством.</p>
+        </article>
+        <article class="el-card">
+          <h3 class="el-card__title">Независимая проверка</h3>
+          <p class="el-card__text">evident-verify работает офлайн, не требует доверия к серверу: пересчитывает Merkle root, проверяет подпись, сверяет файл с зафиксированным хэшем.</p>
+        </article>
+        <article class="el-card">
+          <h3 class="el-card__title">Hash-only приватность</h3>
+          <p class="el-card__text">Можно узнать, зафиксирован ли файл в системе, передав на сервер только его SHA-256, без загрузки самого документа.</p>
+        </article>
+      </div>
+    </div>
   </section>
 
-  <footer><p>Evident Ledger — локальный open-source ledger.</p></footer>
+  <section class="el-section el-section--alt" id="how">
+    <div class="el-container">
+      <h2 class="el-section__title">Как это работает</h2>
+      <div class="el-steps">
+        <article class="el-step">
+          <span class="el-step__num">Шаг 1</span>
+          <h3 class="el-step__title">Commit</h3>
+          <p class="el-step__text">Файл хешируется (<code>SHA-256</code>) локально, событие отправляется в цепочку.</p>
+        </article>
+        <article class="el-step">
+          <span class="el-step__num">Шаг 2</span>
+          <h3 class="el-step__title">Anchor</h3>
+          <p class="el-step__text">Сервер назначает sequence, строит Merkle root, подписывает результат; опционально запрашивает TSA-метку у FreeTSA.</p>
+        </article>
+        <article class="el-step">
+          <span class="el-step__num">Шаг 3</span>
+          <h3 class="el-step__title">Verify</h3>
+          <p class="el-step__text">Proof можно проверить в любой момент: через GUI (backend + локальная сверка файла) или офлайн через CLI.</p>
+        </article>
+      </div>
+    </div>
+  </section>
+
+  <section class="el-section" id="usecases">
+    <div class="el-container">
+      <h2 class="el-section__title">Когда это пригодится</h2>
+      <div class="el-grid-4">
+        <div class="el-usecase">Фиксация версии документа перед отправкой на согласование или подпись</div>
+        <div class="el-usecase">Доказательство даты создания артефакта — черновик, договор, чертёж</div>
+        <div class="el-usecase">Аудиторский след изменений в проекте с восстановимой историей</div>
+        <div class="el-usecase">Локальная альтернатива, когда файл нельзя отправлять в облачный сервис</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="el-cta" id="verify">
+    <div class="el-container">
+      <h2 class="el-cta__title">Зафиксируйте файл или проверьте существующую запись</h2>
+      <a href="/verify-ui" class="el-btn el-btn--light">
+        <span class="el-btn__main">Открыть верификатор</span>
+        <span class="el-btn__sub">chain_id или SHA-256</span>
+      </a>
+    </div>
+  </section>
+
+  <footer class="el-footer">
+    <div class="el-container el-footer__inner">
+      <a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
+      <div class="el-footer__copy">
+        <p>Evident Ledger — локальный open-source ledger. Данные не покидают вашу среду без явного действия.</p>
+        <p>Все доказательства воспроизводимы независимо стандартными криптографическими инструментами.</p>
+      </div>
+    </div>
+  </footer>
+
 </body>
 </html>
