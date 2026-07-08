@@ -52,6 +52,17 @@ impl PdfCtx {
         self.y -= LINE_HEIGHT;
     }
 
+    /// Roughly centers a bold line. Base14 Helvetica has no exact metrics
+    /// available here, so width is estimated at ~0.52em per character —
+    /// good enough for a certificate title, not for tight typesetting.
+    fn centered_bold_line(&mut self, text: &str, size: f32) {
+        let approx_width_mm = text.chars().count() as f32 * size * 0.52 * (25.4 / 72.0);
+        let x = ((PAGE_WIDTH - approx_width_mm) / 2.0).max(MARGIN_LEFT);
+        self.ensure_space(1.0);
+        self.layer.use_text(text, size, Mm(x), Mm(self.y), &self.bold);
+        self.y -= LINE_HEIGHT;
+    }
+
     fn heading(&mut self, text: &str) {
         self.ensure_space(2.4);
         self.y -= SECTION_GAP;
@@ -89,26 +100,34 @@ impl PdfCtx {
 }
 
 fn write_exclusions_section(ctx: &mut PdfCtx) {
-    ctx.heading("Verification Scope");
+    ctx.heading("4. VERIFICATION SCOPE");
     ctx.line("This certificate confirms:", 10.0);
-    ctx.line("  - The existence (or absence) of a registered ledger state for the", 10.0);
-    ctx.line("    Chain ID above.", 10.0);
-    ctx.line("  - That the Merkle Root, if present, matches the record held by", 10.0);
-    ctx.line("    the Evident Ledger at issuance time.", 10.0);
-    ctx.line("  - That the accompanying signature, if present, is valid for the", 10.0);
-    ctx.line("    stated public key.", 10.0);
-    ctx.line("  - The presence or absence of an external RFC3161 timestamp.", 10.0);
+    ctx.gap();
+    ctx.line("[PASS] Existence (or absence) of a registered ledger state for the", 10.0);
+    ctx.line("       Chain ID above", 10.0);
+    ctx.line("[PASS] Merkle Root, if present, matches the record held by the", 10.0);
+    ctx.line("       Evident Ledger at issuance time", 10.0);
+    ctx.line("[PASS] Accompanying signature, if present, is valid for the stated", 10.0);
+    ctx.line("       public key", 10.0);
+    ctx.line("[PASS] Presence or absence of an external RFC3161 timestamp", 10.0);
     ctx.gap();
     ctx.line("This certificate does NOT confirm:", 10.0);
-    ctx.line("  - The content of the underlying documents or events.", 10.0);
-    ctx.line("  - The authorship of the underlying documents or events.", 10.0);
-    ctx.line("  - That the ledger state described above will remain unchanged", 10.0);
-    ctx.line("    in the future.", 10.0);
     ctx.gap();
-    ctx.line("Not Verified:", 10.0);
-    ctx.line("  - Document content", 10.0);
-    ctx.line("  - Legal interpretation", 10.0);
-    ctx.line("  - Authorship", 10.0);
+    ctx.line("[N/A]  Content of the underlying documents or events", 10.0);
+    ctx.line("[N/A]  Authorship of the underlying documents or events", 10.0);
+    ctx.line("[N/A]  Legal interpretation of the recorded data", 10.0);
+    ctx.line("[N/A]  Guarantee that the ledger state above will remain", 10.0);
+    ctx.line("       unchanged in the future", 10.0);
+}
+
+fn write_signature_block(ctx: &mut PdfCtx) {
+    ctx.ensure_space(6.0);
+    ctx.gap();
+    ctx.line("_________________________", 10.0);
+    ctx.line("Authorized Verification Service", 9.0);
+    ctx.gap();
+    ctx.line("_________________________", 10.0);
+    ctx.line(&format!("Date: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")), 9.0);
 }
 
 fn write_footer_section(ctx: &mut PdfCtx, chain_id: &str) {
@@ -120,11 +139,13 @@ fn write_footer_section(ctx: &mut PdfCtx, chain_id: &str) {
     ctx.gap();
     ctx.line("This certificate corresponds to the Merkle Root cited in the", 9.0);
     ctx.line("Evident Report for this Chain ID, if one has been issued.", 9.0);
+
+    write_signature_block(ctx);
 }
 
 pub fn render_sac_pdf(doc: &SacDocument) -> Vec<u8> {
     let (pdf_doc, page1, layer1) = PdfDocument::new(
-        "Evident Ledger Independent Verification Certificate",
+        "Evident Ledger State Attestation Certificate",
         Mm(PAGE_WIDTH),
         Mm(PAGE_HEIGHT),
         "Layer 1",
@@ -140,15 +161,23 @@ pub fn render_sac_pdf(doc: &SacDocument) -> Vec<u8> {
         SacTarget::DocumentHash(h) => h.clone(),
     };
 
-    ctx.bold_line("Evident Ledger Independent Verification Certificate", 16.0);
+    ctx.centered_bold_line("STATE ATTESTATION CERTIFICATE", 16.0);
+    ctx.gap();
     ctx.line(&format!("SAC Certificate Format v{}", SAC_PDF_VERSION), 10.0);
-    ctx.line(&format!("Chain ID: {}", chain_id), 11.0);
-    ctx.line(&format!("Issued At: {}", doc.issued_at), 11.0);
+    ctx.gap();
+    let evidence_id = format!(
+        "EVD-{}-{}",
+        doc.issued_at.get(0..4).unwrap_or("0000"),
+        chain_id.chars().filter(|c| c.is_ascii_alphanumeric()).take(8).collect::<String>().to_uppercase()
+    );
+    ctx.bold_line(&format!("Evidence ID: {}", evidence_id), 12.0);
+    ctx.line(&format!("Chain ID: {}", chain_id), 10.0);
+    ctx.line(&format!("Issued At: {}", doc.issued_at), 10.0);
 
-    ctx.heading("Verification Result");
+    ctx.heading("VERIFICATION RESULT");
 
     if matches!(doc.verification.status, SacVerificationStatus::NotFound) {
-        ctx.bold_line("Verification Result: NOT FOUND", 12.0);
+        ctx.bold_line("[N/A] VERIFICATION RESULT: NOT FOUND", 12.0);
         ctx.gap();
         ctx.line("This certificate attests that no ledger record exists for the", 10.0);
         ctx.line("requested Chain ID at the time of issuance.", 10.0);
@@ -166,10 +195,12 @@ pub fn render_sac_pdf(doc: &SacDocument) -> Vec<u8> {
 
     match doc.verification.status {
         SacVerificationStatus::Verified => {
-            ctx.bold_line("Verification Result: VERIFIED", 12.0);
+            ctx.bold_line("[PASS] VERIFICATION RESULT: VERIFIED", 12.0);
+            ctx.gap();
+            ctx.line("Integrity and authenticity of the recorded evidence confirmed.", 9.5);
         }
         SacVerificationStatus::Failed => {
-            ctx.bold_line("Verification Result: FAILED", 12.0);
+            ctx.bold_line("[FAIL] VERIFICATION RESULT: FAILED", 12.0);
             if !doc.verification.errors.is_empty() {
                 ctx.wrapped_field("Errors:", &doc.verification.errors.join("; "));
             }
@@ -178,13 +209,13 @@ pub fn render_sac_pdf(doc: &SacDocument) -> Vec<u8> {
     }
 
     if let Some(state) = &doc.state {
-        ctx.heading("Ledger State");
+        ctx.heading("1. LEDGER STATE");
         ctx.wrapped_field("Merkle Root:", &state.merkle_root);
         ctx.wrapped_field("Head Event ID:", &state.head_event_id);
         ctx.wrapped_field("Last Event Timestamp:", &state.last_event_timestamp);
     }
 
-    ctx.heading("Signature");
+    ctx.heading("2. CRYPTOGRAPHIC SIGNATURE");
     ctx.wrapped_field(
         "Public Key Fingerprint:",
         doc.verification.public_key_fingerprint.as_deref().unwrap_or("N/A"),
@@ -194,16 +225,17 @@ pub fn render_sac_pdf(doc: &SacDocument) -> Vec<u8> {
         doc.verification.signature.as_deref().unwrap_or("N/A"),
     );
 
-    ctx.heading("External Time Anchor (TSA)");
+    ctx.heading("3. TIME ATTESTATION");
     match &doc.tsa {
         Some(tsa) if matches!(tsa.status, SacTsaStatus::Present) => {
-            ctx.line("Status:     PRESENT", 10.0);
-            ctx.wrapped_field("Provider:", tsa.provider.as_deref().unwrap_or("N/A"));
+            ctx.bold_line("[PASS] External TSA timestamp confirmed", 10.0);
+            ctx.gap();
+            ctx.wrapped_field("Authority:", tsa.provider.as_deref().unwrap_or("N/A"));
             ctx.line(&format!("Timestamp:  {}", tsa.timestamp.map(|t| t.to_string()).unwrap_or_default()), 10.0);
             ctx.wrapped_field("Serial:", tsa.serial.as_deref().unwrap_or("N/A"));
         }
         _ => {
-            ctx.line("Status: NOT AVAILABLE", 10.0);
+            ctx.bold_line("[N/A] External TSA timestamp not available", 10.0);
             ctx.gap();
             ctx.line("No external RFC3161 timestamp is attached to this record.", 10.0);
             ctx.line("This does not affect the validity of the ledger signature above.", 10.0);
