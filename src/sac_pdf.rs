@@ -7,6 +7,20 @@ use printpdf::*;
 use std::io::Cursor;
 use crate::sac::{SacDocument, SacTarget, SacVerificationStatus, SacTsaStatus};
 
+/// Loads DejaVu Sans (regular + bold) as embedded fonts. Base14 fonts
+/// (Helvetica etc.) have no Cyrillic glyphs — chain IDs and evidence
+/// text can contain Cyrillic file names, so a Base14-only renderer
+/// silently drops that text. DejaVu Sans has full Cyrillic coverage
+/// and is already vendored for notary-pdf; reused here rather than
+/// duplicating the font files.
+fn load_fonts(doc: &PdfDocumentReference) -> (IndirectFontRef, IndirectFontRef) {
+    let mut regular = Cursor::new(include_bytes!("../vendor/notary-pdf/assets/fonts/DejaVuSans.ttf").as_ref());
+    let mut bold = Cursor::new(include_bytes!("../vendor/notary-pdf/assets/fonts/DejaVuSans-Bold.ttf").as_ref());
+    let font = doc.add_external_font(&mut regular).expect("load DejaVuSans.ttf");
+    let font_bold = doc.add_external_font(&mut bold).expect("load DejaVuSans-Bold.ttf");
+    (font, font_bold)
+}
+
 pub const SAC_PDF_VERSION: &str = "1.0";
 
 const PAGE_WIDTH: f32 = 210.0;
@@ -150,8 +164,7 @@ pub fn render_sac_pdf(doc: &SacDocument) -> Vec<u8> {
         Mm(PAGE_HEIGHT),
         "Layer 1",
     );
-    let font = pdf_doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
-    let bold = pdf_doc.add_builtin_font(BuiltinFont::HelveticaBold).unwrap();
+    let (font, bold) = load_fonts(&pdf_doc);
     let layer = pdf_doc.get_page(page1).get_layer(layer1);
 
     let mut ctx = PdfCtx::new(pdf_doc, layer, font, bold);

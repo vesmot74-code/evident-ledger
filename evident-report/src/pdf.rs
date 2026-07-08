@@ -1,9 +1,31 @@
 use std::path::Path;
 use std::fs::File;
-use std::io::BufWriter;
+use std::io::{BufWriter, Cursor};
 use printpdf::*;
 
 use crate::{ProofData, VerificationContext};
+
+/// Loads DejaVu Sans (regular + bold) as embedded fonts. Base14 fonts
+/// have no Cyrillic glyphs — evidence file names are frequently
+/// Cyrillic, so a Base14-only renderer silently drops that text from
+/// the evidence table. Reuses the font already vendored for notary-pdf.
+fn load_fonts(doc: &PdfDocumentReference) -> (IndirectFontRef, IndirectFontRef) {
+    let mut regular = Cursor::new(include_bytes!("../../vendor/notary-pdf/assets/fonts/DejaVuSans.ttf").as_ref());
+    let mut bold = Cursor::new(include_bytes!("../../vendor/notary-pdf/assets/fonts/DejaVuSans-Bold.ttf").as_ref());
+    let font = doc.add_external_font(&mut regular).expect("load DejaVuSans.ttf");
+    let font_bold = doc.add_external_font(&mut bold).expect("load DejaVuSans-Bold.ttf");
+    (font, font_bold)
+}
+
+// Fixed column x-offsets (mm, relative to MARGIN_LEFT) for the evidence
+// table. Not monospace-dependent: DejaVu has no bundled monospace variant,
+// and fixed x-coordinates per cell are correct regardless of glyph width
+// anyway (padding-based alignment silently breaks under proportional or
+// mixed-script text, which is exactly the bug this replaces).
+const COL_NUM_X: f32 = 0.0;
+const COL_NAME_X: f32 = 10.0;
+const COL_CHAIN_X: f32 = 82.0;
+const COL_INTEGRITY_X: f32 = 112.0;
 
 const PAGE_WIDTH: f32 = 210.0;
 const PAGE_HEIGHT: f32 = 297.0;
@@ -71,17 +93,12 @@ struct Ctx {
     layer: PdfLayerReference,
     font: IndirectFontRef,
     bold: IndirectFontRef,
-    /// Monospace font, used ONLY for the fixed-width evidence table.
-    /// Helvetica is proportional — rendering `{:>4} | {:30} | ...`
-    /// formatted rows with it silently breaks column alignment in the
-    /// actual PDF even though the Rust string looks aligned.
-    mono: IndirectFontRef,
     y: f32,
 }
 
 impl Ctx {
-    fn new(doc: PdfDocumentReference, layer: PdfLayerReference, font: IndirectFontRef, bold: IndirectFontRef, mono: IndirectFontRef) -> Self {
-        Self { doc, layer, font, bold, mono, y: PAGE_HEIGHT - MARGIN_TOP }
+    fn new(doc: PdfDocumentReference, layer: PdfLayerReference, font: IndirectFontRef, bold: IndirectFontRef) -> Self {
+        Self { doc, layer, font, bold, y: PAGE_HEIGHT - MARGIN_TOP }
     }
 
     fn ensure_space(&mut self, lines_needed: f32) {
@@ -105,11 +122,34 @@ impl Ctx {
         self.y -= LINE_HEIGHT;
     }
 
-    /// Monospace line — the only correct way to render fixed-width
-    /// column data (tables) so it stays visually aligned in the PDF.
-    fn mono_line(&mut self, text: &str, size: f32) {
+    /// Draws one evidence-table row using fixed per-column x-offsets
+    /// instead of padded strings — correct regardless of glyph width,
+    /// so Cyrillic file names align exactly like ASCII ones.
+    fn table_row(&mut self, num: &str, name: &str, chain: &str, integrity: &str, size: f32, use_bold: bool) {
         self.ensure_space(1.0);
-        self.layer.use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.mono);
+        let font = if use_bold { &self.bold } else { &self.font };
+        self.layer.use_text(num, size, Mm(MARGIN_LEFT + COL_NUM_X), Mm(self.y), font);
+        self.layer.use_text(name, size, Mm(MARGIN_LEFT + COL_NAME_X), Mm(self.y), font);
+        self.layer.use_text(chain, size, Mm(MARGIN_LEFT + COL_CHAIN_X), Mm(self.y), font);
+        self.layer.use_text(integrity, size, Mm(MARGIN_LEFT + COL_INTEGRITY_X), Mm(self.y), font);
+        self.y -= LINE_HEIGHT;
+    }
+
+    fn table_rule(&mut self) {
+        self.ensure_space(1.0);
+        let rule_width_mm = COL_INTEGRITY_X + 25.0;
+        self.layer.use_text(&"-".repeat(1), 8.0, Mm(MARGIN_LEFT), Mm(self.y), &self.font);
+        // Draw a simple horizontal line instead of a dash string: dash
+        // width also depends on glyph metrics, same class of bug as the
+        // old padded table. A line primitive is exact regardless of font.
+        let line = Line {
+            points: vec![
+                (Point::new(Mm(MARGIN_LEFT), Mm(self.y + 2.0)), false),
+                (Point::new(Mm(MARGIN_LEFT + rule_width_mm), Mm(self.y + 2.0)), false),
+            ],
+            is_closed: false,
+        };
+        self.layer.add_line(line);
         self.y -= LINE_HEIGHT;
     }
 
@@ -157,11 +197,9 @@ pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_p
         "Layer 1",
     );
     let layer = doc.get_page(page1).get_layer(layer1);
-    let font = doc.add_builtin_font(BuiltinFont::Helvetica).unwrap();
-    let bold = doc.add_builtin_font(BuiltinFont::HelveticaBold).unwrap();
-    let mono = doc.add_builtin_font(BuiltinFont::Courier).unwrap();
+    let (font, bold) = load_fonts(&doc);
 
-    let mut ctx = Ctx::new(doc, layer, font, bold, mono);
+    let mut ctx = Ctx::new(doc, layer, font, bold);
 
     add_header(&mut ctx, proof, verification);
     add_events(&mut ctx, verification);
@@ -223,9 +261,8 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
 fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
     ctx.heading("3. REGISTERED EVIDENCE ITEMS");
 
-    let header = format!("{:>4} | {:30} | {:12} | {}", "#", "Evidence Item", "Chain Status", "Current File Integrity");
-    ctx.mono_line(&header, 8.0);
-    ctx.mono_line(&"-".repeat(80), 8.0);
+    ctx.table_row("#", "Evidence Item", "Chain Status", "Current File Integrity", 8.0, true);
+    ctx.table_rule();
 
     for (i, file) in verification.files.iter().enumerate() {
         let chain_status = if file.chain_valid { "VALID" } else { "INVALID" };
@@ -234,15 +271,8 @@ fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
             Some(false) => "TAMPERED",
             None => "UNKNOWN",
         };
-        let display_name: String = file.file_name.chars().take(28).collect();
-        let row = format!(
-            "{:>4} | {:30} | {:12} | {}",
-            i + 1,
-            display_name,
-            chain_status,
-            local_status
-        );
-        ctx.mono_line(&row, 8.0);
+        let display_name: String = file.file_name.chars().take(36).collect();
+        ctx.table_row(&format!("{}", i + 1), &display_name, chain_status, local_status, 8.0, false);
     }
 }
 
@@ -293,7 +323,7 @@ fn add_instructions(ctx: &mut Ctx) {
     ctx.heading("7. OFFLINE VERIFICATION");
     ctx.wrapped_block("This evidence package can be independently verified using:", 9.0);
     ctx.gap();
-    ctx.mono_line("$ evident verify proof.json", 9.0);
+    ctx.raw_line("$ evident verify proof.json", 9.0);
     ctx.gap();
     ctx.wrapped_block("This proof is self-contained and can be verified without server access.", 9.0);
 }
