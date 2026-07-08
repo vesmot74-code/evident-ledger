@@ -787,6 +787,37 @@ let project = Project {
 
 impl eframe::App for App {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
+        // Global button styling: rounded corners, comfortable padding,
+        // consistent look across the whole app. Cosmetic only — no new
+        // widgets or screens, just restyling what already exists.
+        {
+            let style = ui.style_mut();
+            style.spacing.button_padding = egui::vec2(14.0, 8.0);
+            style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
+            style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
+            style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+
+            let btn_fill = egui::Color32::from_rgb(226, 232, 240);
+            let btn_fill_hovered = egui::Color32::from_rgb(203, 213, 225);
+            let btn_fill_active = egui::Color32::from_rgb(180, 192, 209);
+            let black_text = egui::Stroke::new(1.0, egui::Color32::BLACK);
+
+            style.visuals.widgets.inactive.bg_fill = btn_fill;
+            style.visuals.widgets.inactive.weak_bg_fill = btn_fill;
+            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
+            style.visuals.widgets.inactive.fg_stroke = black_text;
+
+            style.visuals.widgets.hovered.bg_fill = btn_fill_hovered;
+            style.visuals.widgets.hovered.weak_bg_fill = btn_fill_hovered;
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
+            style.visuals.widgets.hovered.fg_stroke = black_text;
+
+            style.visuals.widgets.active.bg_fill = btn_fill_active;
+            style.visuals.widgets.active.weak_bg_fill = btn_fill_active;
+            style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
+            style.visuals.widgets.active.fg_stroke = black_text;
+        }
+
         // --- worker response handling ---
         while let Ok(resp) = self.rx_resp.try_recv() {
             match resp {
