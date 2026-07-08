@@ -1,0 +1,29 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "SELECT tsa_timestamp, tsa_serial\n           FROM tsa_tokens WHERE chain_id = $1 AND merkle_root = $2",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "tsa_timestamp",
+        "type_info": "Int8"
+      },
+      {
+        "ordinal": 1,
+        "name": "tsa_serial",
+        "type_info": "Text"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Text"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "b4f455216377ee7b4f60d21a65b7a1d0da67bfb84e50d9d9e8b5673a349f1e4b"
+}
