@@ -1,159 +1,86 @@
-# Evident Ledger (v0.1 FROZEN)
-
-Deterministic verifiable event ledger with cryptographic proofs and offline verification.
-
-## System overview
-
-Evident Ledger is a cryptographic event system where:
-
-- every action is an immutable event
-- events form a hash-linked chain
-- trust is derived from cryptographic proof, not server state
-- all results are reproducible offline
-
-## Core pipeline
-
-```text
-file → SHA256 → event → chain → proof → verify → report
 ```
+# Evident Ledger
 
-## Quick start
+**Cryptographic Evidence Engine for Business Records.**
 
-### Build the CLI
+Evident Ledger transforms digital files into **independently verifiable events**. It creates an immutable, tamper-proof audit trail that works even when your primary systems are offline. Built for compliance, auditability, and absolute data integrity.
 
-```bash
-cargo build --bin evident
-```
+---
 
-### Initialize local identity
+## The Problem
+Business records are vulnerable to dispute:
+* Documents can be replaced or modified.
+* Database logs can be altered.
+* Timestamps can be questioned.
 
-```bash
-evident init
-```
+Standard systems lack a **chain of custody** that an independent auditor can trust.
 
-### Create a new chain
+## The Solution: Evident Ledger
+We implement a **"Server-is-not-Truth"** model. The truth exists in the cryptographic proof itself, not in the state of a database.
 
-```bash
-evident new-chain
-```
+* **Hash-based evidence:** Every file is anchored by its unique SHA-256 fingerprint.
+* **Immutable chain:** Events are linked into a cryptographically secured chain.
+* **TSA Timestamping:** RFC 3161 integration links your data to global time sources.
+* **Local Verification:** Trust the math, not the cloud. Verify proofs without calling home.
+* **Audit-Ready Reports:** Deterministic PDF reports that are byte-identical across environments.
 
-### Commit a file into a chain
+## No Blockchain Philosophy
+Evident Ledger provides cryptographic integrity without the complexity, latency, or dependencies of a blockchain. You retain full control over your data and proofs.
 
-```bash
-evident commit <file> --chain <chain_id>
-```
+---
 
-Example:
+## Trust Tiers
+Every project has different requirements for legal significance:
 
-```bash
-evident new-chain
-# → prints: chain created / chain_id: <generated-uuid>
+| Tier | Level | Key Capabilities | Significance |
+| :--- | :--- | :--- | :--- |
+| **#1** | **Personal Proof** | Local verification, FreeTSA | Technical existence proof |
+| **#2** | **Legal Compliance** | Jurisdiction-specific TSA | Supports legally relevant audit processes |
+| **#3** | **Immutable Audit** | TSA redundancy, Corporate storage | Protection against data loss |
+| **#4** | **Enterprise** | PKI, Personal/Public Keys | Sovereign digital identity |
 
-evident commit Cargo.toml --chain <paste-the-generated-chain_id-here>
-```
-
-### Verify a proof offline
-
-```bash
-evident verify ~/.evident/proofs/<chain_id>/proof.json
-```
-
-Expected output:
-
-```text
-OK: proof valid
-```
-
-### Generate a deterministic report
-
-```bash
-evident report generate <chain_id>
-```
-
-Artifacts written to:
-
-```text
-~/.evident/proofs/<chain_id>/
-  ├── proof.json
-  └── proof.pdf
-```
-
-### Check chain status
-
-```bash
-evident status <chain_id>
-```
-
-## CLI contract
-
-The frozen workflow is:
-
-- init
-- new-chain
-- commit
-- verify
-- status
-- report generate
-
-The current executable also exposes auxiliary commands `help` and `hash`, which are preserved for compatibility but are not part of the frozen protocol contract.
+---
 
 ## Architecture
-
 ```text
-Ledger Engine   → immutable event chain
-Verifier        → offline cryptographic validation
-TSA Layer       → timestamp attestation authority
-Report Engine   → deterministic proof exporter
-CLI             → orchestration layer (no business logic)
+Event → Hash → Immutable Chain → TSA → Proof Object → Audit Report
 ```
 
-## Freeze rules
+## Quick Start
 
-1. Append-only system
-   - Events are immutable and cannot be modified or deleted.
-2. Deterministic hashing
-   - All hashes use SHA-256 only.
-3. Chain integrity
-   - Each event is linked to the prior event and the canonical proof is derived from the chain.
-4. Offline verification
-   - Verification must work without server access.
-5. Server is not truth
-   - Truth is derived from cryptographic proof, not server state.
-
-## Proof model
-
-The canonical proof artifact contains:
-
-```text
-chain_id
-root_hash
-tsa_timestamp
-tsa_signature
-event_count
-verification_status
-```
-
-## Output guarantee
-
-Given identical input:
-
-- proof.json is identical
-- proof.pdf is byte-identical
-- verification result is identical
-
-Determinism is a hard requirement of the system.
-
-## Tests
+### 1. Build the CLI
 
 ```bash
-cargo test --lib
+cargo build --release
 ```
 
-## Freeze status
+### 2. Create your identity
 
-- CLI: stable
-- Ledger: stable
-- Verifier: stable
-- Report engine: integrated
-- Protocol: FROZEN v0.1
+```bash
+./target/release/evident init
+```
 
+### 3. Protect a document
+
+```bash
+./target/release/evident commit <file> --chain <chain_id>
+```
+
+### 4. Verify independently
+
+```bash
+./target/release/evident verify ~/.evident/proofs/<chain_id>/proof.json
+```
+
+---
+
+## Documentation
+
+* [Protocol v0.1 Specification](docs/protocol_v0.1.md)
+* [Case Studies](docs/case-studies/)
+* [Security Policy](SECURITY.md)
+
+---
+
+*Evident Ledger — The truth is in the math.*
+```
