@@ -1054,20 +1054,52 @@ impl eframe::App for App {
             }
 
             if self.screen == Screen::VerifyResult {
-                ui.heading(format!("🔍 Проверка проекта: {}", self.verification_project));
+                ui.heading("Evident Ledger");
+                ui.label(egui::RichText::new("Evidence Verification Dashboard").weak());
                 ui.add_space(12.0);
 
-                match self.verify_status {
-                    VerifyStatus::Valid => {
-                        ui.colored_label(COLOR_VALID, "✅ ВСЕ СОБЫТИЯ ВАЛИДНЫ");
-                    }
-                    VerifyStatus::Invalid => {
-                        ui.colored_label(COLOR_INVALID, "❌ ОБНАРУЖЕНЫ НАРУШЕНИЯ");
-                    }
-                    _ => {}
-                }
+                egui::Frame::group(ui.style())
+                    .fill(COLOR_SURFACE)
+                    .stroke(egui::Stroke::new(1.0, COLOR_BORDER))
+                    .inner_margin(egui::Margin::same(14))
+                    .show(ui, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label(egui::RichText::new("Project").weak());
+                        });
+                        ui.label(egui::RichText::new(&self.verification_project).size(16.0).strong());
+                        ui.add_space(10.0);
 
-                ui.add_space(8.0);
+                        let (status_color, status_text) = match self.verify_status {
+                            VerifyStatus::Valid => (COLOR_VALID, "VERIFIED"),
+                            VerifyStatus::Invalid => (COLOR_INVALID, "INVALID"),
+                            VerifyStatus::Partial => (COLOR_PARTIAL, "PARTIAL"),
+                            VerifyStatus::None => (COLOR_BORDER, "NOT VERIFIED"),
+                        };
+                        ui.colored_label(status_color, egui::RichText::new(status_text).size(20.0).strong());
+
+                        ui.add_space(10.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+
+                        ui.columns(2, |cols| {
+                            let events_count = self.last_proof.as_ref().map(|p| p.events.len()).unwrap_or(0);
+                            cols[0].label(egui::RichText::new("Events").weak());
+                            cols[0].label(egui::RichText::new(events_count.to_string()).size(16.0).strong());
+
+                            let tsa_present = self.last_proof.as_ref()
+                                .map(|p| p.tsa.is_some())
+                                .unwrap_or(false);
+                            let (tsa_color, tsa_text) = if tsa_present {
+                                (COLOR_VALID, "Present")
+                            } else {
+                                (COLOR_PARTIAL, "Not Anchored")
+                            };
+                            cols[1].label(egui::RichText::new("External Timestamp (TSA)").weak());
+                            cols[1].colored_label(tsa_color, egui::RichText::new(tsa_text).size(16.0).strong());
+                        });
+                    });
+
+                ui.add_space(12.0);
                 ui.label(&self.verification_report);
                 ui.add_space(12.0);
 
