@@ -7,10 +7,6 @@ on:
 permissions:
   contents: write
 
-defaults:
-  run:
-    shell: bash
-
 jobs:
   build:
     strategy:
@@ -18,55 +14,41 @@ jobs:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-            archive: evident-linux-x64
           - os: windows-latest
             target: x86_64-pc-windows-msvc
-            archive: evident-windows-x64
           - os: macos-latest
             target: aarch64-apple-darwin
-            archive: evident-macos-arm64
           - os: macos-13
             target: x86_64-apple-darwin
-            archive: evident-macos-x64
 
     runs-on: ${{ matrix.os }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
 
-      - name: Enable SQLx offline
-        run: echo "SQLX_OFFLINE=true" >> $GITHUB_ENV
-
-      - name: Build all binaries
+      - name: Build
+        shell: bash
         run: cargo build --release --target ${{ matrix.target }} --bins
 
-      - name: Prepare release folder
+      - name: Prepare artifacts
+        shell: bash
         run: |
           mkdir -p artifact
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp target/${{ matrix.target }}/release/evident.exe artifact/
-            cp target/${{ matrix.target }}/release/evident-verify.exe artifact/
-            cp target/${{ matrix.target }}/release/evident-ledger.exe artifact/
-            cp target/${{ matrix.target }}/release/evident-gui.exe artifact/
+            cp target/${{ matrix.target }}/release/*.exe artifact/
           else
-            cp target/${{ matrix.target }}/release/evident artifact/
-            cp target/${{ matrix.target }}/release/evident-verify artifact/
-            cp target/${{ matrix.target }}/release/evident-ledger artifact/
-            cp target/${{ matrix.target }}/release/evident-gui artifact/
+            cp target/${{ matrix.target }}/release/evident* artifact/
           fi
 
-      - name: Generate SHA256SUMS
-        run: |
-          cd artifact
-          sha256sum * > SHA256SUMS
+      - name: Checksums
+        shell: bash
+        run: cd artifact && sha256sum * > SHA256SUMS
 
-      - name: Upload release files
+      - name: Upload
         uses: softprops/action-gh-release@v2
         with:
           files: artifact/*
