@@ -1145,7 +1145,13 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
 
                                 match generate_report(&proof_data.chain_id.clone(), &proof_data, &verification, &pdf_path) {
                                     Ok(()) => {
-                                        self.status = format!("✅ Заключение сохранено: {}", pdf_path.display());
+                                        let _ = std::process::Command::new("open")
+                                            .arg(&pdf_path)
+                                            .spawn();
+                                        self.status = format!(
+                                            "✅ Заключение сформировано и открыто\nПапка: {}",
+                                            pdf_path.parent().map(|p| p.display().to_string()).unwrap_or_default()
+                                        );
                                     }
                                     Err(e) => {
                                         self.status = format!("❌ Ошибка генерации PDF: {}", e);
