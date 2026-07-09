@@ -152,10 +152,10 @@ Verify independently:
 
 Technical and security documentation:
 
-- [Architecture](ARCHITECTURE.md)
-- [Threat Model](THREAT_MODEL.md)
+- [Architecture](docs/cli_product_layer_tz.md)
+- [Protocol Specification](docs/protocol_v0.1.md)
+- [Proof Schema](docs/proof_v1.schema.md)
 - [Security Policy](SECURITY.md)
-- [Legal Position](LEGAL_POSITION.md)
 
 ---
 
