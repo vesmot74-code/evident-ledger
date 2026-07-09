@@ -1,14 +1,14 @@
 # Evident Ledger
 
-**Tamper-evident cryptographic evidence infrastructure for high-stakes business records.**
+**Tamper-evident evidence infrastructure for high-stakes digital records.**
 
 ![Dashboard](docs/assets/dashboard.png)
 
 **Stop relying on mutable internal logs as your only source of truth.**
 
-Evident Ledger transforms business documents, software artifacts, AI model outputs, and digital records into independently verifiable evidence packages.
+Evident Ledger transforms business documents, software artifacts, datasets, AI model outputs, and digital records into independently verifiable evidence packages.
 
-Designed for regulated industries, AI development, software engineering, and compliance workflows, Evident Ledger creates cryptographic proof that a record existed in a specific form at a specific point in time.
+Designed for regulated industries, AI development, software engineering, and compliance workflows, Evident Ledger creates cryptographic proof that a record existed in a specific form at a specific point in time across jurisdictions.
 
 ---
 
@@ -38,7 +38,7 @@ Evident Ledger separates record creation from later verification.
 | --- | --- | --- |
 | Integrity | Database-dependent | Cryptographically verifiable |
 | Verification | Requires internal system access | Independent verification |
-| Audit History | Mutable records | Tamper-evident event chain |
+| Audit History | Mutable records | Tamper-evident proof chain |
 | Cloud Dependency | Usually required | Local-first architecture |
 
 ---
@@ -169,11 +169,14 @@ Evident Ledger enables organizations to create portable, independently verifiabl
 
 # ⚖️ Legal Position
 
-Evident Ledger is a technical infrastructure tool.
+Evident Ledger is a technical infrastructure tool designed to support evidence preservation, provenance, and verification workflows.
 
-It supports evidence preservation workflows but does not determine legal admissibility or replace legal advice.
+It does not replace legal advice, compliance assessment, or professional judgment.
 
-Admissibility depends on jurisdiction, applicable rules, case circumstances, and the complete evidentiary record.
+Legal effect, regulatory acceptance, and admissibility depend on jurisdiction, applicable regulations, contractual requirements, and specific case circumstances.
+
+The platform is designed to support integrity principles used in digital evidence workflows, including authentication concepts in the United States and electronic trust frameworks such as eIDAS in the European Union.
+
 
 ---
 
