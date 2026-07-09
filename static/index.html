@@ -1,9 +1,9 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="en">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<meta name="description" content="Evident Ledger — детерминированный audit-ledger. SHA-256 + RFC 3161 TSA. Локальная фиксация, независимая офлайн-верификация.">
+<meta name="description" content="Evident Ledger — deterministic audit ledger. SHA-256 + RFC 3161 TSA. Local capture, independent offline verification.">
 <title>Evident Ledger — детерминированный audit-ledger с криптографическим доказательством</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -29,7 +29,7 @@
   --container: 1120px;
 }
 * { margin: 0; padding: 0; box-sizing: border-box; }
-html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
+html { -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; scroll-behavior: smooth; }
 body { font-family: var(--font-main); font-size: 16px; line-height: 1.65; color: var(--text); background: var(--bg); }
 .el-container { max-width: var(--container); margin: 0 auto; padding: 0 24px; }
 a { color: inherit; }
@@ -40,9 +40,17 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 .el-header__inner { display: flex; align-items: center; justify-content: space-between; padding: 16px 24px; gap: 24px; }
 .el-logo { display: flex; align-items: center; gap: 10px; text-decoration: none; font-weight: 700; font-size: 15px; letter-spacing: 0.02em; color: var(--text); }
 .el-logo__mark { display: flex; align-items: center; justify-content: center; width: 32px; height: 32px; border: 1.5px solid var(--text); border-radius: 6px; font-size: 12px; font-weight: 700; letter-spacing: -0.02em; }
-.el-header__nav { flex: 1; display: flex; }
+.el-header__nav { flex: 1; display: flex; align-items: center; gap: 24px; }
 .el-header__nav a { color: var(--text-secondary); text-decoration: none; font-size: 14.5px; font-weight: 500; }
 .el-header__nav a:hover { color: var(--text); }
+.el-header__right { display: flex; align-items: center; gap: 14px; }
+
+/* Language switch */
+.el-langswitch { display: flex; align-items: center; border: 1px solid var(--border); border-radius: var(--radius-sm); overflow: hidden; font-family: var(--font-mono); font-size: 12.5px; }
+.el-langswitch button { border: none; background: transparent; color: var(--text-secondary); padding: 6px 11px; cursor: pointer; font-family: inherit; font-size: inherit; font-weight: 500; letter-spacing: 0.02em; }
+.el-langswitch button + button { border-left: 1px solid var(--border); }
+.el-langswitch button.is-active { background: var(--text); color: #fff; }
+.el-langswitch button:hover:not(.is-active) { color: var(--text); background: var(--bg-alt); }
 
 /* Buttons */
 .el-btn { display: inline-flex; flex-direction: column; align-items: flex-start; gap: 1px; padding: 10px 20px; border-radius: var(--radius-sm); text-decoration: none; border: none; cursor: pointer; font-family: var(--font-main); line-height: 1.3; }
@@ -81,10 +89,10 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 .el-arch__list { list-style: none; margin: 0 0 16px; padding: 0; color: var(--text-secondary); font-size: 14.5px; }
 .el-arch__list li { padding-left: 16px; position: relative; margin: 7px 0; }
 .el-arch__list li::before { content: "—"; position: absolute; left: 0; color: var(--text-secondary); }
-.el-arch__note { font-size: 13.5px; color: var(--text-secondary); font-style: italic; border-top: 1px solid var(--border-light, var(--border)); padding-top: 12px; margin-top: 4px; }
+.el-arch__note { font-size: 13.5px; color: var(--text-secondary); font-style: italic; border-top: 1px solid var(--border); padding-top: 12px; margin-top: 4px; }
 
 /* Trust model quote */
-.el-trust { border-left: 4px solid var(--accent); background: var(--bg); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-md); padding: 24px 28px; }
+.el-trust { background: var(--bg); border: 1px solid var(--border); border-left: 4px solid var(--accent); border-radius: var(--radius-md); padding: 24px 28px; }
 .el-trust p { font-weight: 600; margin-bottom: 12px; }
 .el-trust ul { list-style: none; padding: 0; }
 .el-trust li { position: relative; padding-left: 18px; margin: 8px 0; color: var(--text-secondary); font-size: 15px; }
@@ -122,6 +130,7 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
   .el-grid-4 { grid-template-columns: 1fr 1fr; }
   .el-hero__title { font-size: 32px; }
   .el-section__title { font-size: 22px; }
+  .el-header__nav { display: none; }
 }
 </style>
 </head>
@@ -130,61 +139,72 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
   <header class="el-header">
     <div class="el-container el-header__inner">
       <a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
-      <nav class="el-header__nav"><a href="/verify-ui">Verify</a></nav>
-      <a href="/verify-ui" class="el-btn el-btn--primary">
-        <span class="el-btn__main">Открыть верификатор</span>
-        <span class="el-btn__sub">chain_id или SHA-256</span>
-      </a>
+      <nav class="el-header__nav"><a href="/verify-ui" data-ru="Верификация" data-en="Verify">Верификация</a></nav>
+      <div class="el-header__right">
+        <div class="el-langswitch" role="group" aria-label="Language switch">
+          <button type="button" data-lang-btn="en" class="is-active">EN</button>
+          <button type="button" data-lang-btn="ru">RU</button>
+        </div>
+        <a href="/verify-ui" class="el-btn el-btn--primary">
+          <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
+          <span class="el-btn__sub" data-ru="chain_id или SHA-256" data-en="chain_id or SHA-256">chain_id или SHA-256</span>
+        </a>
+      </div>
     </div>
   </header>
 
   <section class="el-hero">
     <div class="el-container">
-      <p class="el-hero__eyebrow">Deterministic Event Ledger</p>
-      <h1 class="el-hero__title">Криптографическое доказательство фиксации файла во времени</h1>
-      <p class="el-hero__subtitle">
+      <p class="el-hero__eyebrow" data-ru="Deterministic Event Ledger" data-en="Deterministic Event Ledger">Deterministic Event Ledger</p>
+      <h1 class="el-hero__title" data-ru="Криптографическое доказательство фиксации файла во времени" data-en="Cryptographic proof that a file existed at a point in time">Криптографическое доказательство фиксации файла во времени</h1>
+      <p class="el-hero__subtitle"
+        data-ru="Evident Ledger — локальная система фиксации цифровых объектов: SHA-256 хеширование, hash-linked цепочка событий, опциональная внешняя временная метка RFC 3161 (TSA) и независимая офлайн-верификация. Не облачный сервис — вы полностью контролируете свои данные локально."
+        data-en="Evident Ledger is a local system for capturing digital objects: SHA-256 hashing, a hash-linked event chain, an optional external RFC 3161 timestamp (TSA), and independent offline verification. Not a cloud service — you keep full local control of your data.">
         Evident Ledger — локальная система фиксации цифровых объектов: SHA-256 хеширование,
         hash-linked цепочка событий, опциональная внешняя временная метка RFC 3161 (TSA)
         и независимая офлайн-верификация. Не облачный сервис — вы полностью контролируете
         свои данные локально.
       </p>
       <a href="/verify-ui" class="el-btn el-btn--light">
-        <span class="el-btn__main">Открыть верификатор</span>
-        <span class="el-btn__sub">проверка по chain_id или хэшу</span>
+        <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
+        <span class="el-btn__sub" data-ru="проверка по chain_id или хэшу" data-en="check by chain_id or hash">проверка по chain_id или хэшу</span>
       </a>
     </div>
   </section>
 
   <section class="el-strip">
     <div class="el-container">
-      <p class="el-strip__text"><strong>Файл никогда не покидает вашу среду.</strong> На сервер передаётся только SHA-256 хэш.</p>
-      <p class="el-strip__sub">Hash-only проверка — можно узнать, зафиксирован ли файл, не загружая сам документ.</p>
+      <p class="el-strip__text">
+        <strong data-ru="Файл никогда не покидает вашу среду." data-en="Your file never leaves your environment.">Файл никогда не покидает вашу среду.</strong>
+        <span data-ru=" На сервер передаётся только SHA-256 хэш." data-en=" Only the SHA-256 hash is sent to the server."> На сервер передаётся только SHA-256 хэш.</span>
+      </p>
+      <p class="el-strip__sub" data-ru="Hash-only проверка — можно узнать, зафиксирован ли файл, не загружая сам документ." data-en="Hash-only check — find out whether a file is recorded without ever uploading the document itself.">Hash-only проверка — можно узнать, зафиксирован ли файл, не загружая сам документ.</p>
     </div>
   </section>
 
   <section class="el-section" id="architecture">
     <div class="el-container">
-      <h2 class="el-section__title">Два независимых компонента</h2>
-      <p class="el-section__lead">Локальный клиент и серверный ledger решают разные задачи и не заменяют друг друга.</p>
+      <h2 class="el-section__title" data-ru="Два независимых компонента" data-en="Two independent components">Два независимых компонента</h2>
+      <p class="el-section__lead" data-ru="Локальный клиент и серверный ledger решают разные задачи и не заменяют друг друга." data-en="The local client and the server ledger solve different problems and don't replace each other.">Локальный клиент и серверный ledger решают разные задачи и не заменяют друг друга.</p>
       <div class="el-arch">
         <article class="el-arch__card">
-          <span class="el-arch__label">Локальный клиент</span>
+          <span class="el-arch__label" data-ru="Локальный клиент" data-en="Local client">Локальный клиент</span>
           <h3 class="el-arch__name">evident (CLI / GUI)</h3>
           <ul class="el-arch__list">
-            <li>хеширует файл (SHA-256) локально</li>
-            <li>отправляет событие в цепочку</li>
-            <li>офлайн-верификация proof, без обращения к серверу</li>
+            <li data-ru="хеширует файл (SHA-256) локально" data-en="hashes the file (SHA-256) locally">хеширует файл (SHA-256) локально</li>
+            <li data-ru="отправляет событие в цепочку" data-en="submits the event to the chain">отправляет событие в цепочку</li>
+            <li data-ru="офлайн-верификация proof, без обращения к серверу" data-en="offline proof verification, no server call needed">офлайн-верификация proof, без обращения к серверу</li>
           </ul>
-          <p class="el-arch__note">Работает локально. Файл никогда не отправляется на сервер.</p>
+          <p class="el-arch__note" data-ru="Работает локально. Файл никогда не отправляется на сервер." data-en="Runs locally. The file is never sent to the server.">Работает локально. Файл никогда не отправляется на сервер.</p>
         </article>
         <article class="el-arch__card el-arch__card--accent">
-          <span class="el-arch__label">Серверный ledger</span>
+          <span class="el-arch__label" data-ru="Серверный ledger" data-en="Server ledger">Серверный ledger</span>
           <h3 class="el-arch__name">Evident Ledger Server</h3>
           <ul class="el-arch__list">
-            <li>назначает sequence, строит Merkle root</li>
-            <li>подписывает результат (Ed25519)</li>
-            <li>опционально запрашивает RFC 3161 TSA-метку у FreeTSA</li>
-            <li>выдаёт независимо проверяемый сертификат (SAC)</li>
+            <li data-ru="назначает sequence, строит Merkle root" data-en="assigns a sequence, builds the Merkle root">назначает sequence, строит Merkle root</li>
+            <li data-ru="подписывает результат (Ed25519)" data-en="signs the result (Ed25519)">подписывает результат (Ed25519)</li>
+            <li data-ru="опционально запрашивает RFC 3161 TSA-метку у FreeTSA" data-en="optionally requests an RFC 3161 TSA timestamp from FreeTSA">опционально запрашивает RFC 3161 TSA-метку у FreeTSA</li>
+            <li data-ru="выдаёт независимо проверяемый сертификат (SAC)" data-en="issues an independently verifiable certificate (SAC)">выдаёт независимо проверяемый сертификат (SAC)</li>
           </ul>
         </article>
       </div>
@@ -193,14 +213,14 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 
   <section class="el-section el-section--alt" id="trust-model">
     <div class="el-container">
-      <h2 class="el-section__title">Модель доверия</h2>
+      <h2 class="el-section__title" data-ru="Модель доверия" data-en="Trust model">Модель доверия</h2>
       <div class="el-trust">
-        <p>Доверие строится на:</p>
+        <p data-ru="Доверие строится на:" data-en="Trust is based on:">Доверие строится на:</p>
         <ul>
-          <li>криптографическом хешировании (SHA-256)</li>
-          <li>hash-linked цепочке событий с Merkle-доказательством</li>
-          <li>внешнем источнике времени (RFC 3161 TSA)</li>
-          <li>возможности независимой офлайн-верификации</li>
+          <li data-ru="криптографическом хешировании (SHA-256)" data-en="cryptographic hashing (SHA-256)">криптографическом хешировании (SHA-256)</li>
+          <li data-ru="hash-linked цепочке событий с Merkle-доказательством" data-en="a hash-linked event chain with a Merkle proof">hash-linked цепочке событий с Merkle-доказательством</li>
+          <li data-ru="внешнем источнике времени (RFC 3161 TSA)" data-en="an external time source (RFC 3161 TSA)">внешнем источнике времени (RFC 3161 TSA)</li>
+          <li data-ru="возможности независимой офлайн-верификации" data-en="the ability to verify independently, offline">возможности независимой офлайн-верификации</li>
         </ul>
       </div>
     </div>
@@ -208,19 +228,19 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 
   <section class="el-section" id="why">
     <div class="el-container">
-      <h2 class="el-section__title">Зачем это нужно</h2>
+      <h2 class="el-section__title" data-ru="Зачем это нужно" data-en="Why it matters">Зачем это нужно</h2>
       <div class="el-grid-3">
         <article class="el-card">
-          <h3 class="el-card__title">Доказательство во времени</h3>
-          <p class="el-card__text">Если позже возникнет спор о том, менялся ли документ — у вас есть криптографически проверяемая цепочка событий с Merkle-доказательством.</p>
+          <h3 class="el-card__title" data-ru="Доказательство во времени" data-en="Proof over time">Доказательство во времени</h3>
+          <p class="el-card__text" data-ru="Если позже возникнет спор о том, менялся ли документ — у вас есть криптографически проверяемая цепочка событий с Merkle-доказательством." data-en="If a dispute later arises over whether a document was changed, you have a cryptographically verifiable event chain with a Merkle proof.">Если позже возникнет спор о том, менялся ли документ — у вас есть криптографически проверяемая цепочка событий с Merkle-доказательством.</p>
         </article>
         <article class="el-card">
-          <h3 class="el-card__title">Независимая проверка</h3>
-          <p class="el-card__text">evident-verify работает офлайн, не требует доверия к серверу: пересчитывает Merkle root, проверяет подпись, сверяет файл с зафиксированным хэшем.</p>
+          <h3 class="el-card__title" data-ru="Независимая проверка" data-en="Independent verification">Независимая проверка</h3>
+          <p class="el-card__text" data-ru="evident-verify работает офлайн, не требует доверия к серверу: пересчитывает Merkle root, проверяет подпись, сверяет файл с зафиксированным хэшем." data-en="evident-verify runs offline and requires no trust in the server: it recomputes the Merkle root, checks the signature, and matches the file against the recorded hash.">evident-verify работает офлайн, не требует доверия к серверу: пересчитывает Merkle root, проверяет подпись, сверяет файл с зафиксированным хэшем.</p>
         </article>
         <article class="el-card">
-          <h3 class="el-card__title">Hash-only приватность</h3>
-          <p class="el-card__text">Можно узнать, зафиксирован ли файл в системе, передав на сервер только его SHA-256, без загрузки самого документа.</p>
+          <h3 class="el-card__title" data-ru="Hash-only приватность" data-en="Hash-only privacy">Hash-only приватность</h3>
+          <p class="el-card__text" data-ru="Можно узнать, зафиксирован ли файл в системе, передав на сервер только его SHA-256, без загрузки самого документа." data-en="You can check whether a file is recorded in the system by sending only its SHA-256, without ever uploading the document itself.">Можно узнать, зафиксирован ли файл в системе, передав на сервер только его SHA-256, без загрузки самого документа.</p>
         </article>
       </div>
     </div>
@@ -228,22 +248,22 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 
   <section class="el-section el-section--alt" id="how">
     <div class="el-container">
-      <h2 class="el-section__title">Как это работает</h2>
+      <h2 class="el-section__title" data-ru="Как это работает" data-en="How it works">Как это работает</h2>
       <div class="el-steps">
         <article class="el-step">
-          <span class="el-step__num">Шаг 1</span>
-          <h3 class="el-step__title">Commit</h3>
-          <p class="el-step__text">Файл хешируется (<code>SHA-256</code>) локально, событие отправляется в цепочку.</p>
+          <span class="el-step__num" data-ru="Шаг 1" data-en="Step 1">Шаг 1</span>
+          <h3 class="el-step__title" data-ru="Commit" data-en="Commit">Commit</h3>
+          <p class="el-step__text" data-ru="Файл хешируется (<code>SHA-256</code>) локально, событие отправляется в цепочку." data-en="The file is hashed (<code>SHA-256</code>) locally and the event is submitted to the chain.">Файл хешируется (<code>SHA-256</code>) локально, событие отправляется в цепочку.</p>
         </article>
         <article class="el-step">
-          <span class="el-step__num">Шаг 2</span>
-          <h3 class="el-step__title">Anchor</h3>
-          <p class="el-step__text">Сервер назначает sequence, строит Merkle root, подписывает результат; опционально запрашивает TSA-метку у FreeTSA.</p>
+          <span class="el-step__num" data-ru="Шаг 2" data-en="Step 2">Шаг 2</span>
+          <h3 class="el-step__title" data-ru="Anchor" data-en="Anchor">Anchor</h3>
+          <p class="el-step__text" data-ru="Сервер назначает sequence, строит Merkle root, подписывает результат; опционально запрашивает TSA-метку у FreeTSA." data-en="The server assigns a sequence, builds the Merkle root, and signs the result; it can optionally request a TSA timestamp from FreeTSA.">Сервер назначает sequence, строит Merkle root, подписывает результат; опционально запрашивает TSA-метку у FreeTSA.</p>
         </article>
         <article class="el-step">
-          <span class="el-step__num">Шаг 3</span>
-          <h3 class="el-step__title">Verify</h3>
-          <p class="el-step__text">Proof можно проверить в любой момент: через GUI (backend + локальная сверка файла) или офлайн через CLI.</p>
+          <span class="el-step__num" data-ru="Шаг 3" data-en="Step 3">Шаг 3</span>
+          <h3 class="el-step__title" data-ru="Verify" data-en="Verify">Verify</h3>
+          <p class="el-step__text" data-ru="Proof можно проверить в любой момент: через GUI (backend + локальная сверка файла) или офлайн через CLI." data-en="The proof can be checked at any time: through the GUI (backend plus a local file check) or fully offline via the CLI.">Proof можно проверить в любой момент: через GUI (backend + локальная сверка файла) или офлайн через CLI.</p>
         </article>
       </div>
     </div>
@@ -251,22 +271,22 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 
   <section class="el-section" id="usecases">
     <div class="el-container">
-      <h2 class="el-section__title">Когда это пригодится</h2>
+      <h2 class="el-section__title" data-ru="Когда это пригодится" data-en="When it's useful">Когда это пригодится</h2>
       <div class="el-grid-4">
-        <div class="el-usecase">Фиксация версии документа перед отправкой на согласование или подпись</div>
-        <div class="el-usecase">Доказательство даты создания артефакта — черновик, договор, чертёж</div>
-        <div class="el-usecase">Аудиторский след изменений в проекте с восстановимой историей</div>
-        <div class="el-usecase">Локальная альтернатива, когда файл нельзя отправлять в облачный сервис</div>
+        <div class="el-usecase" data-ru="Фиксация версии документа перед отправкой на согласование или подпись" data-en="Recording a document version before it goes out for approval or signature">Фиксация версии документа перед отправкой на согласование или подпись</div>
+        <div class="el-usecase" data-ru="Доказательство даты создания артефакта — черновик, договор, чертёж" data-en="Proving the creation date of an artifact — a draft, contract, or drawing">Доказательство даты создания артефакта — черновик, договор, чертёж</div>
+        <div class="el-usecase" data-ru="Аудиторский след изменений в проекте с восстановимой историей" data-en="An audit trail of project changes with recoverable history">Аудиторский след изменений в проекте с восстановимой историей</div>
+        <div class="el-usecase" data-ru="Локальная альтернатива, когда файл нельзя отправлять в облачный сервис" data-en="A local alternative when a file can't be sent to a cloud service">Локальная альтернатива, когда файл нельзя отправлять в облачный сервис</div>
       </div>
     </div>
   </section>
 
   <section class="el-cta" id="verify">
     <div class="el-container">
-      <h2 class="el-cta__title">Зафиксируйте файл или проверьте существующую запись</h2>
+      <h2 class="el-cta__title" data-ru="Зафиксируйте файл или проверьте существующую запись" data-en="Record a file or check an existing entry">Зафиксируйте файл или проверьте существующую запись</h2>
       <a href="/verify-ui" class="el-btn el-btn--light">
-        <span class="el-btn__main">Открыть верификатор</span>
-        <span class="el-btn__sub">chain_id или SHA-256</span>
+        <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
+        <span class="el-btn__sub" data-ru="chain_id или SHA-256" data-en="chain_id or SHA-256">chain_id или SHA-256</span>
       </a>
     </div>
   </section>
@@ -275,11 +295,49 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
     <div class="el-container el-footer__inner">
       <a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
       <div class="el-footer__copy">
-        <p>Evident Ledger — локальный open-source ledger. Данные не покидают вашу среду без явного действия.</p>
-        <p>Все доказательства воспроизводимы независимо стандартными криптографическими инструментами.</p>
+        <p data-ru="Evident Ledger — локальный open-source ledger. Данные не покидают вашу среду без явного действия." data-en="Evident Ledger is a local open-source ledger. Data never leaves your environment without an explicit action.">Evident Ledger — локальный open-source ledger. Данные не покидают вашу среду без явного действия.</p>
+        <p data-ru="Все доказательства воспроизводимы независимо стандартными криптографическими инструментами." data-en="Every proof can be independently reproduced with standard cryptographic tools.">Все доказательства воспроизводимы независимо стандартными криптографическими инструментами.</p>
       </div>
     </div>
   </footer>
+
+  <script>
+  (function () {
+    var STORAGE_KEY = 'evident-ledger-lang';
+    var buttons = document.querySelectorAll('[data-lang-btn]');
+    var nodes = document.querySelectorAll('[data-ru][data-en]');
+
+    function applyLang(lang) {
+      document.documentElement.lang = lang;
+      nodes.forEach(function (el) {
+        var value = el.getAttribute('data-' + lang);
+        if (value === null) return;
+        if (value.indexOf('<') !== -1) {
+          el.innerHTML = value;
+        } else {
+          el.textContent = value;
+        }
+      });
+      buttons.forEach(function (btn) {
+        btn.classList.toggle('is-active', btn.getAttribute('data-lang-btn') === lang);
+      });
+      try { localStorage.setItem(STORAGE_KEY, lang); } catch (e) {}
+    }
+
+    buttons.forEach(function (btn) {
+      btn.addEventListener('click', function () {
+        applyLang(btn.getAttribute('data-lang-btn'));
+      });
+    });
+
+    // Default language is English. Once the user picks a language,
+    // it is persisted in localStorage and reused on every future visit
+    // (today -> EN, tomorrow -> EN, unless the user switches to RU).
+    var saved = null;
+    try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
+    applyLang(saved === 'ru' ? 'ru' : 'en');
+  })();
+  </script>
 
 </body>
 </html>
