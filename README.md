@@ -1,291 +1,88 @@
 # Evident Ledger
 
-## Cryptographic Evidence Infrastructure for Business Records
+**Deterministic cryptographic evidence infrastructure for high-stakes business records.**
 
-**Create tamper-proof, independently verifiable evidence from any digital file in seconds.**
+![Dashboard](docs/assets/dashboard.png)
 
-Evident Ledger transforms documents, files, and business events into cryptographic proof objects that remain verifiable even when your original systems are unavailable.
+**Stop trusting your internal logs for audits.** Evident Ledger transforms business documents, AI model artifacts, and engineering records into independently verifiable proof objects.
 
-No blockchain. No trusted database. No dependency on a central authority.
-
-The truth exists in the mathematics of the proof.
+Designed for **Pharma, AI Development, and Legal Compliance**, it provides an immutable audit trail without the cost and complexity of blockchain.
 
 ---
 
-# The Problem
+## ⚡️ Quick Start: See it in Action
 
-Modern businesses depend on digital records:
+Don't just take our word for it. See what a professional auditor receives:
 
-- Contracts
-- Financial documents
-- Compliance reports
-- Engineering files
-- Customer records
-- AI-generated content
-
-But digital records can be challenged:
-
-- Files can be replaced.
-- Databases can be modified.
-- Internal logs can be rewritten.
-- Timestamps can be disputed.
-
-Traditional systems prove that information exists **inside a system**.
-
-They do not prove that the information existed independently of that system.
-
-Businesses need a stronger foundation:
-
-**Evidence that can be verified by anyone, anywhere, without trusting the original platform.**
+* 📄 **[Evidence Snapshot](docs/samples/evidence_snapshot.pdf)**: Complete verification summary showing ledger integrity and cryptographic proof with Merkle root and digital signature
+* 🛡️ **[Hash Attestation Certificate](docs/samples/hash-attestation-66d244d59319785d.pdf)**: Independent verification certificate confirming hash presence in the Evident Ledger system with TSA timestamp
 
 ---
 
-# The Solution: Evident Ledger
+## 🏗 Why Evident Ledger?
 
-Evident Ledger introduces a **Server-Is-Not-Truth architecture**.
+Traditional logging systems are vulnerable: they store evidence inside the system that defines the truth. **Evident Ledger separates the two.**
 
-The server stores evidence.
-
-The mathematics proves the evidence.
-
-Every protected record becomes an independent cryptographic event:
-File
-↓
-SHA-256 Hash
-↓
-Immutable Event Chain
-↓
-Trusted Timestamp Authority (TSA)
-↓
-Proof Object
-↓
-Audit Report
-
-text
-
-The result is a portable, verifiable proof of existence and integrity.
+| Feature | Your Current Logs | Evident Ledger |
+| --- | --- | --- |
+| **Integrity** | Database-dependent | Mathematically proven |
+| **Verification** | Requires internal access | Independent, offline, public |
+| **Tamper-proofing** | Mutable | Immutable Event Chain |
+| **Cloud Dependency** | Mandatory | **Zero** (Local execution) |
 
 ---
 
-# Core Capabilities
+## 🛡️ Trust Model
 
-## Cryptographic Evidence
+Our system relies on mathematical rigor, not corporate trust:
 
-Every file receives a unique SHA-256 fingerprint.
-
-Any modification creates a different fingerprint.
-
-The original evidence remains mathematically distinguishable.
-
----
-
-## Immutable Audit Chain
-
-Events are connected into a cryptographic sequence.
-
-Each event depends on the integrity of previous events.
-
-Tampering breaks the chain.
+* **Cryptographic Hashing:** SHA-256 for file fingerprinting
+* **Immutable Event Chain:** Hash-linked events with Merkle proofs
+* **External Anchoring:** RFC 3161 TSA integration with freetsa.org
+* **Offline Verification:** Independent verification of all proofs without server access
 
 ---
 
-## Trusted Timestamping
+## 🚀 How it Works
 
-Evident Ledger integrates RFC 3161 Timestamp Authority (TSA) standards.
+1. **Commit:** Hash your file locally (the file never leaves your machine)
+2. **Anchor:** The server assigns a sequence and provides a cryptographically signed timestamp
+3. **Verify:** Anyone can verify the proof independently—no server access required
 
-A trusted external time source confirms that evidence existed at a specific moment.
-
----
-
-## Independent Verification
-
-Verification does not require:
-
-- Database access
-- Cloud access
-- Vendor permission
-- Original application availability
-
-Anyone can verify the proof using the cryptographic evidence package.
-
-Trust the math, not the server.
+![Verification](docs/assets/verification.png)
 
 ---
 
-## Deterministic Audit Reports
+## 📊 Evidence Verification Example
 
-Evident Ledger generates reproducible audit reports.
+Our system produces cryptographically verifiable evidence packages:
 
-The same evidence produces the same report across environments.
-
-Designed for compliance workflows and long-term verification.
-
----
-
-# Why Not Blockchain?
-
-Evident Ledger provides blockchain-style integrity without blockchain complexity.
-
-You do not need:
-
-- Tokens
-- Wallets
-- Public networks
-- Consensus mechanisms
-- External dependencies
-
-Your organization keeps control of:
-
-- Data
-- Evidence
-- Storage
-- Verification process
-
-Cryptographic integrity without unnecessary infrastructure.
+- **Ledger Integrity:** Validated with Merkle Root: `8658e621dfaed6f55100e487c4d2d9da133268c5f3907d254c73331cbf784090`
+- **Digital Signature:** `c2a2b12bc665888c8f633e461cd6c6f85b72fdbf8386a78ab7a87a8ade77814e`
+- **External Timestamp:** Confirmed via freetsa.org TSA
+- **Offline Verification:** Self-contained proofs verifiable with `evident verify proof.json`
 
 ---
 
-# Before vs After
-
-## Before Evident Ledger
-
-❌ Expensive audit preparation  
-❌ Manual evidence collection  
-❌ Dependence on internal databases  
-❌ Difficult historical verification  
-❌ Complex compliance workflows  
-
----
-
-## After Evident Ledger
-
-✅ Instant cryptographic proof  
-✅ Independent verification  
-✅ Immutable audit history  
-✅ Portable evidence packages  
-✅ Faster compliance processes  
-
----
-
-# Trust Tiers
-
-Different organizations require different levels of assurance.
-
-| Tier | Solution | Capabilities |
-|------|----------|--------------|
-| Tier 1 | Personal Proof | Local verification, Free TSA, technical proof of existence |
-| Tier 2 | Compliance Proof | Jurisdiction-specific TSA for regulated workflows |
-| Tier 3 | Enterprise Audit | TSA redundancy, corporate evidence storage, disaster protection |
-| Tier 4 | Sovereign Identity | PKI infrastructure, personal and organizational keys |
-
----
-
-# Architecture
-Digital Record
-↓
-SHA-256 Fingerprint
-↓
-Immutable Event Chain
-↓
-RFC 3161 Timestamp
-↓
-Cryptographic Proof
-↓
-Audit Verification Report
-
-text
-
----
-
-# Quick Start
-
-## Build the CLI
+## 🛠 Quick Start (CLI)
 
 ```bash
+# Build the client
 cargo build --release
-Create Identity
-bash
+
+# Initialize your identity
 ./target/release/evident init
-Protect a Document
-bash
+
+# Protect a document
 ./target/release/evident commit document.pdf --chain <chain_id>
-Verify Evidence
-bash
+
+# Verify independently
 ./target/release/evident verify ~/.evident/proofs/<chain_id>/proof.json
-Example Use Cases
-Legal & Compliance
-Create independent proof of:
+📂 Resources
+Protocol Specification
 
-Contracts
+Case Studies
 
-Regulatory documents
+Security Policy
 
-Evidence packages
-
-Finance
-Protect:
-
-Reports
-
-Transactions
-
-Internal records
-
-Engineering
-Verify:
-
-Design files
-
-Technical documentation
-
-Release artifacts
-
-Digital Content
-Prove:
-
-Original versions
-
-Creation history
-
-Content integrity
-
-Security Model
-Evident Ledger is built around one principle:
-
-The system storing the evidence should not be the system defining the truth.
-
-The proof must remain valid even if:
-
-The database disappears.
-
-The application changes.
-
-The company infrastructure is replaced.
-
-Roadmap
-SHA-256 evidence hashing
-
-Immutable event chain
-
-TSA timestamp integration
-
-Independent verification
-
-Deterministic PDF audit reports
-
-Enterprise PKI support
-
-Distributed corporate evidence storage
-
-Multi-party verification workflows
-
-Documentation
-Protocol Specification: docs/protocol_v0.1.md
-
-Case Studies: docs/case-studies/
-
-Security Policy: SECURITY.md
-
-Evident Ledger
-The truth is not stored.
-The truth is proven.
+Evident Ledger: The truth is not stored. The truth is proven.
