@@ -141,6 +141,8 @@ struct App {
     file_path: String,
     file_name: String,
     file_size: u64,
+    selected_file_hash: String,
+    loading_hash: bool,
 
     // === Project ===
     projects: Vec<String>,
@@ -190,6 +192,8 @@ impl Default for App {
             file_path: Default::default(),
             file_name: Default::default(),
             file_size: Default::default(),
+            selected_file_hash: Default::default(),
+            loading_hash: false,
             projects: Default::default(),
             project_name: Default::default(),
             selected_project: Default::default(),
@@ -253,6 +257,7 @@ enum VerifyStatus {
 enum Screen {
     #[default]
     FileSelection,
+    HashPreview,
     SelectProject,
     CommitProgress,
     Result,
@@ -281,6 +286,8 @@ struct CommitFailure {
 }
 
 enum WorkerResponse {
+    HashComputed(Result<String, String>),
+
     VerifyProjectDone(
         Result<
             (
@@ -1041,6 +1048,20 @@ impl eframe::App for App {
         // --- worker response handling ---
         while let Ok(resp) = self.rx_resp.try_recv() {
             match resp {
+                WorkerResponse::HashComputed(result) => match result {
+                    Ok(hash) => {
+                        self.selected_file_hash = hash.clone();
+
+                        println!("SHA256 READY: {}", hash);
+                        self.status = self
+                            .tr("✅ SHA-256 рассчитан", "✅ SHA-256 calculated")
+                            .to_string();
+                    }
+                    Err(e) => {
+                        self.status = format!("❌ {}", e);
+                    }
+                },
+
                 WorkerResponse::VerifyProjectDone(res) => {
                     self.loading_verify_project = false;
                     match res {
@@ -1301,14 +1322,20 @@ impl eframe::App for App {
                     {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
                             self.file_path = path.display().to_string();
+
                             self.file_name = path
                                 .file_name()
                                 .unwrap_or_default()
                                 .to_string_lossy()
                                 .into();
+
                             self.file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
-                            self.screen = Screen::SelectProject;
-                            self.load_projects();
+
+                            self.selected_file_hash.clear();
+                            self.loading_hash = false;
+
+                            self.screen = Screen::HashPreview;
+
                             self.status = self.tr("Файл выбран", "File selected").to_string();
                         }
                     }
@@ -1329,6 +1356,31 @@ impl eframe::App for App {
                 if !self.file_path.is_empty() {
                     let size_str = self.format_size(self.file_size);
                     ui.label(format!("📊 {}: {}", self.tr("Размер", "Size"), size_str));
+
+                    if !self.selected_file_hash.is_empty() {
+                        ui.add_space(6.0);
+
+                        ui.horizontal(|ui| {
+                            ui.label("SHA-256:");
+
+                            ui.add(
+                                egui::Label::new(
+                                    egui::RichText::new(&self.selected_file_hash).monospace(),
+                                )
+                                .selectable(true),
+                            );
+
+                            if ui.button("📋").clicked() {
+                                ui.ctx().copy_text(self.selected_file_hash.clone());
+
+                                self.status =
+                                    self.tr("✅ Хэш скопирован", "✅ Hash copied").to_string();
+                            }
+                        });
+                    } else if !self.file_path.is_empty() {
+                        ui.label(self.tr("⏳ Вычисление SHA-256...", "⏳ Computing SHA-256..."));
+                    }
+
                     if self.file_size == 0 {
                         ui.colored_label(
                             COLOR_INVALID,
@@ -1341,6 +1393,104 @@ impl eframe::App for App {
                     ui.add_space(8.0);
                     ui.label(&self.status);
                 }
+                return;
+            }
+
+            // ================================
+            // HASH PREVIEW
+            // ================================
+            if self.screen == Screen::HashPreview {
+                ui.heading(self.tr("🔐 Отпечаток файла", "🔐 File Fingerprint"));
+
+                ui.add_space(12.0);
+
+                let size_str = self.format_size(self.file_size);
+
+                ui.label(format!(
+                    "📁 {}: {} ({})",
+                    self.tr("Файл", "File"),
+                    self.file_name,
+                    size_str
+                ));
+
+                ui.add_space(12.0);
+
+                if self.selected_file_hash.is_empty() {
+                    if self.loading_hash {
+                        ui.spinner();
+
+                        ui.label(self.tr("⏳ Вычисление SHA-256...", "⏳ Computing SHA-256..."));
+                    } else {
+                        if ui
+                            .button(self.tr("🔢 Посчитать хэш", "🔢 Compute Hash"))
+                            .clicked()
+                        {
+                            self.loading_hash = true;
+
+                            let tx = self.tx_resp.clone();
+                            let ctx = ui.ctx().clone();
+
+                            let path = PathBuf::from(&self.file_path);
+
+                            self.rt.spawn_blocking(move || {
+                                let result = fs::read(&path)
+                                    .map(|bytes| file_hash_from_bytes(&bytes))
+                                    .map_err(|e| e.to_string());
+
+                                let _ = tx.send(WorkerResponse::HashComputed(result));
+
+                                ctx.request_repaint();
+                            });
+                        }
+                    }
+                } else {
+                    ui.label("SHA-256:");
+
+                    ui.add(
+                        egui::Label::new(egui::RichText::new(&self.selected_file_hash).monospace())
+                            .selectable(true),
+                    );
+
+                    ui.add_space(12.0);
+
+                    ui.horizontal(|ui| {
+                        if ui.button(self.tr("📋 Копировать", "📋 Copy")).clicked() {
+                            ui.ctx().copy_text(self.selected_file_hash.clone());
+
+                            self.status =
+                                self.tr("✅ Хэш скопирован", "✅ Hash copied").to_string();
+                        }
+
+                        if ui
+                            .button(self.tr("✅ Зафиксировать", "✅ Commit"))
+                            .clicked()
+                        {
+                            self.screen = Screen::SelectProject;
+
+                            self.load_projects();
+                        }
+                    });
+                }
+
+                ui.add_space(12.0);
+
+                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
+                    self.screen = Screen::FileSelection;
+
+                    self.file_path.clear();
+                    self.file_name.clear();
+
+                    self.selected_file_hash.clear();
+
+                    self.loading_hash = false;
+                }
+
+                if !self.status.is_empty() {
+                    ui.add_space(8.0);
+
+                    ui.label(&self.status);
+                }
+
                 return;
             }
 
@@ -1780,6 +1930,7 @@ impl eframe::App for App {
                     self.screen = Screen::FileSelection;
                     self.file_path.clear();
                     self.file_name.clear();
+                    self.selected_file_hash.clear();
                 }
 
                 if !self.error_message.is_empty() {
@@ -1955,6 +2106,7 @@ impl eframe::App for App {
                     self.commit_success = false;
                     self.file_path.clear();
                     self.file_name.clear();
+                    self.selected_file_hash.clear();
                     self.event_id.clear();
                     self.proof_path.clear();
                     self.verify_status = VerifyStatus::None;
