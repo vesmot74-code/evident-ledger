@@ -33,9 +33,12 @@ hr { border: none; border-top: 1px solid var(--border); margin: var(--spacing-xx
   color: var(--text); outline: none; }
 .input-group input[type="text"]:focus { border-color: var(--accent); box-shadow: 0 0 0 3px rgba(0, 51, 102, 0.1); }
 .btn { display: inline-flex; align-items: center; justify-content: center; padding: 10px 24px; font-family: var(--font-main);
-  font-size: 15px; font-weight: 500; border: none; border-radius: var(--radius-sm); cursor: pointer; line-height: 1.4; }
+  font-size: 15px; font-weight: 500; border: none; border-radius: var(--radius-sm); cursor: pointer; line-height: 1.4;
+  text-decoration: none; }
 .btn-primary { background: var(--accent); color: #ffffff; }
 .btn-primary:hover { background: #002244; }
+.btn-secondary { background: var(--bg-secondary); color: var(--accent); border: 1.5px solid var(--border); }
+.btn-secondary:hover { background: var(--accent-light); }
 .result-card { background: var(--bg-secondary); border-radius: var(--radius-md); padding: var(--spacing-lg);
   margin: var(--spacing-lg) 0; border: 1px solid var(--border-light); animation: fadeIn 0.3s ease-out; }
 .result-card dl { display: grid; grid-template-columns: 160px 1fr; gap: var(--spacing-sm) var(--spacing-lg); margin: 0; }
@@ -45,6 +48,7 @@ hr { border: none; border-top: 1px solid var(--border); margin: var(--spacing-xx
   color: var(--text); word-break: break-all; }
 .status-valid { color: var(--success); font-weight: 600; }
 .status-invalid { color: var(--error); font-weight: 600; }
+.result-actions { margin-top: var(--spacing-md); display: flex; gap: var(--spacing-sm); flex-wrap: wrap; }
 footer { margin-top: var(--spacing-xxl); padding-top: var(--spacing-lg); border-top: 1px solid var(--border);
   font-size: 14px; color: var(--text-secondary); }
 footer a { color: var(--accent); text-decoration: none; }
@@ -64,73 +68,167 @@ footer a { color: var(--accent); text-decoration: none; }
 .tab-btn { background: none; border: none; padding: 10px 16px; font-family: var(--font-main); font-size: 15px;
   font-weight: 500; color: var(--text-secondary); cursor: pointer; border-bottom: 2px solid transparent; margin-bottom: -1px; }
 .tab-btn.active { color: var(--accent); border-bottom-color: var(--accent); font-weight: 600; }
+
+.lang-switch { position: absolute; top: 40px; right: 24px; display: flex; gap: 4px; }
+.lang-btn { background: none; border: 1.5px solid var(--border); border-radius: var(--radius-sm); padding: 4px 10px;
+  font-family: var(--font-main); font-size: 12px; font-weight: 600; color: var(--text-secondary); cursor: pointer; }
+.lang-btn.active { background: var(--accent); border-color: var(--accent); color: #fff; }
+@media (max-width: 640px) {
+  .lang-switch { position: static; justify-content: flex-end; margin-bottom: var(--spacing-md); }
+}
 </style>
 </head>
 <body>
-  <span class="eyebrow">Deterministic Event Ledger</span>
-  <h1>Верификатор<br>цепочки событий</h1>
-  <p>Проверка криптографической целостности цепочки по chain_id — merkle root, подпись, количество событий.</p>
+<div class="lang-switch">
+  <button class="lang-btn" id="langEnBtn">EN</button>
+  <button class="lang-btn active" id="langRuBtn">RU</button>
+</div>
+
+  <span class="eyebrow" data-i18n="eyebrow">Deterministic Event Ledger</span>
+  <h1 data-i18n="h1">Верификатор<br>цепочки событий</h1>
+  <p data-i18n="intro">Проверка криптографической целостности цепочки по chain_id — merkle root, подпись, количество событий.</p>
 
   <hr>
 
   <section>
     <div class="tabs">
-      <button class="tab-btn active" id="tabChainBtn">По chain_id</button>
-      <button class="tab-btn" id="tabHashBtn">По хэшу файла</button>
+      <button class="tab-btn active" id="tabChainBtn" data-i18n="tabChain">По chain_id</button>
+      <button class="tab-btn" id="tabHashBtn" data-i18n="tabHash">По хэшу файла</button>
     </div>
 
     <div id="chainTab">
-      <h2>Введите chain_id</h2>
-      <p>UUID цепочки, полученный при её создании (evident new-chain или GUI).</p>
+      <h2 data-i18n="chainH2">Введите chain_id</h2>
+      <p data-i18n="chainP">UUID цепочки, полученный при её создании (evident new-chain или GUI).</p>
       <div class="input-group">
         <input type="text" id="chainIdInput" placeholder="d81d8361-72b4-4dbd-a7b8-ebc1e51bf948">
-        <button class="btn btn-primary" id="verifyBtn">Проверить</button>
+        <button class="btn btn-primary" id="verifyBtn" data-i18n="verifyBtn">Проверить</button>
       </div>
     </div>
 
     <div id="hashTab" style="display: none;">
-      <h2>Введите SHA-256 хэш файла</h2>
-      <p>Хэш вычисляется локально (sha256sum / evident hash), сам файл никогда не отправляется на сервер.</p>
+      <h2 data-i18n="hashH2">Введите SHA-256 хэш файла</h2>
+      <p data-i18n="hashP">Хэш вычисляется локально (sha256sum / evident hash), сам файл никогда не отправляется на сервер.</p>
       <div class="input-group">
         <input type="text" id="hashInput" placeholder="c832b998924577b355becd7892e3bb3a0ca513603e320b913c280f3a446e90c1">
-        <button class="btn btn-primary" id="verifyHashBtn">Проверить</button>
+        <button class="btn btn-primary" id="verifyHashBtn" data-i18n="verifyBtn">Проверить</button>
       </div>
     </div>
   </section>
 
   <section id="resultSection" style="display: none;">
-    <h2>Результат проверки</h2>
+    <h2 data-i18n="resultH2">Результат проверки</h2>
     <div class="result-card">
       <dl>
-        <dt>Статус</dt>
+        <dt data-i18n="dtStatus">Статус</dt>
         <dd id="statusValue"></dd>
         <dt>Chain ID</dt>
         <dd class="mono" id="chainIdValue"></dd>
-        <dt>Событий в цепочке</dt>
+        <dt data-i18n="dtEvents">Событий в цепочке</dt>
         <dd id="blocksValue"></dd>
         <dt>Head Event ID</dt>
         <dd class="mono" id="headEventValue"></dd>
         <dt>Merkle Root</dt>
         <dd class="mono" id="rootValue"></dd>
       </dl>
+      <div class="result-actions" id="chainPdfActions" style="display: none;">
+        <a class="btn btn-secondary" id="chainPdfLink" href="#" target="_blank" data-i18n="downloadPdf">📄 Скачать PDF</a>
+      </div>
     </div>
   </section>
 
   <section id="hashResultSection" style="display: none;">
-    <h2>Результат проверки хэша</h2>
+    <h2 data-i18n="hashResultH2">Результат проверки хэша</h2>
     <div class="result-card">
       <dl id="hashResultDl"></dl>
+      <div class="result-actions" id="hashPdfActions" style="display: none;">
+        <a class="btn btn-secondary" id="hashPdfLink" href="#" target="_blank" data-i18n="downloadPdf">📄 Скачать PDF</a>
+      </div>
     </div>
   </section>
 
   <hr>
 
-  <footer><p><a href="/">← На главную</a></p></footer>
+  <footer><p><a href="/" data-i18n="backHome">← На главную</a></p></footer>
 
   <script>
+    const STR = {
+      ru: {
+        eyebrow: 'Deterministic Event Ledger',
+        h1: 'Верификатор<br>цепочки событий',
+        intro: 'Проверка криптографической целостности цепочки по chain_id — merkle root, подпись, количество событий.',
+        tabChain: 'По chain_id',
+        tabHash: 'По хэшу файла',
+        chainH2: 'Введите chain_id',
+        chainP: 'UUID цепочки, полученный при её создании (evident new-chain или GUI).',
+        hashH2: 'Введите SHA-256 хэш файла',
+        hashP: 'Хэш вычисляется локально (sha256sum / evident hash), сам файл никогда не отправляется на сервер.',
+        verifyBtn: 'Проверить',
+        resultH2: 'Результат проверки',
+        hashResultH2: 'Результат проверки хэша',
+        dtStatus: 'Статус',
+        dtEvents: 'Событий в цепочке',
+        downloadPdf: '📄 Скачать PDF',
+        backHome: '← На главную',
+        statusValid: '✅ ВАЛИДНО',
+        statusInvalid: '❌ НЕВАЛИДНО',
+        reqError: '⚠️ Ошибка запроса: ',
+        hashFound: (n) => `✅ Найдено (${n} совпадение(-й))`,
+        hashNotFound: '❌ Не найдено',
+        hashLabel: 'Хэш',
+        chainIdLabel: 'Chain ID',
+        sequenceLabel: 'Sequence',
+        committedLabel: 'Зафиксировано',
+      },
+      en: {
+        eyebrow: 'Deterministic Event Ledger',
+        h1: 'Event Chain<br>Verifier',
+        intro: 'Verify the cryptographic integrity of a chain by chain_id — merkle root, signature, event count.',
+        tabChain: 'By chain_id',
+        tabHash: 'By file hash',
+        chainH2: 'Enter chain_id',
+        chainP: 'The chain UUID you received when it was created (evident new-chain or GUI).',
+        hashH2: 'Enter SHA-256 file hash',
+        hashP: 'The hash is computed locally (sha256sum / evident hash) — the file itself is never sent to the server.',
+        verifyBtn: 'Verify',
+        resultH2: 'Verification Result',
+        hashResultH2: 'Hash Verification Result',
+        dtStatus: 'Status',
+        dtEvents: 'Events in chain',
+        downloadPdf: '📄 Download PDF',
+        backHome: '← Back home',
+        statusValid: '✅ VALID',
+        statusInvalid: '❌ INVALID',
+        reqError: '⚠️ Request error: ',
+        hashFound: (n) => `✅ Found (${n} match${n === 1 ? '' : 'es'})`,
+        hashNotFound: '❌ Not found',
+        hashLabel: 'Hash',
+        chainIdLabel: 'Chain ID',
+        sequenceLabel: 'Sequence',
+        committedLabel: 'Committed',
+      }
+    };
+
+    let currentLang = 'ru';
+
+    function applyLang(lang) {
+      currentLang = lang;
+      const dict = STR[lang];
+      document.querySelectorAll('[data-i18n]').forEach(el => {
+        const key = el.getAttribute('data-i18n');
+        if (dict[key] !== undefined) el.innerHTML = dict[key];
+      });
+      document.documentElement.lang = lang;
+      document.getElementById('langRuBtn').classList.toggle('active', lang === 'ru');
+      document.getElementById('langEnBtn').classList.toggle('active', lang === 'en');
+    }
+    document.getElementById('langRuBtn').addEventListener('click', () => applyLang('ru'));
+    document.getElementById('langEnBtn').addEventListener('click', () => applyLang('en'));
+
     async function verify() {
+      const dict = STR[currentLang];
       const chainId = document.getElementById('chainIdInput').value.trim();
       const resultSection = document.getElementById('resultSection');
+      const pdfActions = document.getElementById('chainPdfActions');
       if (!chainId) { return; }
       try {
         const resp = await fetch(`/verify/${chainId}`);
@@ -138,11 +236,14 @@ footer a { color: var(--accent); text-decoration: none; }
         resultSection.style.display = 'block';
         const statusEl = document.getElementById('statusValue');
         if (data.valid) {
-          statusEl.textContent = '✅ ВАЛИДНО';
+          statusEl.textContent = dict.statusValid;
           statusEl.className = 'status-valid';
+          pdfActions.style.display = 'flex';
+          document.getElementById('chainPdfLink').href = `/verify/${chainId}/attestation.pdf`;
         } else {
-          statusEl.textContent = '❌ НЕВАЛИДНО' + (data.errors && data.errors.length ? ' — ' + data.errors.join('; ') : '');
+          statusEl.textContent = dict.statusInvalid + (data.errors && data.errors.length ? ' — ' + data.errors.join('; ') : '');
           statusEl.className = 'status-invalid';
+          pdfActions.style.display = 'none';
         }
         document.getElementById('chainIdValue').textContent = data.chain_id || '—';
         document.getElementById('blocksValue').textContent = data.blocks ?? '—';
@@ -150,8 +251,9 @@ footer a { color: var(--accent); text-decoration: none; }
         document.getElementById('rootValue').textContent = (data.proof && data.proof.root) || '—';
       } catch (e) {
         resultSection.style.display = 'block';
-        document.getElementById('statusValue').textContent = '⚠️ Ошибка запроса: ' + e;
+        document.getElementById('statusValue').textContent = dict.reqError + e;
         document.getElementById('statusValue').className = 'status-invalid';
+        pdfActions.style.display = 'none';
       }
     }
     document.getElementById('verifyBtn').addEventListener('click', verify);
@@ -180,9 +282,11 @@ footer a { color: var(--accent); text-decoration: none; }
     document.getElementById('tabHashBtn').addEventListener('click', () => switchTab('hash'));
 
     async function verifyHash() {
+      const dict = STR[currentLang];
       const hash = document.getElementById('hashInput').value.trim().toLowerCase();
       const resultSection = document.getElementById('hashResultSection');
       const dl = document.getElementById('hashResultDl');
+      const pdfActions = document.getElementById('hashPdfActions');
       if (!hash) { return; }
       try {
         const resp = await fetch('/verify/hash', {
@@ -194,27 +298,33 @@ footer a { color: var(--accent); text-decoration: none; }
         resultSection.style.display = 'block';
 
         if (!resp.ok) {
-          dl.innerHTML = `<dt>Статус</dt><dd class="status-invalid">⚠️ ${data.error || 'Ошибка запроса'}</dd>`;
+          dl.innerHTML = `<dt>${dict.dtStatus}</dt><dd class="status-invalid">⚠️ ${data.error || dict.reqError}</dd>`;
+          pdfActions.style.display = 'none';
           return;
         }
 
         if (!data.found) {
-          dl.innerHTML = `<dt>Статус</dt><dd class="status-invalid">❌ Не найдено</dd>
-            <dt>Хэш</dt><dd class="mono">${hash}</dd>`;
+          dl.innerHTML = `<dt>${dict.dtStatus}</dt><dd class="status-invalid">${dict.hashNotFound}</dd>
+            <dt>${dict.hashLabel}</dt><dd class="mono">${hash}</dd>`;
+          pdfActions.style.display = 'none';
           return;
         }
 
-        let rows = `<dt>Статус</dt><dd class="status-valid">✅ Найдено (${data.matches.length} совпадение(-й))</dd>
-          <dt>Хэш</dt><dd class="mono">${hash}</dd>`;
+        let rows = `<dt>${dict.dtStatus}</dt><dd class="status-valid">${dict.hashFound(data.matches.length)}</dd>
+          <dt>${dict.hashLabel}</dt><dd class="mono">${hash}</dd>`;
         data.matches.forEach((m, i) => {
-          rows += `<dt>Chain ID #${i + 1}</dt><dd class="mono">${m.chain_id}</dd>
-            <dt>Sequence #${i + 1}</dt><dd>${m.sequence}</dd>
-            <dt>Зафиксировано #${i + 1}</dt><dd>${m.created_at}</dd>`;
+          rows += `<dt>${dict.chainIdLabel} #${i + 1}</dt><dd class="mono">${m.chain_id}</dd>
+            <dt>${dict.sequenceLabel} #${i + 1}</dt><dd>${m.sequence}</dd>
+            <dt>${dict.committedLabel} #${i + 1}</dt><dd>${m.created_at}</dd>`;
         });
         dl.innerHTML = rows;
+
+        document.getElementById('hashPdfLink').href = `/verify/hash/${hash}/attestation.pdf`;
+        pdfActions.style.display = 'flex';
       } catch (e) {
         resultSection.style.display = 'block';
-        dl.innerHTML = `<dt>Статус</dt><dd class="status-invalid">⚠️ Ошибка запроса: ${e}</dd>`;
+        dl.innerHTML = `<dt>${dict.dtStatus}</dt><dd class="status-invalid">${dict.reqError}${e}</dd>`;
+        pdfActions.style.display = 'none';
       }
     }
     document.getElementById('verifyHashBtn').addEventListener('click', verifyHash);
