@@ -77,10 +77,7 @@ impl FileSystemTsaJobStore {
 impl TsaJobStore for FileSystemTsaJobStore {
     fn get_job(&self, repo: &str, bundle_hash: &str) -> Result<Option<TsaJob>> {
         let file = self.load_file(repo)?;
-        Ok(file
-            .jobs
-            .into_iter()
-            .find(|j| j.bundle_hash == bundle_hash))
+        Ok(file.jobs.into_iter().find(|j| j.bundle_hash == bundle_hash))
     }
 
     fn save_job(&self, job: &TsaJob) -> Result<()> {
@@ -114,15 +111,13 @@ pub async fn process_pending_job(
     bundle_hash: &str,
     provider: &str,
 ) -> Result<Option<TsaAttestation>> {
-    let mut job = store
-        .get_job(repo, bundle_hash)?
-        .unwrap_or(TsaJob {
-            repo: repo.to_string(),
-            bundle_hash: bundle_hash.to_string(),
-            state: TsaJobState::Pending,
-            attestation: None,
-            error: None,
-        });
+    let mut job = store.get_job(repo, bundle_hash)?.unwrap_or(TsaJob {
+        repo: repo.to_string(),
+        bundle_hash: bundle_hash.to_string(),
+        state: TsaJobState::Pending,
+        attestation: None,
+        error: None,
+    });
 
     job.state = TsaJobState::Sent;
     store.save_job(&job)?;

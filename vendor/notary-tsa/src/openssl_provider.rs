@@ -45,10 +45,12 @@ impl OpenSslTsaProvider {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(TSA_HTTP_TIMEOUT_SECS))
             .build()
-            .map_err(|e| OpensslAdapterError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))?;
+            .map_err(|e| {
+                OpensslAdapterError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
 
         let response = client
             .post(&self.tsa_url)
@@ -56,15 +58,20 @@ impl OpenSslTsaProvider {
             .body(tsq_bytes)
             .send()
             .await
-            .map_err(|e| OpensslAdapterError::Io(std::io::Error::new(
-                std::io::ErrorKind::Other,
-                e.to_string(),
-            )))?;
+            .map_err(|e| {
+                OpensslAdapterError::Io(std::io::Error::new(
+                    std::io::ErrorKind::Other,
+                    e.to_string(),
+                ))
+            })?;
 
         let status = response.status();
-        let body = response.bytes().await.map_err(|e| OpensslAdapterError::Io(
-            std::io::Error::new(std::io::ErrorKind::Other, e.to_string())
-        ))?;
+        let body = response.bytes().await.map_err(|e| {
+            OpensslAdapterError::Io(std::io::Error::new(
+                std::io::ErrorKind::Other,
+                e.to_string(),
+            ))
+        })?;
 
         if !status.is_success() {
             return Err(OpensslAdapterError::HttpFailed {
@@ -80,7 +87,11 @@ impl OpenSslTsaProvider {
         Ok(path)
     }
 
-    pub fn verify_reply(&self, tsr_path: &Path, digest_path: &Path) -> Result<(), OpensslAdapterError> {
+    pub fn verify_reply(
+        &self,
+        tsr_path: &Path,
+        digest_path: &Path,
+    ) -> Result<(), OpensslAdapterError> {
         if !self.ca_cert_path.is_file() {
             return Err(OpensslAdapterError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
@@ -91,7 +102,10 @@ impl OpenSslTsaProvider {
         if !self.untrusted_cert_path.is_file() {
             return Err(OpensslAdapterError::Io(std::io::Error::new(
                 std::io::ErrorKind::NotFound,
-                format!("untrusted certificate not found: {}", self.untrusted_cert_path.display()),
+                format!(
+                    "untrusted certificate not found: {}",
+                    self.untrusted_cert_path.display()
+                ),
             )));
         }
 
@@ -183,7 +197,9 @@ impl OpenSslTsaProvider {
             });
         }
 
-        let (_file, path) = tsq_temp.keep().map_err(|e| OpensslAdapterError::Io(e.error))?;
+        let (_file, path) = tsq_temp
+            .keep()
+            .map_err(|e| OpensslAdapterError::Io(e.error))?;
         Ok(path)
     }
 
@@ -219,11 +235,8 @@ mod tests {
         let digest_path = OpenSslTsaProvider::write_digest(&hash).expect("write digest");
         let tsq_path = OpenSslTsaProvider::build_tsq(&digest_path).expect("build tsq");
 
-        let provider = OpenSslTsaProvider::new(
-            FREETSA_URL.into(),
-            ca_cert_path,
-            untrusted_cert_path,
-        );
+        let provider =
+            OpenSslTsaProvider::new(FREETSA_URL.into(), ca_cert_path, untrusted_cert_path);
         let tsr_path = provider.send_tsq(&tsq_path).await.expect("send tsq");
 
         std::fs::remove_file(digest_path).expect("cleanup digest");
@@ -255,7 +268,8 @@ mod tests {
         );
         let tsr_path = provider.send_tsq(&tsq_path).await.expect("send tsq");
 
-        provider.verify_reply(&tsr_path, &digest_path)
+        provider
+            .verify_reply(&tsr_path, &digest_path)
             .expect("verify_reply must pass for FreeTSA TSR");
 
         std::fs::remove_file(digest_path).expect("cleanup digest");

@@ -1,6 +1,6 @@
-use std::process;
 use serde::Deserialize;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
+use std::process;
 
 #[derive(Deserialize)]
 struct ProofFile {
@@ -31,7 +31,7 @@ fn build_leaf(sequence: i64, parent_event_id: &str, file_hash: &str) -> String {
     let hex: String = parent_event_id.replace('-', "");
     let parent_bytes: Vec<u8> = (0..hex.len())
         .step_by(2)
-        .map(|i| u8::from_str_radix(&hex[i..i+2], 16).unwrap_or(0))
+        .map(|i| u8::from_str_radix(&hex[i..i + 2], 16).unwrap_or(0))
         .collect();
     let mut hasher = Sha256::new();
     hasher.update(sequence.to_be_bytes());
@@ -41,20 +41,28 @@ fn build_leaf(sequence: i64, parent_event_id: &str, file_hash: &str) -> String {
 }
 
 fn recompute_root(events: &[EventLeaf]) -> String {
-    if events.is_empty() { return "empty".to_string(); }
+    if events.is_empty() {
+        return "empty".to_string();
+    }
 
-    let leaves: Vec<String> = events.iter()
+    let leaves: Vec<String> = events
+        .iter()
         .map(|e| build_leaf(e.sequence, &e.parent_event_id, &e.file_hash))
         .collect();
 
-    if leaves.len() == 1 { return leaves[0].clone(); }
+    if leaves.len() == 1 {
+        return leaves[0].clone();
+    }
 
     // server hashes each leaf again before building tree
-    let mut hashed: Vec<String> = leaves.iter().map(|leaf| {
-        let mut hasher = Sha256::new();
-        hasher.update(leaf.as_bytes());
-        format!("{:x}", hasher.finalize())
-    }).collect();
+    let mut hashed: Vec<String> = leaves
+        .iter()
+        .map(|leaf| {
+            let mut hasher = Sha256::new();
+            hasher.update(leaf.as_bytes());
+            format!("{:x}", hasher.finalize())
+        })
+        .collect();
 
     while hashed.len() > 1 {
         let mut next = Vec::new();
@@ -84,49 +92,59 @@ fn main() {
     let mut ok = true;
 
     // 1. signature
-let pinned_key_path = dirs::home_dir()
-    .expect("no home dir")
-    .join(".evident")
-    .join("server_identity.pub");
-let trusted_public_key = match std::fs::read_to_string(&pinned_key_path) {
-    Ok(k) => k.trim().to_string(),
-    Err(_) => {
-        eprintln!("FAIL: no pinned server key at {}", pinned_key_path.display());
-        eprintln!("Fetch it once: curl http://127.0.0.1:3000/identity");
-        std::process::exit(3);
-    }
-};
+    let pinned_key_path = dirs::home_dir()
+        .expect("no home dir")
+        .join(".evident")
+        .join("server_identity.pub");
+    let trusted_public_key = match std::fs::read_to_string(&pinned_key_path) {
+        Ok(k) => k.trim().to_string(),
+        Err(_) => {
+            eprintln!(
+                "FAIL: no pinned server key at {}",
+                pinned_key_path.display()
+            );
+            eprintln!("Fetch it once: curl http://127.0.0.1:3000/identity");
+            std::process::exit(3);
+        }
+    };
 
-let sig_valid = evident_ledger::signing::verify_root(
-    &proof_file.chain_id,
-    &proof_file.proof.root,
-    &proof_file.proof.chain_head,
-    &proof_file.proof.signature,
-    &trusted_public_key,
-);
-if !sig_valid { eprintln!("FAIL: signature invalid (untrusted key or tampered data)"); ok = false; }
+    let sig_valid = evident_ledger::signing::verify_root(
+        &proof_file.chain_id,
+        &proof_file.proof.root,
+        &proof_file.proof.chain_head,
+        &proof_file.proof.signature,
+        &trusted_public_key,
+    );
+    if !sig_valid {
+        eprintln!("FAIL: signature invalid (untrusted key or tampered data)");
+        ok = false;
+    }
 
     // 2. leaves_count
     if proof_file.events.len() != proof_file.proof.leaves_count {
-        eprintln!("FAIL: leaves_count mismatch"); ok = false;
+        eprintln!("FAIL: leaves_count mismatch");
+        ok = false;
     }
 
     // 3. head consistency
     if proof_file.head_event_id != proof_file.proof.chain_head {
-        eprintln!("FAIL: head_event_id != chain_head"); ok = false;
+        eprintln!("FAIL: head_event_id != chain_head");
+        ok = false;
     }
 
     // 4. sequence monotonic
     for i in 1..proof_file.events.len() {
-        if proof_file.events[i].sequence != proof_file.events[i-1].sequence + 1 {
-            eprintln!("FAIL: sequence not monotonic at index {}", i); ok = false;
+        if proof_file.events[i].sequence != proof_file.events[i - 1].sequence + 1 {
+            eprintln!("FAIL: sequence not monotonic at index {}", i);
+            ok = false;
         }
     }
 
     // 5. parent chain
     for i in 1..proof_file.events.len() {
-        if proof_file.events[i].parent_event_id != proof_file.events[i-1].event_id {
-            eprintln!("FAIL: parent mismatch at index {}", i); ok = false;
+        if proof_file.events[i].parent_event_id != proof_file.events[i - 1].event_id {
+            eprintln!("FAIL: parent mismatch at index {}", i);
+            ok = false;
         }
     }
 

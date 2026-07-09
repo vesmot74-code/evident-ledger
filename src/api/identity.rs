@@ -1,6 +1,6 @@
-use axum::{extract::State, Json, routing::get, Router};
-use serde_json::{json, Value};
 use crate::state::AppState;
+use axum::{extract::State, routing::get, Json, Router};
+use serde_json::{json, Value};
 
 async fn get_identity(State(state): State<AppState>) -> Json<Value> {
     Json(json!({
@@ -10,5 +10,7 @@ async fn get_identity(State(state): State<AppState>) -> Json<Value> {
 }
 
 pub fn router(state: AppState) -> Router {
-Router::new().route("/", get(get_identity)).with_state(state)
+    Router::new()
+        .route("/", get(get_identity))
+        .with_state(state)
 }

@@ -1,6 +1,6 @@
+use crate::signing::ServerSigner;
 use sqlx::PgPool;
 use std::sync::Arc;
-use crate::signing::ServerSigner;
 
 #[derive(Clone)]
 pub struct AppState {

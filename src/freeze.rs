@@ -28,7 +28,13 @@ pub struct Proof {
 }
 
 impl Event {
-    pub fn from_payload(chain_id: &str, sequence: u64, payload_hash: &str, parent_hash: &str, event_type: &str) -> Self {
+    pub fn from_payload(
+        chain_id: &str,
+        sequence: u64,
+        payload_hash: &str,
+        parent_hash: &str,
+        event_type: &str,
+    ) -> Self {
         let event_id = Uuid::new_v4().to_string();
         Self {
             event_id,
@@ -59,8 +65,15 @@ pub fn append_event_log(path: &Path, event: &Event) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    let mut file = std::fs::OpenOptions::new().create(true).append(true).open(path)?;
-    writeln!(file, "{}", serde_json::to_string(event).expect("event serialization must be stable"))?;
+    let mut file = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)?;
+    writeln!(
+        file,
+        "{}",
+        serde_json::to_string(event).expect("event serialization must be stable")
+    )?;
     file.sync_all()?;
     Ok(())
 }
@@ -75,7 +88,10 @@ pub fn write_proof(path: &Path, proof: &Proof) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
-    fs::write(path, serde_json::to_string_pretty(proof).expect("proof serialization must be stable"))
+    fs::write(
+        path,
+        serde_json::to_string_pretty(proof).expect("proof serialization must be stable"),
+    )
 }
 
 #[cfg(test)]

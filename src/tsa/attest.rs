@@ -15,9 +15,7 @@ fn unix_now() -> i64 {
 
 /// Stub attestation for tests and offline mode (JSON token accepted by notary-tsa validator).
 pub fn create_stub_attestation(bundle_hash: &str, provider: &str) -> TsaAttestation {
-    let token_json = format!(
-        r#"{{"stub":true,"sha256":"{bundle_hash}","provider":"{provider}"}}"#
-    );
+    let token_json = format!(r#"{{"stub":true,"sha256":"{bundle_hash}","provider":"{provider}"}}"#);
     let raw_token_b64 = base64::engine::general_purpose::STANDARD.encode(token_json.as_bytes());
     TsaAttestation {
         provider: provider.to_string(),

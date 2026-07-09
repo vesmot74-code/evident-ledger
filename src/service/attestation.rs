@@ -1,9 +1,9 @@
-use sqlx::PgPool;
-use uuid::Uuid;
-use std::sync::Arc;
-use crate::signing::ServerSigner;
-use crate::service::verifier::verify_chain_hardened;
 use crate::sac::*;
+use crate::service::verifier::verify_chain_hardened;
+use crate::signing::ServerSigner;
+use sqlx::PgPool;
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub async fn build_attestation(
     pool: &PgPool,
@@ -29,15 +29,22 @@ pub async fn build_attestation(
         });
     }
 
-    let head_event_id = report.head_event_id.expect("non-empty chain must have head");
+    let head_event_id = report
+        .head_event_id
+        .expect("non-empty chain must have head");
     let merkle_root = report.merkle_recomputed.clone();
-    let signature = signer.sign_root(&chain_id.to_string(), &merkle_root, &head_event_id.to_string());
+    let signature = signer.sign_root(
+        &chain_id.to_string(),
+        &merkle_root,
+        &head_event_id.to_string(),
+    );
     let public_key_fingerprint = signer.public_key_hex();
 
     let tsa_row = sqlx::query!(
         r#"SELECT tsa_timestamp, tsa_serial
            FROM tsa_tokens WHERE chain_id = $1 AND merkle_root = $2"#,
-        chain_id, merkle_root
+        chain_id,
+        merkle_root
     )
     .fetch_optional(pool)
     .await?;
@@ -74,9 +81,17 @@ pub async fn build_attestation(
         }),
         tsa,
         verification: SacVerification {
-            status: if report.valid { SacVerificationStatus::Verified } else { SacVerificationStatus::Failed },
+            status: if report.valid {
+                SacVerificationStatus::Verified
+            } else {
+                SacVerificationStatus::Failed
+            },
             signature: if report.valid { Some(signature) } else { None },
-            public_key_fingerprint: if report.valid { Some(public_key_fingerprint) } else { None },
+            public_key_fingerprint: if report.valid {
+                Some(public_key_fingerprint)
+            } else {
+                None
+            },
             errors: report.errors,
         },
         exclusions: SacExclusions::default(),

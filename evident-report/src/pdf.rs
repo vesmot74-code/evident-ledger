@@ -1,7 +1,7 @@
-use std::path::Path;
+use printpdf::*;
 use std::fs::File;
 use std::io::{BufWriter, Cursor};
-use printpdf::*;
+use std::path::Path;
 
 use crate::{ProofData, VerificationContext};
 
@@ -10,10 +10,17 @@ use crate::{ProofData, VerificationContext};
 /// Cyrillic, so a Base14-only renderer silently drops that text from
 /// the evidence table. Reuses the font already vendored for notary-pdf.
 fn load_fonts(doc: &PdfDocumentReference) -> (IndirectFontRef, IndirectFontRef) {
-    let mut regular = Cursor::new(include_bytes!("../../vendor/notary-pdf/assets/fonts/DejaVuSans.ttf").as_ref());
-    let mut bold = Cursor::new(include_bytes!("../../vendor/notary-pdf/assets/fonts/DejaVuSans-Bold.ttf").as_ref());
-    let font = doc.add_external_font(&mut regular).expect("load DejaVuSans.ttf");
-    let font_bold = doc.add_external_font(&mut bold).expect("load DejaVuSans-Bold.ttf");
+    let mut regular =
+        Cursor::new(include_bytes!("../../vendor/notary-pdf/assets/fonts/DejaVuSans.ttf").as_ref());
+    let mut bold = Cursor::new(
+        include_bytes!("../../vendor/notary-pdf/assets/fonts/DejaVuSans-Bold.ttf").as_ref(),
+    );
+    let font = doc
+        .add_external_font(&mut regular)
+        .expect("load DejaVuSans.ttf");
+    let font_bold = doc
+        .add_external_font(&mut bold)
+        .expect("load DejaVuSans-Bold.ttf");
     (font, font_bold)
 }
 
@@ -97,8 +104,19 @@ struct Ctx {
 }
 
 impl Ctx {
-    fn new(doc: PdfDocumentReference, layer: PdfLayerReference, font: IndirectFontRef, bold: IndirectFontRef) -> Self {
-        Self { doc, layer, font, bold, y: PAGE_HEIGHT - MARGIN_TOP }
+    fn new(
+        doc: PdfDocumentReference,
+        layer: PdfLayerReference,
+        font: IndirectFontRef,
+        bold: IndirectFontRef,
+    ) -> Self {
+        Self {
+            doc,
+            layer,
+            font,
+            bold,
+            y: PAGE_HEIGHT - MARGIN_TOP,
+        }
     }
 
     fn ensure_space(&mut self, lines_needed: f32) {
@@ -112,40 +130,63 @@ impl Ctx {
 
     fn raw_line(&mut self, text: &str, size: f32) {
         self.ensure_space(1.0);
-        self.layer.use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.font);
+        self.layer
+            .use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.font);
         self.y -= LINE_HEIGHT;
     }
 
     fn bold_line(&mut self, text: &str, size: f32) {
         self.ensure_space(1.0);
-        self.layer.use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.bold);
+        self.layer
+            .use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.bold);
         self.y -= LINE_HEIGHT;
     }
 
     /// Draws one evidence-table row using fixed per-column x-offsets
     /// instead of padded strings — correct regardless of glyph width,
     /// so Cyrillic file names align exactly like ASCII ones.
-    fn table_row(&mut self, num: &str, name: &str, chain: &str, integrity: &str, size: f32, use_bold: bool) {
+    fn table_row(
+        &mut self,
+        num: &str,
+        name: &str,
+        chain: &str,
+        integrity: &str,
+        size: f32,
+        use_bold: bool,
+    ) {
         self.ensure_space(1.0);
         let font = if use_bold { &self.bold } else { &self.font };
-        self.layer.use_text(num, size, Mm(MARGIN_LEFT + COL_NUM_X), Mm(self.y), font);
-        self.layer.use_text(name, size, Mm(MARGIN_LEFT + COL_NAME_X), Mm(self.y), font);
-        self.layer.use_text(chain, size, Mm(MARGIN_LEFT + COL_CHAIN_X), Mm(self.y), font);
-        self.layer.use_text(integrity, size, Mm(MARGIN_LEFT + COL_INTEGRITY_X), Mm(self.y), font);
+        self.layer
+            .use_text(num, size, Mm(MARGIN_LEFT + COL_NUM_X), Mm(self.y), font);
+        self.layer
+            .use_text(name, size, Mm(MARGIN_LEFT + COL_NAME_X), Mm(self.y), font);
+        self.layer
+            .use_text(chain, size, Mm(MARGIN_LEFT + COL_CHAIN_X), Mm(self.y), font);
+        self.layer.use_text(
+            integrity,
+            size,
+            Mm(MARGIN_LEFT + COL_INTEGRITY_X),
+            Mm(self.y),
+            font,
+        );
         self.y -= LINE_HEIGHT;
     }
 
     fn table_rule(&mut self) {
         self.ensure_space(1.0);
         let rule_width_mm = COL_INTEGRITY_X + 25.0;
-        self.layer.use_text(&"-".repeat(1), 8.0, Mm(MARGIN_LEFT), Mm(self.y), &self.font);
+        self.layer
+            .use_text(&"-".repeat(1), 8.0, Mm(MARGIN_LEFT), Mm(self.y), &self.font);
         // Draw a simple horizontal line instead of a dash string: dash
         // width also depends on glyph metrics, same class of bug as the
         // old padded table. A line primitive is exact regardless of font.
         let line = Line {
             points: vec![
                 (Point::new(Mm(MARGIN_LEFT), Mm(self.y + 2.0)), false),
-                (Point::new(Mm(MARGIN_LEFT + rule_width_mm), Mm(self.y + 2.0)), false),
+                (
+                    Point::new(Mm(MARGIN_LEFT + rule_width_mm), Mm(self.y + 2.0)),
+                    false,
+                ),
             ],
             is_closed: false,
         };
@@ -159,7 +200,8 @@ impl Ctx {
         let approx_width_mm = text.chars().count() as f32 * size * 0.52 / MM_TO_PT;
         let x = ((PAGE_WIDTH - approx_width_mm) / 2.0).max(MARGIN_LEFT);
         self.ensure_space(1.0);
-        self.layer.use_text(text, size, Mm(x), Mm(self.y), &self.bold);
+        self.layer
+            .use_text(text, size, Mm(x), Mm(self.y), &self.bold);
         self.y -= LINE_HEIGHT;
     }
 
@@ -189,7 +231,11 @@ impl Ctx {
     }
 }
 
-pub fn write_pdf(proof: &ProofData, verification: &VerificationContext, output_path: &Path) -> Result<()> {
+pub fn write_pdf(
+    proof: &ProofData,
+    verification: &VerificationContext,
+    output_path: &Path,
+) -> Result<()> {
     let (doc, page1, layer1) = PdfDocument::new(
         "Evident Ledger Proof Report",
         Mm(PAGE_WIDTH),
@@ -236,14 +282,23 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
     };
 
     ctx.heading("1. EVIDENCE SNAPSHOT");
-    ctx.raw_line(&format!("Last Trusted Timestamp: {}", trusted_timestamp_text), 10.0);
+    ctx.raw_line(
+        &format!("Last Trusted Timestamp: {}", trusted_timestamp_text),
+        10.0,
+    );
     if let Some(note) = external_tsa_note {
         ctx.raw_line(note, 9.0);
     }
     ctx.raw_line(&format!("Events Covered: {}", covered_events_text), 10.0);
 
     ctx.heading("2. CURRENT VERIFICATION");
-    ctx.raw_line(&format!("Verification Performed: {}", verification.verified_at.format("%Y-%m-%d %H:%M:%S UTC")), 10.0);
+    ctx.raw_line(
+        &format!(
+            "Verification Performed: {}",
+            verification.verified_at.format("%Y-%m-%d %H:%M:%S UTC")
+        ),
+        10.0,
+    );
 
     if verification.is_valid {
         ctx.bold_line("[PASS] LEDGER INTEGRITY: VALID", 11.0);
@@ -261,7 +316,14 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
 fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
     ctx.heading("3. REGISTERED EVIDENCE ITEMS");
 
-    ctx.table_row("#", "Evidence Item", "Chain Status", "Current File Integrity", 8.0, true);
+    ctx.table_row(
+        "#",
+        "Evidence Item",
+        "Chain Status",
+        "Current File Integrity",
+        8.0,
+        true,
+    );
     ctx.table_rule();
 
     for (i, file) in verification.files.iter().enumerate() {
@@ -272,15 +334,28 @@ fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
             None => "UNKNOWN",
         };
         let display_name: String = file.file_name.chars().take(36).collect();
-        ctx.table_row(&format!("{}", i + 1), &display_name, chain_status, local_status, 8.0, false);
+        ctx.table_row(
+            &format!("{}", i + 1),
+            &display_name,
+            chain_status,
+            local_status,
+            8.0,
+            false,
+        );
     }
 }
 
 fn add_proof_block(ctx: &mut Ctx, proof: &ProofData) {
     ctx.heading("4. CRYPTOGRAPHIC PROOF");
     ctx.wrapped_block(&format!("Merkle Root: {}", proof.root), 9.0);
-    ctx.wrapped_block(&format!("Digital Signature: {}", &proof.signature[..64]), 9.0);
-    ctx.wrapped_block(&format!("Public Key Fingerprint: {}", &proof.public_key[..32]), 9.0);
+    ctx.wrapped_block(
+        &format!("Digital Signature: {}", &proof.signature[..64]),
+        9.0,
+    );
+    ctx.wrapped_block(
+        &format!("Public Key Fingerprint: {}", &proof.public_key[..32]),
+        9.0,
+    );
 }
 
 fn add_tsa_details_block(ctx: &mut Ctx, proof: &ProofData) {
@@ -309,7 +384,10 @@ fn add_verification_scope(ctx: &mut Ctx) {
     ctx.raw_line("[PASS] Integrity of the registered ledger chain", 9.0);
     ctx.raw_line("[PASS] Consistency of recorded evidence hashes", 9.0);
     ctx.raw_line("[PASS] Validity of the cryptographic signature", 9.0);
-    ctx.raw_line("[PASS] Presence or absence of external timestamp evidence", 9.0);
+    ctx.raw_line(
+        "[PASS] Presence or absence of external timestamp evidence",
+        9.0,
+    );
     ctx.gap();
     ctx.raw_line("This report does NOT confirm:", 9.0);
     ctx.gap();
@@ -321,11 +399,17 @@ fn add_verification_scope(ctx: &mut Ctx) {
 
 fn add_instructions(ctx: &mut Ctx) {
     ctx.heading("7. OFFLINE VERIFICATION");
-    ctx.wrapped_block("This evidence package can be independently verified using:", 9.0);
+    ctx.wrapped_block(
+        "This evidence package can be independently verified using:",
+        9.0,
+    );
     ctx.gap();
     ctx.raw_line("$ evident verify proof.json", 9.0);
     ctx.gap();
-    ctx.wrapped_block("This proof is self-contained and can be verified without server access.", 9.0);
+    ctx.wrapped_block(
+        "This proof is self-contained and can be verified without server access.",
+        9.0,
+    );
 }
 
 fn add_signature_block(ctx: &mut Ctx) {
@@ -335,5 +419,11 @@ fn add_signature_block(ctx: &mut Ctx) {
     ctx.raw_line("Evident Ledger Client Utility", 9.0);
     ctx.gap();
     ctx.raw_line("_________________________", 10.0);
-    ctx.raw_line(&format!("Date: {}", chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")), 9.0);
+    ctx.raw_line(
+        &format!(
+            "Date: {}",
+            chrono::Utc::now().format("%Y-%m-%d %H:%M:%S UTC")
+        ),
+        9.0,
+    );
 }

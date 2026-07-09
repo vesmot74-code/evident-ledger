@@ -1,6 +1,6 @@
-use std::path::Path;
-use crate::{ProofData, Result, ReportError, VerificationContext};
 use crate::pdf::write_pdf;
+use crate::{ProofData, ReportError, Result, VerificationContext};
+use std::path::Path;
 
 pub fn generate_report(
     chain_id: &str,

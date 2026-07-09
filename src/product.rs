@@ -1,6 +1,6 @@
+use std::env::var_os;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::env::var_os;
 
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
@@ -53,7 +53,11 @@ struct EventLeaf {
     file_hash: String,
 }
 
-pub fn fixate_file(path: &Path, chain_id: &str, audit_path: Option<&Path>) -> Result<FixationResult> {
+pub fn fixate_file(
+    path: &Path,
+    chain_id: &str,
+    audit_path: Option<&Path>,
+) -> Result<FixationResult> {
     let bytes = fs::read(path).context("failed to read file")?;
     let file_hash = sha256_hex(&bytes);
     let chain_uuid = Uuid::parse_str(chain_id).context("invalid chain id")?;
@@ -87,13 +91,25 @@ pub fn fixate_file(path: &Path, chain_id: &str, audit_path: Option<&Path>) -> Re
     let status = response.status();
     let body = response.text().context("failed to read ledger response")?;
     if !status.is_success() {
-        let failed = AuditEvent::failed(event_id, chain_uuid, file_hash.clone(), None, format!("server error {status}: {body}"));
+        let failed = AuditEvent::failed(
+            event_id,
+            chain_uuid,
+            file_hash.clone(),
+            None,
+            format!("server error {status}: {body}"),
+        );
         store.append(&failed)?;
         anyhow::bail!("server error {status}: {body}");
     }
 
     let commit: CommitResponse = serde_json::from_str(&body).context("invalid ledger response")?;
-    let submitted = AuditEvent::submitted(event_id, chain_uuid, file_hash.clone(), None, idempotency_key);
+    let submitted = AuditEvent::submitted(
+        event_id,
+        chain_uuid,
+        file_hash.clone(),
+        None,
+        idempotency_key,
+    );
     store.append(&submitted)?;
 
     let proof_path = PathBuf::from("proofs")
@@ -109,17 +125,18 @@ pub fn fixate_file(path: &Path, chain_id: &str, audit_path: Option<&Path>) -> Re
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;
 
     // Get sequence number from commit.events
-let leaf = commit.events
-    .iter()
-    .find(|leaf| leaf.event_id == commit.event_id)
-    .ok_or_else(|| anyhow::anyhow!(
-        "commit.event_id not found in commit.events"
-    ))?;
+    let leaf = commit
+        .events
+        .iter()
+        .find(|leaf| leaf.event_id == commit.event_id)
+        .ok_or_else(|| anyhow::anyhow!("commit.event_id not found in commit.events"))?;
 
-let sequence = leaf.sequence;
+    let sequence = leaf.sequence;
 
     // Get parent_event_id from commit.events
-    let parent_event_id = commit.events.iter()
+    let parent_event_id = commit
+        .events
+        .iter()
         .find(|leaf| leaf.event_id == commit.event_id)
         .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
 
@@ -133,7 +150,11 @@ let sequence = leaf.sequence;
         parent_event_id,
         sequence,
         server_event_id,
-        Some(ChainAnchorProof::new(commit.proof.root.clone(), commit.proof.signature.clone(), "evident-ledger".into())),
+        Some(ChainAnchorProof::new(
+            commit.proof.root.clone(),
+            commit.proof.signature.clone(),
+            "evident-ledger".into(),
+        )),
     );
     store.append(&anchored)?;
 

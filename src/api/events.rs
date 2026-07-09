@@ -1,12 +1,14 @@
-use axum::{Router, routing::post, extract::{State, Json}};
-use crate::state::AppState;
 use crate::models::event::SubmitEventRequest;
 use crate::service::ledger::{submit_event, LedgerError};
+use crate::state::AppState;
+use axum::{
+    extract::{Json, State},
+    routing::post,
+    Router,
+};
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", post(handler))
-        .with_state(state)
+    Router::new().route("/", post(handler)).with_state(state)
 }
 
 async fn handler(

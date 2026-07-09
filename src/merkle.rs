@@ -1,5 +1,5 @@
-use sha2::{Sha256, Digest};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -13,7 +13,11 @@ impl MerkleTree {
     pub fn new(leaves: Vec<String>) -> Self {
         let leaf_count = leaves.len();
         let root = Self::build_merkle_root(&leaves);
-        Self { root, leaves, leaf_count }
+        Self {
+            root,
+            leaves,
+            leaf_count,
+        }
     }
 
     /// Детерминированный лист: зависит только от структуры цепочки
@@ -34,7 +38,8 @@ impl MerkleTree {
             return leaves[0].clone();
         }
 
-        let mut hashed: Vec<String> = leaves.iter()
+        let mut hashed: Vec<String> = leaves
+            .iter()
             .map(|leaf| {
                 let mut hasher = Sha256::new();
                 hasher.update(leaf.as_bytes());
@@ -60,7 +65,8 @@ impl MerkleTree {
     }
 
     pub fn recompute_root_from_events(events: &[crate::db::EventRow]) -> String {
-        let leaves: Vec<String> = events.iter()
+        let leaves: Vec<String> = events
+            .iter()
             .map(|e| Self::build_leaf(e.sequence, &e.parent_event_id, &e.file_hash))
             .collect();
         Self::build_merkle_root(&leaves)

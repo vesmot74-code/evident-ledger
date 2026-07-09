@@ -96,7 +96,11 @@ pub fn generate_certificate_pdf(input: &CertificateInput) -> Result<Vec<u8>> {
 
     writer.line("Статус фиксации: ФИНАЛЬНЫЙ", 11.0, true);
     writer.line("Система: Notary Core v1.1", 9.5, false);
-    writer.line("Модель доверия: SHA-256 + RFC 3161 TSA (external)", 9.5, false);
+    writer.line(
+        "Модель доверия: SHA-256 + RFC 3161 TSA (external)",
+        9.5,
+        false,
+    );
     writer.blank(3.0);
 
     // ===== 1. ОБЪЕКТ ФИКСАЦИИ (SOURCE OF TRUTH) =====
@@ -129,7 +133,14 @@ pub fn generate_certificate_pdf(input: &CertificateInput) -> Result<Vec<u8>> {
     // ===== 3. ВРЕМЕННАЯ МЕТКА (RFC 3161) =====
     writer.section_heading("3. ВРЕМЕННАЯ МЕТКА (RFC 3161)");
     let tsa_valid = input.tsa_valid;
-    writer.labeled("Статус TSA", if tsa_valid { "Подтверждено" } else { "Не подтверждено" });
+    writer.labeled(
+        "Статус TSA",
+        if tsa_valid {
+            "Подтверждено"
+        } else {
+            "Не подтверждено"
+        },
+    );
     writer.labeled("Провайдер", &input.tsa_provider);
     writer.labeled("Стандарт", "RFC 3161");
     writer.labeled("Время фиксации (UTC)", &input.tsa_timestamp_utc);
@@ -192,7 +203,10 @@ pub fn generate_certificate_pdf(input: &CertificateInput) -> Result<Vec<u8>> {
     writer.section_heading("6. ТЕХНИЧЕСКИЕ ГАРАНТИИ");
     writer.line("Алгоритм хэширования: SHA-256", 9.0, false);
     writer.line("Временная метка: RFC 3161", 9.0, false);
-    writer.labeled("TSA", &format!("external trusted provider ({})", input.tsa_provider));
+    writer.labeled(
+        "TSA",
+        &format!("external trusted provider ({})", input.tsa_provider),
+    );
     writer.line("Модель хранения: append-only ledger", 9.0, false);
     writer.line("Детеминизм генерации: гарантирован", 9.0, false);
     writer.blank(2.0);
@@ -215,9 +229,7 @@ pub fn generate_certificate_pdf(input: &CertificateInput) -> Result<Vec<u8>> {
     Ok(buf)
 }
 
-fn load_embedded_fonts(
-    doc: &PdfDocumentReference,
-) -> Result<(IndirectFontRef, IndirectFontRef)> {
+fn load_embedded_fonts(doc: &PdfDocumentReference) -> Result<(IndirectFontRef, IndirectFontRef)> {
     let mut regular = Cursor::new(include_bytes!("../assets/fonts/DejaVuSans.ttf").as_ref());
     let mut bold = Cursor::new(include_bytes!("../assets/fonts/DejaVuSans-Bold.ttf").as_ref());
     let font = doc
@@ -248,9 +260,7 @@ impl<'a> PdfWriter<'a> {
 
     fn ensure_space(&mut self, needed_mm: f32) {
         if self.y - needed_mm < 15.0 {
-            let (page, layer) = self
-                .doc
-                .add_page(Mm(210.0), Mm(297.0), "Layer 1");
+            let (page, layer) = self.doc.add_page(Mm(210.0), Mm(297.0), "Layer 1");
             self.page = page;
             self.layer_id = layer;
             self.y = 275.0;
@@ -265,7 +275,9 @@ impl<'a> PdfWriter<'a> {
         self.set_color(Rgb::new(0.0, 0.0, 0.0, None));
     }
 
-    fn blank(&mut self, mm: f32) { self.y -= mm; }
+    fn blank(&mut self, mm: f32) {
+        self.y -= mm;
+    }
 
     fn section_title(&mut self, text: &str) {
         self.ensure_space(12.0);

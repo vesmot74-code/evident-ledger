@@ -27,7 +27,11 @@ fn write_temp(value: &serde_json::Value) -> String {
 
 fn uuid_simple() -> String {
     use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now().duration_since(UNIX_EPOCH).unwrap().subsec_nanos().to_string()
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .subsec_nanos()
+        .to_string()
 }
 
 #[test]

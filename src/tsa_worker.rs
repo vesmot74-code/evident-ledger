@@ -1,6 +1,6 @@
+use notary_tsa::{HashAlgorithm, Rfc3161Client};
 use sqlx::PgPool;
 use uuid::Uuid;
-use notary_tsa::{Rfc3161Client, HashAlgorithm};
 
 const FREETSA_URL: &str = "https://freetsa.org/tsr";
 
@@ -34,7 +34,10 @@ pub async fn stamp_chain(pool: &PgPool, chain_id: Uuid, merkle_root: &str, head_
             .await;
 
             match result {
-                Ok(_) => println!("TSA: stamped chain {} root {} ts={}", chain_id, merkle_root, resp.timestamp),
+                Ok(_) => println!(
+                    "TSA: stamped chain {} root {} ts={}",
+                    chain_id, merkle_root, resp.timestamp
+                ),
                 Err(e) => eprintln!("TSA: db error: {}", e),
             }
         }

@@ -1,7 +1,7 @@
+use crate::db::EventRow;
+use crate::merkle::MerkleTree;
 use sqlx::PgPool;
 use uuid::Uuid;
-use crate::merkle::MerkleTree;
-use crate::db::EventRow;
 
 #[derive(Debug, Clone)]
 pub struct VerificationReport {
@@ -20,7 +20,6 @@ pub async fn verify_chain_hardened(
     pool: &PgPool,
     chain_id: Uuid,
 ) -> Result<VerificationReport, sqlx::Error> {
-
     let records = sqlx::query!(
         r#"
         SELECT event_id, parent_event_id, file_hash, created_at, sequence
@@ -52,7 +51,8 @@ pub async fn verify_chain_hardened(
         return Ok(report);
     }
 
-    let events: Vec<EventRow> = records.iter()
+    let events: Vec<EventRow> = records
+        .iter()
         .map(|r| EventRow {
             event_id: r.event_id,
             parent_event_id: r.parent_event_id,
@@ -86,21 +86,23 @@ pub async fn verify_chain_hardened(
 
     // === ПРОВЕРКА 2: Монотонность sequence ===
     for i in 1..events.len() {
-        if events[i].sequence <= events[i-1].sequence {
+        if events[i].sequence <= events[i - 1].sequence {
             report.valid = false;
             report.errors.push(format!(
                 "Sequence not monotonic: {} -> {}",
-                events[i-1].sequence, events[i].sequence
+                events[i - 1].sequence,
+                events[i].sequence
             ));
         }
     }
 
     // === ПРОВЕРКА 3: Монотонность времени ===
     for i in 1..events.len() {
-        if events[i].created_at < events[i-1].created_at {
+        if events[i].created_at < events[i - 1].created_at {
             report.warnings.push(format!(
                 "Time regression: {} -> {}",
-                events[i-1].created_at, events[i].created_at
+                events[i - 1].created_at,
+                events[i].created_at
             ));
         }
     }

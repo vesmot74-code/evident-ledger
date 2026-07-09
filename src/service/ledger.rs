@@ -1,9 +1,9 @@
-use sqlx::PgPool;
-use serde_json::{json, Value};
-use uuid::Uuid;
-use axum::response::{IntoResponse, Response};
 use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
 use axum::Json;
+use serde_json::{json, Value};
+use sqlx::PgPool;
+use uuid::Uuid;
 
 use crate::{models::event::SubmitEventRequest, signing::ServerSigner};
 
@@ -30,8 +30,12 @@ impl IntoResponse for LedgerError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             LedgerError::ChainNotFound => (StatusCode::NOT_FOUND, "Chain not found"),
-            LedgerError::ParentMismatch => (StatusCode::CONFLICT, "Parent hash mismatch — fork detected"),
-            LedgerError::DuplicateIdempotencyKey => (StatusCode::CONFLICT, "Duplicate idempotency key"),
+            LedgerError::ParentMismatch => {
+                (StatusCode::CONFLICT, "Parent hash mismatch — fork detected")
+            }
+            LedgerError::DuplicateIdempotencyKey => {
+                (StatusCode::CONFLICT, "Duplicate idempotency key")
+            }
             LedgerError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
         };
         (status, Json(json!({ "error": message }))).into_response()
@@ -43,7 +47,6 @@ pub async fn submit_event(
     signer: &ServerSigner,
     req: SubmitEventRequest,
 ) -> Result<Value, LedgerError> {
-
     let mut tx = pool.begin().await?;
 
     #[derive(sqlx::FromRow)]
@@ -58,7 +61,7 @@ pub async fn submit_event(
         VALUES ($1, NULL)
         ON CONFLICT (chain_id) DO NOTHING
         RETURNING chain_id, head_event_id
-        "#
+        "#,
     )
     .bind(req.chain_id)
     .fetch_optional(&mut *tx)
@@ -66,20 +69,18 @@ pub async fn submit_event(
 
     let chain = match chain {
         Some(chain) => chain,
-        None => {
-            sqlx::query_as::<_, ChainRow>(
-                r#"
+        None => sqlx::query_as::<_, ChainRow>(
+            r#"
                 SELECT chain_id, head_event_id
                 FROM chains
                 WHERE chain_id = $1
                 FOR UPDATE
-                "#
-            )
-            .bind(req.chain_id)
-            .fetch_optional(&mut *tx)
-            .await?
-            .ok_or(LedgerError::ChainNotFound)?
-        }
+                "#,
+        )
+        .bind(req.chain_id)
+        .fetch_optional(&mut *tx)
+        .await?
+        .ok_or(LedgerError::ChainNotFound)?,
     };
 
     // 2. CHECK idempotency
@@ -248,6 +249,10 @@ async fn compute_chain_root(pool: &PgPool, chain_id: Uuid) -> Option<String> {
     .await
     .ok()?;
 
-    if events.is_empty() { return None; }
-    Some(crate::merkle::MerkleTree::recompute_root_from_events(&events))
+    if events.is_empty() {
+        return None;
+    }
+    Some(crate::merkle::MerkleTree::recompute_root_from_events(
+        &events,
+    ))
 }

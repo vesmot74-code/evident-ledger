@@ -1,20 +1,19 @@
+use crate::hash_attestation::build_hash_attestation;
+use crate::hash_attestation_pdf::render_hash_attestation_pdf;
+use crate::sac::SacDocument;
+use crate::service::attestation::build_attestation;
+use crate::service::verification::{export_proof, verify_chain};
+use crate::state::AppState;
 use axum::{
-    Router,
-    routing::{get, post},
-    extract::{State, Path},
+    extract::{Path, State},
     http::StatusCode,
     response::{IntoResponse, Response},
-    Json,
+    routing::{get, post},
+    Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
-use crate::state::AppState;
-use crate::service::verification::{verify_chain, export_proof};
-use crate::service::attestation::build_attestation;
-use crate::hash_attestation::build_hash_attestation;
-use crate::hash_attestation_pdf::render_hash_attestation_pdf;
-use crate::sac::SacDocument;
 
 pub enum ApiError {
     BadRequest(String),
@@ -40,27 +39,30 @@ pub fn router(state: AppState) -> Router {
         .merge(
             Router::new()
                 .route("/proof/:chain_id", get(handler_proof))
-                .with_state(state.clone())
+                .with_state(state.clone()),
         )
         .merge(
             Router::new()
                 .route("/hash", post(handler_verify_hash))
-                .with_state(state.clone())
+                .with_state(state.clone()),
         )
         .merge(
             Router::new()
                 .route("/:chain_id/attestation", get(handler_attestation))
-                .with_state(state.clone())
+                .with_state(state.clone()),
         )
         .merge(
             Router::new()
                 .route("/:chain_id/attestation.pdf", get(handler_attestation_pdf))
-                .with_state(state.clone())
+                .with_state(state.clone()),
         )
         .merge(
             Router::new()
-                .route("/hash/:hash/attestation.pdf", get(handler_hash_attestation_pdf))
-                .with_state(state)
+                .route(
+                    "/hash/:hash/attestation.pdf",
+                    get(handler_hash_attestation_pdf),
+                )
+                .with_state(state),
         )
 }
 
@@ -96,7 +98,10 @@ async fn handler_attestation_pdf(
 
     Ok((
         [
-            (axum::http::header::CONTENT_TYPE, "application/pdf".to_string()),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/pdf".to_string(),
+            ),
             (
                 axum::http::header::CONTENT_DISPOSITION,
                 format!("attachment; filename=\"sac-{}.pdf\"", chain_id),
@@ -142,7 +147,9 @@ async fn handler_verify_hash(
     let hash = payload.hash.trim().to_lowercase();
 
     if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::BadRequest("invalid sha256 hash format".to_string()));
+        return Err(ApiError::BadRequest(
+            "invalid sha256 hash format".to_string(),
+        ));
     }
 
     let rows = sqlx::query!(
@@ -180,7 +187,9 @@ async fn handler_hash_attestation_pdf(
 ) -> Result<impl IntoResponse, ApiError> {
     let hash = hash.trim().to_lowercase();
     if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::BadRequest("invalid sha256 hash format".to_string()));
+        return Err(ApiError::BadRequest(
+            "invalid sha256 hash format".to_string(),
+        ));
     }
 
     let doc = build_hash_attestation(&state.db, &state.signer, &hash)
@@ -191,10 +200,16 @@ async fn handler_hash_attestation_pdf(
 
     Ok((
         [
-            (axum::http::header::CONTENT_TYPE, "application/pdf".to_string()),
+            (
+                axum::http::header::CONTENT_TYPE,
+                "application/pdf".to_string(),
+            ),
             (
                 axum::http::header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"hash-attestation-{}.pdf\"", &hash[..16]),
+                format!(
+                    "attachment; filename=\"hash-attestation-{}.pdf\"",
+                    &hash[..16]
+                ),
             ),
         ],
         pdf_bytes,

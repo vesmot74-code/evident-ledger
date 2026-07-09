@@ -33,10 +33,7 @@ pub fn verify_tsa_attestation(attestation: &TsaAttestation, bundle_hash: &str) -
     }
 }
 
-pub fn tsa_status_for_bundle(
-    tsa: Option<&TsaAttestation>,
-    bundle_hash: &str,
-) -> TsaStatus {
+pub fn tsa_status_for_bundle(tsa: Option<&TsaAttestation>, bundle_hash: &str) -> TsaStatus {
     match tsa {
         None => TsaStatus::NotProvided,
         Some(att) => verify_tsa_attestation(att, bundle_hash),
@@ -52,10 +49,7 @@ mod tests {
     fn stub_attestation_verifies_for_correct_owner() {
         let hash = "a".repeat(64);
         let att = create_stub_attestation(&hash, "stub");
-        assert_eq!(
-            verify_tsa_attestation(&att, &hash),
-            TsaStatus::Verified
-        );
+        assert_eq!(verify_tsa_attestation(&att, &hash), TsaStatus::Verified);
     }
 
     #[test]
@@ -76,18 +70,15 @@ mod tests {
 
     #[test]
     fn missing_tsa_is_not_provided() {
-        assert_eq!(
-            tsa_status_for_bundle(None, "abc"),
-            TsaStatus::NotProvided
-        );
+        assert_eq!(tsa_status_for_bundle(None, "abc"), TsaStatus::NotProvided);
     }
 
     #[test]
     fn tampered_tsr_token_fails_verification() {
         let hash = "a".repeat(64);
         let mut att = create_stub_attestation(&hash, "freetsa");
-        att.raw_token_b64 = base64::engine::general_purpose::STANDARD
-            .encode(br#"{"stub":true,"sha256":"wrong"}"#);
+        att.raw_token_b64 =
+            base64::engine::general_purpose::STANDARD.encode(br#"{"stub":true,"sha256":"wrong"}"#);
         assert_eq!(verify_tsa_attestation(&att, &hash), TsaStatus::Failed);
     }
 }

@@ -1,17 +1,16 @@
-use sqlx::PgPool;
-use serde_json::json;
-use uuid::Uuid;
-use std::sync::Arc;
-use crate::merkle::MerkleTree;
 use crate::db::EventRow;
+use crate::merkle::MerkleTree;
 use crate::signing::ServerSigner;
+use serde_json::json;
+use sqlx::PgPool;
+use std::sync::Arc;
+use uuid::Uuid;
 
 pub async fn verify_chain(
     pool: &PgPool,
     signer: &Arc<ServerSigner>,
     chain_id: Uuid,
 ) -> Result<serde_json::Value, sqlx::Error> {
-
     let events: Vec<EventRow> = sqlx::query_as!(
         EventRow,
         r#"
@@ -86,7 +85,6 @@ pub async fn export_proof(
     signer: &Arc<ServerSigner>,
     chain_id: Uuid,
 ) -> Result<serde_json::Value, sqlx::Error> {
-
     let events: Vec<EventRow> = sqlx::query_as!(
         EventRow,
         r#"
@@ -112,19 +110,25 @@ pub async fn export_proof(
     let tsa = sqlx::query!(
         r#"SELECT tsa_timestamp, tsa_serial, length(tsa_token) as token_bytes
            FROM tsa_tokens WHERE chain_id = $1 AND merkle_root = $2"#,
-        chain_id, merkle_root
+        chain_id,
+        merkle_root
     )
     .fetch_optional(pool)
     .await
     .ok()
     .flatten();
 
-    let leaves: Vec<serde_json::Value> = events.iter().map(|e| json!({
-        "sequence": e.sequence,
-        "event_id": e.event_id,
-        "parent_event_id": e.parent_event_id,
-        "file_hash": e.file_hash,
-    })).collect();
+    let leaves: Vec<serde_json::Value> = events
+        .iter()
+        .map(|e| {
+            json!({
+                "sequence": e.sequence,
+                "event_id": e.event_id,
+                "parent_event_id": e.parent_event_id,
+                "file_hash": e.file_hash,
+            })
+        })
+        .collect();
 
     Ok(json!({
         "chain_id": chain_id,

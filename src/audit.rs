@@ -1,8 +1,8 @@
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
 use std::path::PathBuf;
-use chrono::{DateTime, Utc};
-use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -19,12 +19,16 @@ pub struct AuditEvent {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum AuditEventKind {
     Created,
-    Submitted { idempotency_key: String },
+    Submitted {
+        idempotency_key: String,
+    },
     Anchored {
         server_event_id: Uuid,
         proof: Option<ChainAnchorProof>,
     },
-    Failed { error: String },
+    Failed {
+        error: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -47,12 +51,21 @@ pub struct ChainAnchorProof {
 
 impl ChainAnchorProof {
     pub fn new(root: String, signature: String, anchored_by: String) -> Self {
-        Self { root, signature, anchored_by }
+        Self {
+            root,
+            signature,
+            anchored_by,
+        }
     }
 }
 
 impl AuditEvent {
-    pub fn created(event_id: Uuid, chain_id: Uuid, file_hash: String, parent_event_id: Option<Uuid>) -> Self {
+    pub fn created(
+        event_id: Uuid,
+        chain_id: Uuid,
+        file_hash: String,
+        parent_event_id: Option<Uuid>,
+    ) -> Self {
         Self {
             event_id,
             chain_id,
@@ -98,11 +111,20 @@ impl AuditEvent {
             parent_event_id,
             sequence: Some(sequence),
             created_at: Utc::now(),
-            kind: AuditEventKind::Anchored { server_event_id, proof },
+            kind: AuditEventKind::Anchored {
+                server_event_id,
+                proof,
+            },
         }
     }
 
-    pub fn failed(event_id: Uuid, chain_id: Uuid, file_hash: String, parent_event_id: Option<Uuid>, error: String) -> Self {
+    pub fn failed(
+        event_id: Uuid,
+        chain_id: Uuid,
+        file_hash: String,
+        parent_event_id: Option<Uuid>,
+        error: String,
+    ) -> Self {
         Self {
             event_id,
             chain_id,
@@ -139,7 +161,10 @@ impl AuditStore {
             fs::create_dir_all(parent)?;
         }
 
-        let mut file = OpenOptions::new().create(true).append(true).open(&self.path)?;
+        let mut file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&self.path)?;
         let line = serde_json::to_string(event).unwrap();
         writeln!(file, "{line}")?;
         file.sync_all()?;
@@ -202,7 +227,11 @@ mod tests {
             None,
             1, // sequence number
             Uuid::new_v4(),
-            Some(ChainAnchorProof::new("root".into(), "sig".into(), "evident-ledger".into())),
+            Some(ChainAnchorProof::new(
+                "root".into(),
+                "sig".into(),
+                "evident-ledger".into(),
+            )),
         );
 
         store.append(&anchored).unwrap();

@@ -1,8 +1,8 @@
 use reqwest::blocking::Client;
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
-use std::path::PathBuf;
 use std::fs;
+use std::path::PathBuf;
+use uuid::Uuid;
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct TsaData {
@@ -72,9 +72,21 @@ pub enum ClientError {
     Json(serde_json::Error),
     Server(String),
 }
-impl From<reqwest::Error> for ClientError { fn from(e: reqwest::Error) -> Self { ClientError::Http(e) } }
-impl From<std::io::Error> for ClientError { fn from(e: std::io::Error) -> Self { ClientError::Io(e) } }
-impl From<serde_json::Error> for ClientError { fn from(e: serde_json::Error) -> Self { ClientError::Json(e) } }
+impl From<reqwest::Error> for ClientError {
+    fn from(e: reqwest::Error) -> Self {
+        ClientError::Http(e)
+    }
+}
+impl From<std::io::Error> for ClientError {
+    fn from(e: std::io::Error) -> Self {
+        ClientError::Io(e)
+    }
+}
+impl From<serde_json::Error> for ClientError {
+    fn from(e: serde_json::Error) -> Self {
+        ClientError::Json(e)
+    }
+}
 
 impl std::fmt::Display for ClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -89,7 +101,10 @@ impl std::fmt::Display for ClientError {
 
 impl EvidentClient {
     pub fn new(base_url: impl Into<String>) -> Self {
-        Self { base_url: base_url.into(), client: Client::new() }
+        Self {
+            base_url: base_url.into(),
+            client: Client::new(),
+        }
     }
 
     fn evident_dir() -> PathBuf {
@@ -97,17 +112,24 @@ impl EvidentClient {
     }
 
     pub fn head_event_id(&self, chain_id: &Uuid) -> Result<Option<Uuid>, ClientError> {
-        let resp = self.client
+        let resp = self
+            .client
             .get(format!("{}/verify/{}", self.base_url, chain_id))
             .send()?;
         let json: serde_json::Value = resp.json()?;
-        Ok(json["head_event_id"].as_str().and_then(|s| Uuid::parse_str(s).ok()))
+        Ok(json["head_event_id"]
+            .as_str()
+            .and_then(|s| Uuid::parse_str(s).ok()))
     }
 
     /// Отправляет событие на сервер, сохраняет ProofFile на диск.
     /// Возвращает (CommitResponse, путь_к_сохранённому_proof_json, sha256_файла).
-    pub fn submit_event(&self, chain_id: Uuid, file_bytes: &[u8]) -> Result<(CommitResponse, PathBuf, String), ClientError> {
-        use sha2::{Sha256, Digest};
+    pub fn submit_event(
+        &self,
+        chain_id: Uuid,
+        file_bytes: &[u8],
+    ) -> Result<(CommitResponse, PathBuf, String), ClientError> {
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(file_bytes);
         let file_hash = format!("{:x}", hasher.finalize());
@@ -115,7 +137,8 @@ impl EvidentClient {
         let parent_event_id = self.head_event_id(&chain_id)?;
         let idempotency_key = Uuid::new_v4().to_string();
 
-        let resp = self.client
+        let resp = self
+            .client
             .post(format!("{}/events", self.base_url))
             .json(&serde_json::json!({
                 "chain_id": chain_id,
@@ -147,7 +170,8 @@ impl EvidentClient {
     }
 
     pub fn verify_chain(&self, chain_id: Uuid) -> Result<VerifyResponse, ClientError> {
-        let resp = self.client
+        let resp = self
+            .client
             .get(format!("{}/verify/{}", self.base_url, chain_id))
             .send()?;
         if !resp.status().is_success() {
@@ -159,7 +183,8 @@ impl EvidentClient {
     }
 
     pub fn fetch_proof(&self, chain_id: Uuid) -> Result<ProofFile, ClientError> {
-        let resp = self.client
+        let resp = self
+            .client
             .get(format!("{}/verify/proof/{}", self.base_url, chain_id))
             .send()?;
         if !resp.status().is_success() {

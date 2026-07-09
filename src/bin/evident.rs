@@ -115,15 +115,17 @@ fn run() -> Result<(), CliError> {
         }
         Some("new-chain") => cmd_new_chain(),
         Some("report") => {
-            let subcommand = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
+            let subcommand = args.next().ok_or_else(|| {
+                CliError::Usage("usage: evident report generate <chain_id>".into())
+            })?;
             if subcommand != "generate" {
-                return Err(CliError::Usage("usage: evident report generate <chain_id>".into()));
+                return Err(CliError::Usage(
+                    "usage: evident report generate <chain_id>".into(),
+                ));
             }
-            let chain_id = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident report generate <chain_id>".into()))?;
+            let chain_id = args.next().ok_or_else(|| {
+                CliError::Usage("usage: evident report generate <chain_id>".into())
+            })?;
             cmd_report_generate(&chain_id)
         }
         Some("status") => {
@@ -139,9 +141,9 @@ fn run() -> Result<(), CliError> {
             cmd_hash(&path)
         }
         Some("commit") => {
-            let path = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident commit <file> --chain <id>".into()))?;
+            let path = args.next().ok_or_else(|| {
+                CliError::Usage("usage: evident commit <file> --chain <id>".into())
+            })?;
             let mut chain_id = None;
             while let Some(arg) = args.next() {
                 if arg == "--chain" {
@@ -196,18 +198,19 @@ fn cmd_hash(path: &str) -> Result<(), CliError> {
 
 fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     let bytes = fs::read(path)?;
-    let chain_uuid = Uuid::parse_str(chain_id)
-        .map_err(|_| CliError::Usage("invalid chain id".into()))?;
+    let chain_uuid =
+        Uuid::parse_str(chain_id).map_err(|_| CliError::Usage("invalid chain id".into()))?;
 
     let client = evident_ledger::client::EvidentClient::new("http://127.0.0.1:3000");
-    let (commit, proof_path, file_hash) = client
-        .submit_event(chain_uuid, &bytes)
-        .map_err(|e| match e {
-            evident_ledger::client::ClientError::Http(err) => CliError::Http(err),
-            evident_ledger::client::ClientError::Io(err) => CliError::Io(err),
-            evident_ledger::client::ClientError::Json(err) => CliError::Json(err),
-            evident_ledger::client::ClientError::Server(s) => CliError::Server(s),
-        })?;
+    let (commit, proof_path, file_hash) =
+        client
+            .submit_event(chain_uuid, &bytes)
+            .map_err(|e| match e {
+                evident_ledger::client::ClientError::Http(err) => CliError::Http(err),
+                evident_ledger::client::ClientError::Io(err) => CliError::Io(err),
+                evident_ledger::client::ClientError::Json(err) => CliError::Json(err),
+                evident_ledger::client::ClientError::Server(s) => CliError::Server(s),
+            })?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");
     let event_log = evident_dir().join("events.jsonl");
@@ -268,7 +271,8 @@ fn find_latest_proof_artifact(chain_id: &str) -> Result<PathBuf, CliError> {
             .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
     });
 
-    paths.pop()
+    paths
+        .pop()
         .ok_or_else(|| CliError::Usage(format!("no proof found for chain {chain_id}")))
 }
 
@@ -278,7 +282,10 @@ fn cmd_report_generate(chain_id: &str) -> Result<(), CliError> {
         .join("proofs")
         .join(chain_id)
         .join("proof.pdf");
-    cmd_report(&source_path.to_string_lossy(), &output_path.to_string_lossy())
+    cmd_report(
+        &source_path.to_string_lossy(),
+        &output_path.to_string_lossy(),
+    )
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -351,9 +358,8 @@ fn cmd_report(proof_path: &str, output_path: &str) -> Result<(), CliError> {
     let tsa_serial_raw = tsa_obj.and_then(|t| t["serial"].as_str());
     let tsa_token_raw = tsa_obj.and_then(|t| t["token_bytes"].as_i64());
 
-    let tsa_complete = tsa_timestamp_raw.is_some()
-        && tsa_serial_raw.is_some()
-        && tsa_token_raw.is_some();
+    let tsa_complete =
+        tsa_timestamp_raw.is_some() && tsa_serial_raw.is_some() && tsa_token_raw.is_some();
 
     let tsa_timestamp = tsa_timestamp_raw.unwrap_or(0) as u64;
     let tsa_serial = tsa_serial_raw.unwrap_or("").to_string();

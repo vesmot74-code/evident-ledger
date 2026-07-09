@@ -1,11 +1,10 @@
-use sqlx::{PgPool, postgres::PgPoolOptions};
+use chrono::{DateTime, Utc};
+use sqlx::{postgres::PgPoolOptions, PgPool};
 use std::env;
 use uuid::Uuid;
-use chrono::{DateTime, Utc};
 
 pub async fn create_pool() -> PgPool {
-    let database_url = env::var("DATABASE_URL")
-        .expect("DATABASE_URL must be set");
+    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     PgPoolOptions::new()
         .max_connections(10)

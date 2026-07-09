@@ -1,18 +1,31 @@
+use chrono::{TimeZone, Utc};
 use eframe::egui;
-use std::process::Command;
+use evident_ledger::audit::{AuditEvent, AuditStore, ChainAnchorProof};
+use evident_ledger::client::{self, EvidentClient};
+use evident_report::{
+    generate_report, EventSummary, FileStatus, ProofData, TsaData as ReportTsaData,
+    VerificationContext,
+};
+use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
-use serde::{Deserialize, Serialize};
-use chrono::{Utc, TimeZone};
-use evident_ledger::audit::{AuditEvent, AuditStore, ChainAnchorProof};
-use sha2::{Digest, Sha256};
-use evident_ledger::client::{self, EvidentClient};
+use std::process::Command;
 use uuid::Uuid;
-use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
-use evident_report::{ProofData, EventSummary, TsaData as ReportTsaData, VerificationContext, FileStatus, generate_report};
 
 // ============================================================================
-// МОДЕЛЬ ПРОЕКТА
+// LANGUAGE
+// ============================================================================
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Lang {
+    #[default]
+    En,
+    Ru,
+}
+
+// ============================================================================
+// PROJECT MODEL
 // ============================================================================
 #[derive(Debug, Serialize, Deserialize)]
 struct Project {
@@ -31,6 +44,9 @@ impl Project {
         fs::create_dir_all(&project_path)?;
         fs::create_dir_all(project_path.join("originals"))?;
         fs::create_dir_all(project_path.join("proofs"))?;
+        // NOTE: the on-disk folder name is kept as "Аудит" for backward
+        // compatibility with existing projects created before the EN/RU
+        // language switch was added. This is a storage path, not UI text.
         fs::create_dir_all(project_path.join("Аудит"))?;
         let path = project_path.join("project.json");
         fs::write(&path, serde_json::to_string_pretty(self)?)?;
@@ -51,7 +67,7 @@ impl Project {
 }
 
 // ============================================================================
-// МОДЕЛЬ АУДИТА ДЛЯ ВЕРИФИКАЦИИ
+// AUDIT MODEL FOR VERIFICATION
 // ============================================================================
 #[derive(Debug, Clone)]
 struct VerificationEvent {
@@ -82,7 +98,7 @@ impl Default for ErrorType {
 }
 
 // ============================================================================
-// ЦВЕТА
+// COLORS
 // ============================================================================
 const COLOR_NAVY: egui::Color32 = egui::Color32::from_rgb(11, 31, 58);
 const COLOR_VALID: egui::Color32 = egui::Color32::from_rgb(21, 128, 61);
@@ -93,7 +109,7 @@ const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(241, 245, 249);
 const COLOR_BORDER: egui::Color32 = egui::Color32::from_rgb(203, 213, 225);
 
 // ============================================================================
-// ПРИЛОЖЕНИЕ
+// APP
 // ============================================================================
 fn file_hash_from_bytes(bytes: &[u8]) -> String {
     let mut hasher = Sha256::new();
@@ -103,8 +119,15 @@ fn file_hash_from_bytes(bytes: &[u8]) -> String {
 
 #[derive(Debug, Clone, PartialEq)]
 enum ChainValidationError {
-    InvalidSequence { index: usize, sequence: i64 },
-    SequenceBreak { index: usize, expected: i64, actual: i64 },
+    InvalidSequence {
+        index: usize,
+        sequence: i64,
+    },
+    SequenceBreak {
+        index: usize,
+        expected: i64,
+        actual: i64,
+    },
     MissingHeadEventId,
 }
 
@@ -114,18 +137,18 @@ struct AppState {
 }
 
 struct App {
-    // === Файл ===
+    // === File ===
     file_path: String,
     file_name: String,
     file_size: u64,
 
-    // === Проект ===
+    // === Project ===
     projects: Vec<String>,
     project_name: String,
     selected_project: String,
     project_mode: ProjectMode,
 
-    // === Статус ===
+    // === Status ===
     status: String,
     step: Step,
     commit_success: bool,
@@ -134,16 +157,17 @@ struct App {
     verify_status: VerifyStatus,
     verify_details: String,
 
-    // === Верификация проекта ===
+    // === Project verification ===
     verification_events: Vec<VerificationEvent>,
     verification_report: String,
     verification_complete: bool,
     verification_project: String,
 
-    // === UI состояние ===
+    // === UI state ===
     screen: Screen,
     error_message: String,
     state: AppState,
+    lang: Lang,
 
     // === Async ===
     _runtime: tokio::runtime::Runtime,
@@ -184,6 +208,7 @@ impl Default for App {
             screen: Default::default(),
             error_message: Default::default(),
             state: Default::default(),
+            lang: Lang::default(),
             _runtime: rt,
             rt: rt_handle,
             tx_resp: tx,
@@ -231,8 +256,8 @@ enum Screen {
     SelectProject,
     CommitProgress,
     Result,
-    VerifyProject,  // новый экран
-    VerifyResult,   // новый экран
+    VerifyProject,
+    VerifyResult,
 }
 
 #[derive(Debug)]
@@ -256,14 +281,52 @@ struct CommitFailure {
 }
 
 enum WorkerResponse {
-    VerifyProjectDone(Result<(evident_ledger::client::VerifyResponse, evident_ledger::client::ProofFile, PathBuf), String>),
+    VerifyProjectDone(
+        Result<
+            (
+                evident_ledger::client::VerifyResponse,
+                evident_ledger::client::ProofFile,
+                PathBuf,
+            ),
+            String,
+        >,
+    ),
     VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
 }
 
 impl App {
+    /// Returns the Russian or English string depending on the currently
+    /// selected UI language.
+    fn tr(&self, ru: &'static str, en: &'static str) -> &'static str {
+        match self.lang {
+            Lang::Ru => ru,
+            Lang::En => en,
+        }
+    }
 
-    fn check_local_integrity(originals_dir: &Path, sequence: i64, expected_hash: &str) -> Option<bool> {
+    /// Formats a byte size using the appropriate localized unit.
+    fn format_size(&self, bytes: u64) -> String {
+        let size_kb = bytes / 1024;
+        let size_mb = bytes / (1024 * 1024);
+        if size_mb > 0 {
+            format!(
+                "{:.2} {}",
+                bytes as f64 / (1024.0 * 1024.0),
+                self.tr("МБ", "MB")
+            )
+        } else if size_kb > 0 {
+            format!("{} {}", size_kb, self.tr("КБ", "KB"))
+        } else {
+            format!("{} {}", bytes, self.tr("байт", "bytes"))
+        }
+    }
+
+    fn check_local_integrity(
+        originals_dir: &Path,
+        sequence: i64,
+        expected_hash: &str,
+    ) -> Option<bool> {
         let prefix = format!("{:04}_", sequence);
         let entries = fs::read_dir(originals_dir).ok()?;
         for entry in entries.flatten() {
@@ -279,126 +342,141 @@ impl App {
         None
     }
 
-fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
-    let prefix = format!("{:04}_", sequence);
-    fs::read_dir(originals_dir).ok()?
-        .flatten()
-        .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-        .map(|e| e.file_name().to_string_lossy().into_owned())
-}
-
-fn build_certificate_input(
-    proof: &client::ProofFile,
-    events: &[VerificationEvent],
-    originals_dir: &Path,
-    verify_valid: bool,
-) -> CertificateInput {
-    let head_event = events.iter().find(|e| e.event_id == proof.head_event_id);
-
-    let file_name = head_event
-        .map(|e| e.file_name.clone())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let file_size_kb = fs::metadata(originals_dir.join(&file_name))
-        .map(|m| m.len() / 1024)
-        .unwrap_or(0);
-
-    let sha256 = proof.events.iter()
-        .find(|e| e.event_id == proof.head_event_id)
-        .map(|e| e.file_hash.clone())
-        .or_else(|| proof.events.last().map(|e| e.file_hash.clone()))
-        .unwrap_or_default();
-
-    let status = if !verify_valid {
-        CertificateStatus::InvalidHash
-    } else if proof.tsa.is_none() {
-        CertificateStatus::MissingTsa
-    } else {
-        CertificateStatus::Valid
-    };
-
-    let tsa_timestamp_utc = match proof.tsa.as_ref().and_then(|t| t.timestamp) {
-        Some(ts) => CertificateInput::format_timestamp_unix(ts as u64),
-        None => "не подтверждено".to_string(),
-    };
-    let tsa_token = proof.tsa.as_ref().and_then(|t| t.token_bytes).unwrap_or(0).to_string();
-
-    CertificateInput {
-        status,
-        file_hash_valid: verify_valid,
-        tsa_valid: proof.tsa.is_some(),
-        proof_id: proof.chain_id.clone(),
-        sha256,
-        object_type: "file".into(),
-        created_at_utc: Utc::now().to_rfc3339(),
-        tsa_provider: "FreeTSA".into(),
-        tsa_timestamp_utc,
-        tsa_token_base64: tsa_token,
-        verify_url: format!("https://example.com/verify/{}", proof.chain_id),
-        file_size_kb,
-        file_name,
+    fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
+        let prefix = format!("{:04}_", sequence);
+        fs::read_dir(originals_dir)
+            .ok()?
+            .flatten()
+            .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
+            .map(|e| e.file_name().to_string_lossy().into_owned())
     }
-}
 
-fn build_evidence_snapshot(
-    proof: &client::ProofFile,
-    events: &[VerificationEvent],
-    verify_valid: bool,
-) -> (ProofData, VerificationContext) {
-    let report_events: Vec<EventSummary> = proof.events.iter()
-        .map(|e| EventSummary {
-            event_id: e.event_id.clone(),
-            file_hash: e.file_hash.clone(),
-            sequence: Some(e.sequence),
-        })
-        .collect();
+    fn build_certificate_input(
+        proof: &client::ProofFile,
+        events: &[VerificationEvent],
+        originals_dir: &Path,
+        verify_valid: bool,
+    ) -> CertificateInput {
+        let head_event = events.iter().find(|e| e.event_id == proof.head_event_id);
 
-    let tsa_complete = proof.tsa.as_ref().and_then(|t| {
-        match (t.timestamp, &t.serial, t.token_bytes) {
-            (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
-                timestamp: ts,
-                serial: serial.clone(),
-                token_bytes: tb as usize,
-            }),
-            _ => None,
+        let file_name = head_event
+            .map(|e| e.file_name.clone())
+            .unwrap_or_else(|| "unknown".to_string());
+
+        let file_size_kb = fs::metadata(originals_dir.join(&file_name))
+            .map(|m| m.len() / 1024)
+            .unwrap_or(0);
+
+        let sha256 = proof
+            .events
+            .iter()
+            .find(|e| e.event_id == proof.head_event_id)
+            .map(|e| e.file_hash.clone())
+            .or_else(|| proof.events.last().map(|e| e.file_hash.clone()))
+            .unwrap_or_default();
+
+        let status = if !verify_valid {
+            CertificateStatus::InvalidHash
+        } else if proof.tsa.is_none() {
+            CertificateStatus::MissingTsa
+        } else {
+            CertificateStatus::Valid
+        };
+
+        let tsa_timestamp_utc = match proof.tsa.as_ref().and_then(|t| t.timestamp) {
+            Some(ts) => CertificateInput::format_timestamp_unix(ts as u64),
+            None => "not confirmed".to_string(),
+        };
+        let tsa_token = proof
+            .tsa
+            .as_ref()
+            .and_then(|t| t.token_bytes)
+            .unwrap_or(0)
+            .to_string();
+
+        CertificateInput {
+            status,
+            file_hash_valid: verify_valid,
+            tsa_valid: proof.tsa.is_some(),
+            proof_id: proof.chain_id.clone(),
+            sha256,
+            object_type: "file".into(),
+            created_at_utc: Utc::now().to_rfc3339(),
+            tsa_provider: "FreeTSA".into(),
+            tsa_timestamp_utc,
+            tsa_token_base64: tsa_token,
+            verify_url: format!("https://example.com/verify/{}", proof.chain_id),
+            file_size_kb,
+            file_name,
         }
-    });
+    }
 
-    let created_at = proof.tsa.as_ref()
-        .and_then(|t| t.timestamp)
-        .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
+    fn build_evidence_snapshot(
+        proof: &client::ProofFile,
+        events: &[VerificationEvent],
+        verify_valid: bool,
+    ) -> (ProofData, VerificationContext) {
+        let report_events: Vec<EventSummary> = proof
+            .events
+            .iter()
+            .map(|e| EventSummary {
+                event_id: e.event_id.clone(),
+                file_hash: e.file_hash.clone(),
+                sequence: Some(e.sequence),
+            })
+            .collect();
 
-    let proof_data = ProofData {
-        chain_id: proof.chain_id.clone(),
-        head_event_id: proof.head_event_id.clone(),
-        events: report_events,
-        root: proof.proof.root.clone(),
-        signature: proof.proof.signature.clone(),
-        public_key: proof.proof.public_key.clone(),
-        tsa: tsa_complete,
-        created_at,
-    };
+        let tsa_complete =
+            proof
+                .tsa
+                .as_ref()
+                .and_then(|t| match (t.timestamp, &t.serial, t.token_bytes) {
+                    (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
+                        timestamp: ts,
+                        serial: serial.clone(),
+                        token_bytes: tb as usize,
+                    }),
+                    _ => None,
+                });
 
-    let first_failure = events.iter().find(|e| !e.valid);
+        let created_at = proof
+            .tsa
+            .as_ref()
+            .and_then(|t| t.timestamp)
+            .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
 
-    let files: Vec<FileStatus> = events.iter()
-        .map(|e| FileStatus {
-            file_name: e.file_name.clone(),
-            chain_valid: e.valid,
-            local_integrity_ok: e.local_integrity_ok,
-        })
-        .collect();
+        let proof_data = ProofData {
+            chain_id: proof.chain_id.clone(),
+            head_event_id: proof.head_event_id.clone(),
+            events: report_events,
+            root: proof.proof.root.clone(),
+            signature: proof.proof.signature.clone(),
+            public_key: proof.proof.public_key.clone(),
+            tsa: tsa_complete,
+            created_at,
+        };
 
-    let verification = VerificationContext {
-        is_valid: verify_valid,
-        verified_at: Utc::now(),
-        first_failure_sequence: first_failure.map(|e| e.sequence),
-        first_failure_error: first_failure.and_then(|e| e.error.clone()),
-        files,
-    };
+        let first_failure = events.iter().find(|e| !e.valid);
 
-    (proof_data, verification)
-}
+        let files: Vec<FileStatus> = events
+            .iter()
+            .map(|e| FileStatus {
+                file_name: e.file_name.clone(),
+                chain_valid: e.valid,
+                local_integrity_ok: e.local_integrity_ok,
+            })
+            .collect();
+
+        let verification = VerificationContext {
+            is_valid: verify_valid,
+            verified_at: Utc::now(),
+            first_failure_sequence: first_failure.map(|e| e.sequence),
+            first_failure_error: first_failure.and_then(|e| e.error.clone()),
+            files,
+        };
+
+        (proof_data, verification)
+    }
 
     fn new() -> Self {
         let mut app = Self::default();
@@ -415,8 +493,15 @@ fn build_evidence_snapshot(
 
     fn ensure_projects_dir(&self) -> Result<(), String> {
         let projects_dir = self.projects_dir()?;
-        fs::create_dir_all(&projects_dir)
-            .map_err(|e| format!("Не удалось создать каталог проектов: {e}"))?;
+        fs::create_dir_all(&projects_dir).map_err(|e| {
+            format!(
+                "{}: {e}",
+                self.tr(
+                    "Не удалось создать каталог проектов",
+                    "Failed to create the projects directory"
+                )
+            )
+        })?;
         Ok(())
     }
 
@@ -431,21 +516,43 @@ fn build_evidence_snapshot(
     }
 
     fn ensure_project_layout(&self, project_path: &Path) -> Result<(), String> {
-        fs::create_dir_all(project_path.join("originals"))
-            .map_err(|e| format!("Не удалось создать originals: {e}"))?;
-        fs::create_dir_all(project_path.join("proofs"))
-            .map_err(|e| format!("Не удалось создать proofs: {e}"))?;
-        fs::create_dir_all(project_path.join("Аудит"))
-            .map_err(|e| format!("Не удалось создать Аудит: {e}"))?;
+        fs::create_dir_all(project_path.join("originals")).map_err(|e| {
+            format!(
+                "{} originals: {e}",
+                self.tr("Не удалось создать", "Failed to create")
+            )
+        })?;
+        fs::create_dir_all(project_path.join("proofs")).map_err(|e| {
+            format!(
+                "{} proofs: {e}",
+                self.tr("Не удалось создать", "Failed to create")
+            )
+        })?;
+        fs::create_dir_all(project_path.join("Аудит")).map_err(|e| {
+            format!(
+                "{} {}: {e}",
+                self.tr("Не удалось создать", "Failed to create"),
+                self.tr("Аудит", "Audit")
+            )
+        })?;
         Ok(())
     }
 
-    fn persist_original(&self, project_path: &Path, source_path: &Path, sequence: i64) -> Result<String, String> {
+    fn persist_original(
+        &self,
+        project_path: &Path,
+        source_path: &Path,
+        sequence: i64,
+    ) -> Result<String, String> {
         assert!(sequence > 0, "invalid sequence");
 
         let originals_dir = project_path.join("originals");
-        fs::create_dir_all(&originals_dir)
-            .map_err(|e| format!("Не удалось создать originals: {e}"))?;
+        fs::create_dir_all(&originals_dir).map_err(|e| {
+            format!(
+                "{} originals: {e}",
+                self.tr("Не удалось создать", "Failed to create")
+            )
+        })?;
 
         let file_name = source_path
             .file_name()
@@ -472,8 +579,15 @@ fn build_evidence_snapshot(
             };
             let candidate_path = originals_dir.join(&candidate_name);
             if !candidate_path.exists() {
-                fs::copy(source_path, &candidate_path)
-                    .map_err(|e| format!("Не удалось сохранить оригинал: {e}"))?;
+                fs::copy(source_path, &candidate_path).map_err(|e| {
+                    format!(
+                        "{}: {e}",
+                        self.tr(
+                            "Не удалось сохранить оригинал",
+                            "Failed to save the original file"
+                        )
+                    )
+                })?;
                 return Ok(candidate_name);
             }
             candidate_sequence += 1;
@@ -481,13 +595,26 @@ fn build_evidence_snapshot(
     }
 
     fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
+        // The on-disk folder is intentionally kept as "Аудит" for backward
+        // compatibility with existing projects.
         let audit_path = project_path.join("Аудит").join("audit.jsonl");
         let store = AuditStore::new(&audit_path);
-        store.append(&event).map_err(|e| format!("Не удалось записать аудиторский журнал: {e}"))?;
+        store.append(&event).map_err(|e| {
+            format!(
+                "{}: {e}",
+                self.tr(
+                    "Не удалось записать аудиторский журнал",
+                    "Failed to write the audit log"
+                )
+            )
+        })?;
         Ok(())
     }
 
-    fn validate_chain(events: &[VerificationEvent], head_event_id: Option<&str>) -> Result<(), ChainValidationError> {
+    fn validate_chain(
+        events: &[VerificationEvent],
+        head_event_id: Option<&str>,
+    ) -> Result<(), ChainValidationError> {
         if events.is_empty() {
             return Err(ChainValidationError::MissingHeadEventId);
         }
@@ -518,23 +645,41 @@ fn build_evidence_snapshot(
     }
 
     fn render_chain_error(&mut self, ui: &mut egui::Ui, error: &ChainValidationError) {
-        ui.colored_label(COLOR_INVALID, "❌ Цепочка событий нарушена");
+        ui.colored_label(
+            COLOR_INVALID,
+            self.tr("❌ Цепочка событий нарушена", "❌ Event chain is broken"),
+        );
         ui.add_space(8.0);
         match error {
             ChainValidationError::InvalidSequence { index, sequence } => {
-                ui.label(format!("Неверный sequence в событии #{index}: {sequence}"));
+                ui.label(format!(
+                    "{} #{index}: {sequence}",
+                    self.tr("Неверный sequence в событии", "Invalid sequence in event")
+                ));
             }
-            ChainValidationError::SequenceBreak { index, expected, actual } => {
-                ui.label(format!("Разрыв цепочки в событии #{index}: ожидалось {expected}, получено {actual}"));
+            ChainValidationError::SequenceBreak {
+                index,
+                expected,
+                actual,
+            } => {
+                ui.label(format!(
+                    "{} #{index}: {} {expected}, {} {actual}",
+                    self.tr("Разрыв цепочки в событии", "Chain break in event"),
+                    self.tr("ожидалось", "expected"),
+                    self.tr("получено", "got"),
+                ));
             }
             ChainValidationError::MissingHeadEventId => {
-                ui.label("Не получен head_event_id из backend");
+                ui.label(self.tr(
+                    "Не получен head_event_id из backend",
+                    "head_event_id was not received from the backend",
+                ));
             }
         }
     }
 
     // ================================================================
-    // ВЕРИФИКАЦИЯ ПРОЕКТА
+    // PROJECT VERIFICATION
     // ================================================================
     fn verify_project(&mut self, ctx: &egui::Context) {
         self.verification_events.clear();
@@ -543,7 +688,9 @@ fn build_evidence_snapshot(
         self.verification_project = self.selected_project.clone();
 
         if self.selected_project.is_empty() {
-            self.status = "❌ Выберите проект".to_string();
+            self.status = self
+                .tr("❌ Выберите проект", "❌ Select a project")
+                .to_string();
             return;
         }
 
@@ -558,41 +705,68 @@ fn build_evidence_snapshot(
         let project_json = match fs::read_to_string(project_path.join("project.json")) {
             Ok(contents) => contents,
             Err(e) => {
-                self.status = format!("❌ Не удалось прочитать проект: {}", e);
+                self.status = format!(
+                    "{}: {}",
+                    self.tr(
+                        "❌ Не удалось прочитать проект",
+                        "❌ Failed to read the project"
+                    ),
+                    e
+                );
                 return;
             }
         };
         let project: Project = match serde_json::from_str(&project_json) {
             Ok(project) => project,
             Err(e) => {
-                self.status = format!("❌ Не удалось разобрать проект: {}", e);
+                self.status = format!(
+                    "{}: {}",
+                    self.tr(
+                        "❌ Не удалось разобрать проект",
+                        "❌ Failed to parse the project"
+                    ),
+                    e
+                );
                 return;
             }
         };
         let chain_id = match Uuid::parse_str(&project.chain_id) {
             Ok(id) => id,
             Err(_) => {
-                self.status = "❌ Неправильный chain_id в проекте".to_string();
+                self.status = self
+                    .tr(
+                        "❌ Неправильный chain_id в проекте",
+                        "❌ Invalid chain_id in the project",
+                    )
+                    .to_string();
                 return;
             }
         };
 
         let originals_dir = project_path.join("originals");
 
-        // --- теперь уходит в фон ---
+        // --- now goes to the background ---
         self.loading_verify_project = true;
-        self.status = "⏳ Проверка...".to_string();
+        self.status = self.tr("⏳ Проверка...", "⏳ Verifying...").to_string();
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
+        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new("http://127.0.0.1:3000");
 
-            let result: Result<(evident_ledger::client::VerifyResponse, evident_ledger::client::ProofFile, PathBuf), String> = (|| {
+            let result: Result<
+                (
+                    evident_ledger::client::VerifyResponse,
+                    evident_ledger::client::ProofFile,
+                    PathBuf,
+                ),
+                String,
+            > = (|| {
                 let verify_result = client::verify_chain(&client, chain_id)
-                    .map_err(|e| friendly_error(&e))?;
-                let proof = client::fetch_proof(&client, chain_id)
-                    .map_err(|e| friendly_error(&e))?;
+                    .map_err(|e| friendly_error(&e, lang))?;
+                let proof =
+                    client::fetch_proof(&client, chain_id).map_err(|e| friendly_error(&e, lang))?;
                 Ok((verify_result, proof, originals_dir))
             })();
 
@@ -602,11 +776,11 @@ fn build_evidence_snapshot(
     }
 
     // ================================================================
-    // ФИКСАЦИЯ
+    // COMMIT
     // ================================================================
     fn do_commit(&mut self, ctx: &egui::Context) {
         if self.file_path.is_empty() {
-            self.status = "❌ Выберите файл".to_string();
+            self.status = self.tr("❌ Выберите файл", "❌ Select a file").to_string();
             return;
         }
 
@@ -617,7 +791,9 @@ fn build_evidence_snapshot(
         };
 
         if project_name.is_empty() {
-            self.status = "❌ Укажите название проекта".to_string();
+            self.status = self
+                .tr("❌ Укажите название проекта", "❌ Enter a project name")
+                .to_string();
             return;
         }
 
@@ -637,13 +813,20 @@ fn build_evidence_snapshot(
         }
 
         let chain_id = if self.project_mode == ProjectMode::New {
-let project = Project {
-    name: project_name.clone(),
-    chain_id: Uuid::new_v4().to_string(),
-    created_at: Utc::now().to_rfc3339(),
-};
+            let project = Project {
+                name: project_name.clone(),
+                chain_id: Uuid::new_v4().to_string(),
+                created_at: Utc::now().to_rfc3339(),
+            };
             if let Err(e) = project.save(&projects_dir) {
-                self.status = format!("❌ Ошибка создания проекта: {}", e);
+                self.status = format!(
+                    "{}: {}",
+                    self.tr(
+                        "❌ Ошибка создания проекта",
+                        "❌ Error creating the project"
+                    ),
+                    e
+                );
                 return;
             }
             self.selected_project = project_name.clone();
@@ -654,14 +837,28 @@ let project = Project {
             let project_json = match fs::read_to_string(&project_file) {
                 Ok(contents) => contents,
                 Err(e) => {
-                    self.status = format!("❌ Не удалось прочитать проект: {}", e);
+                    self.status = format!(
+                        "{}: {}",
+                        self.tr(
+                            "❌ Не удалось прочитать проект",
+                            "❌ Failed to read the project"
+                        ),
+                        e
+                    );
                     return;
                 }
             };
             let project: Project = match serde_json::from_str(&project_json) {
                 Ok(project) => project,
                 Err(e) => {
-                    self.status = format!("❌ Не удалось разобрать проект: {}", e);
+                    self.status = format!(
+                        "{}: {}",
+                        self.tr(
+                            "❌ Не удалось разобрать проект",
+                            "❌ Failed to parse the project"
+                        ),
+                        e
+                    );
                     return;
                 }
             };
@@ -669,7 +866,9 @@ let project = Project {
         };
 
         self.step = Step::Committing;
-        self.status = "⏳ Отправка на сервер...".to_string();
+        self.status = self
+            .tr("⏳ Отправка на сервер...", "⏳ Sending to server...")
+            .to_string();
         self.screen = Screen::CommitProgress;
         self.loading_commit = true;
 
@@ -677,7 +876,11 @@ let project = Project {
             Ok(bytes) => bytes,
             Err(e) => {
                 self.step = Step::Failed;
-                self.status = format!("❌ Ошибка чтения файла: {}", e);
+                self.status = format!(
+                    "{}: {}",
+                    self.tr("❌ Ошибка чтения файла", "❌ Error reading the file"),
+                    e
+                );
                 self.loading_commit = false;
                 return;
             }
@@ -687,7 +890,9 @@ let project = Project {
             Ok(id) => id,
             Err(_) => {
                 self.step = Step::Failed;
-                self.status = "❌ Неправильный chain_id".to_string();
+                self.status = self
+                    .tr("❌ Неправильный chain_id", "❌ Invalid chain_id")
+                    .to_string();
                 self.loading_commit = false;
                 return;
             }
@@ -695,6 +900,7 @@ let project = Project {
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
+        let lang = self.lang;
         let project_path_clone = project_path.clone();
         let proofs_dir_clone = proofs_dir.clone();
         let source_file_path = self.file_path.clone();
@@ -718,7 +924,7 @@ let project = Project {
                 Err(e) => {
                     let file_hash = file_hash_from_bytes(&file_bytes);
                     let _ = tx.send(WorkerResponse::CommitDone(Err(CommitFailure {
-                        error: friendly_error(&e),
+                        error: friendly_error(&e, lang),
                         project_path: project_path_clone,
                         chain_uuid,
                         file_hash,
@@ -732,7 +938,9 @@ let project = Project {
     fn do_verify(&mut self, ctx: &egui::Context) {
         if self.selected_project.is_empty() {
             self.verify_status = VerifyStatus::Invalid;
-            self.verify_details = "Проект не выбран".to_string();
+            self.verify_details = self
+                .tr("Проект не выбран", "No project selected")
+                .to_string();
             return;
         }
 
@@ -750,7 +958,11 @@ let project = Project {
             Ok(contents) => contents,
             Err(e) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!("⚠️ Не удалось прочитать проект: {}", e);
+                self.verify_details = format!(
+                    "⚠️ {}: {}",
+                    self.tr("Не удалось прочитать проект", "Failed to read the project"),
+                    e
+                );
                 return;
             }
         };
@@ -758,7 +970,11 @@ let project = Project {
             Ok(project) => project,
             Err(e) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!("⚠️ Не удалось разобрать проект: {}", e);
+                self.verify_details = format!(
+                    "⚠️ {}: {}",
+                    self.tr("Не удалось разобрать проект", "Failed to parse the project"),
+                    e
+                );
                 return;
             }
         };
@@ -766,19 +982,23 @@ let project = Project {
             Ok(id) => id,
             Err(_) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = "⚠️ Неправильный chain_id".to_string();
+                self.verify_details = self
+                    .tr("⚠️ Неправильный chain_id", "⚠️ Invalid chain_id")
+                    .to_string();
                 return;
             }
         };
 
         self.loading_verify_chain = true;
-        self.verify_details = "⏳ Проверка...".to_string();
+        self.verify_details = self.tr("⏳ Проверка...", "⏳ Verifying...").to_string();
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
+        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new("http://127.0.0.1:3000");
-            let result = client::verify_chain(&client, chain_id).map_err(|e| friendly_error(&e));
+            let result =
+                client::verify_chain(&client, chain_id).map_err(|e| friendly_error(&e, lang));
             let _ = tx.send(WorkerResponse::VerifyChainDone(result));
             ctx.request_repaint();
         });
@@ -831,13 +1051,20 @@ impl eframe::App for App {
 
                             for event in proof.events.iter() {
                                 let local_integrity_ok = Self::check_local_integrity(
-                                    &originals_dir, event.sequence, &event.file_hash,
+                                    &originals_dir,
+                                    event.sequence,
+                                    &event.file_hash,
                                 );
                                 self.verification_events.push(VerificationEvent {
                                     sequence: event.sequence,
                                     event_id: event.event_id.clone(),
-                                    file_name: Self::find_original_name(&originals_dir, event.sequence)
-                                        .unwrap_or_else(|| "Файл недоступен".to_string()),
+                                    file_name: Self::find_original_name(
+                                        &originals_dir,
+                                        event.sequence,
+                                    )
+                                    .unwrap_or_else(|| {
+                                        self.tr("Файл недоступен", "File unavailable").to_string()
+                                    }),
                                     timestamp: "".to_string(),
                                     valid: verify_result.valid,
                                     error: if verify_result.valid {
@@ -857,7 +1084,9 @@ impl eframe::App for App {
                             self.verification_project = self.selected_project.clone();
                             self.verification_complete = true;
 
-                            let local_tampered = self.verification_events.iter()
+                            let local_tampered = self
+                                .verification_events
+                                .iter()
                                 .any(|e| e.local_integrity_ok == Some(false));
 
                             self.verify_status = if !verify_result.valid {
@@ -869,19 +1098,36 @@ impl eframe::App for App {
                             };
 
                             self.status = if !verify_result.valid {
-                                "❌ Обнаружены нарушения".to_string()
+                                self.tr("❌ Обнаружены нарушения", "❌ Violations detected")
+                                    .to_string()
                             } else if local_tampered {
-                                "⚠️ Backend OK, но локальные файлы изменены".to_string()
+                                self.tr(
+                                    "⚠️ Backend OK, но локальные файлы изменены",
+                                    "⚠️ Backend OK, but local files were modified",
+                                )
+                                .to_string()
                             } else {
-                                "✅ Проект успешно проверен".to_string()
+                                self.tr(
+                                    "✅ Проект успешно проверен",
+                                    "✅ Project successfully verified",
+                                )
+                                .to_string()
                             };
 
                             self.verification_report = if !verify_result.valid {
                                 verify_result.errors.join("; ")
                             } else if local_tampered {
-                                "Локальные файлы originals/ изменены или отсутствуют".to_string()
+                                self.tr(
+                                    "Локальные файлы originals/ изменены или отсутствуют",
+                                    "Local files in originals/ were modified or are missing",
+                                )
+                                .to_string()
                             } else {
-                                "Все события валидны. Локальная копия совпадает.".to_string()
+                                self.tr(
+                                    "Все события валидны. Локальная копия совпадает.",
+                                    "All events are valid. The local copy matches.",
+                                )
+                                .to_string()
                             };
 
                             self.screen = Screen::VerifyResult;
@@ -901,7 +1147,9 @@ impl eframe::App for App {
                         Ok(result) => {
                             if result.valid {
                                 self.verify_status = VerifyStatus::Valid;
-                                self.verify_details = "✅ Доказательство действительно".to_string();
+                                self.verify_details = self
+                                    .tr("✅ Доказательство действительно", "✅ Proof is valid")
+                                    .to_string();
                             } else {
                                 self.verify_status = VerifyStatus::Invalid;
                                 self.verify_details = result.errors.join("; ");
@@ -909,7 +1157,11 @@ impl eframe::App for App {
                         }
                         Err(e) => {
                             self.verify_status = VerifyStatus::Partial;
-                            self.verify_details = format!("⚠️ Ошибка проверки: {}", e);
+                            self.verify_details = format!(
+                                "{}: {}",
+                                self.tr("⚠️ Ошибка проверки", "⚠️ Verification error"),
+                                e
+                            );
                         }
                     }
                 }
@@ -918,15 +1170,22 @@ impl eframe::App for App {
                     match res {
                         Ok(success) => {
                             let CommitSuccess {
-                                commit, proof_path, file_hash,
-                                project_path, proofs_dir, chain_uuid,
-                                source_file_path, file_name,
+                                commit,
+                                proof_path,
+                                file_hash,
+                                project_path,
+                                proofs_dir,
+                                chain_uuid,
+                                source_file_path,
+                                file_name,
                             } = success;
 
                             self.state.head_event_id = Some(commit.head_event_id.clone());
 
                             let original_name = match self.persist_original(
-                                &project_path, Path::new(&source_file_path), commit.sequence,
+                                &project_path,
+                                Path::new(&source_file_path),
+                                commit.sequence,
                             ) {
                                 Ok(name) => Some(name),
                                 Err(err) => {
@@ -953,15 +1212,19 @@ impl eframe::App for App {
                                     );
                                     let _ = self.append_audit_event(&project_path, audit_event);
 
-                                    let parent_event_id = commit.events.iter()
+                                    let parent_event_id = commit
+                                        .events
+                                        .iter()
                                         .find(|leaf| leaf.event_id == commit.event_id)
-                                        .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
+                                        .and_then(|leaf| {
+                                            Uuid::parse_str(&leaf.parent_event_id).ok()
+                                        });
 
                                     let proof = commit.tsa.as_ref().map(|_tsa| {
                                         ChainAnchorProof::new(
                                             commit.proof.root.clone(),
                                             commit.proof.signature.clone(),
-                                            "evident-ledger".to_string()
+                                            "evident-ledger".to_string(),
                                         )
                                     });
 
@@ -975,25 +1238,31 @@ impl eframe::App for App {
                                             server_event_id,
                                             proof,
                                         );
-                                        let _ = self.append_audit_event(&project_path, anchored_event);
+                                        let _ =
+                                            self.append_audit_event(&project_path, anchored_event);
                                     }
                                 }
 
                                 self.step = Step::Done;
-                                self.status = "✅ Фиксация завершена".to_string();
+                                self.status = self
+                                    .tr("✅ Фиксация завершена", "✅ Commit complete")
+                                    .to_string();
                                 self.commit_success = true;
                                 self.screen = Screen::Result;
                                 self.load_projects();
                             }
                         }
                         Err(failure) => {
-                            let _ = self.append_audit_event(&failure.project_path, AuditEvent::failed(
-                                Uuid::new_v4(),
-                                failure.chain_uuid,
-                                failure.file_hash,
-                                None,
-                                format!("submit failed: {}", failure.error),
-                            ));
+                            let _ = self.append_audit_event(
+                                &failure.project_path,
+                                AuditEvent::failed(
+                                    Uuid::new_v4(),
+                                    failure.chain_uuid,
+                                    failure.file_hash,
+                                    None,
+                                    format!("submit failed: {}", failure.error),
+                                ),
+                            );
                             self.step = Step::Failed;
                             self.status = format!("❌ {}", failure.error);
                         }
@@ -1005,21 +1274,42 @@ impl eframe::App for App {
 
         egui::CentralPanel::default().show(ui, |ui| {
             ui.painter().rect_filled(ui.max_rect(), 0.0, COLOR_BG);
-            ui.add_space(12.0);
+            ui.add_space(8.0);
+
+            // === Language toggle (visible on every screen) ===
+            ui.horizontal(|ui| {
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.selectable_label(self.lang == Lang::Ru, "RU").clicked() {
+                        self.lang = Lang::Ru;
+                    }
+                    ui.add_space(4.0);
+                    if ui.selectable_label(self.lang == Lang::En, "EN").clicked() {
+                        self.lang = Lang::En;
+                    }
+                });
+            });
+            ui.add_space(4.0);
 
             if self.screen == Screen::FileSelection {
                 ui.heading("Evident Ledger");
                 ui.add_space(8.0);
 
                 ui.horizontal(|ui| {
-                    if ui.button("📄 Выбрать файл").clicked() {
+                    if ui
+                        .button(self.tr("📄 Выбрать файл", "📄 Select File"))
+                        .clicked()
+                    {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
                             self.file_path = path.display().to_string();
-                            self.file_name = path.file_name().unwrap_or_default().to_string_lossy().into();
+                            self.file_name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .into();
                             self.file_size = fs::metadata(&path).map(|m| m.len()).unwrap_or(0);
                             self.screen = Screen::SelectProject;
                             self.load_projects();
-                            self.status = "Файл выбран".to_string();
+                            self.status = self.tr("Файл выбран", "File selected").to_string();
                         }
                     }
                     if !self.file_path.is_empty() {
@@ -1028,24 +1318,22 @@ impl eframe::App for App {
                 });
 
                 ui.add_space(8.0);
-                if ui.button("🔍 Проверить проект").clicked() {
+                if ui
+                    .button(self.tr("🔍 Проверить проект", "🔍 Verify Project"))
+                    .clicked()
+                {
                     self.screen = Screen::VerifyProject;
                     self.load_projects();
                 }
 
                 if !self.file_path.is_empty() {
-                    let size_kb = self.file_size / 1024;
-                    let size_mb = self.file_size / (1024 * 1024);
-                    let size_str = if size_mb > 0 {
-                        format!("{:.2} МБ", self.file_size as f64 / (1024.0 * 1024.0))
-                    } else if size_kb > 0 {
-                        format!("{} КБ", size_kb)
-                    } else {
-                        format!("{} байт", self.file_size)
-                    };
-                    ui.label(format!("📊 Размер: {}", size_str));
+                    let size_str = self.format_size(self.file_size);
+                    ui.label(format!("📊 {}: {}", self.tr("Размер", "Size"), size_str));
                     if self.file_size == 0 {
-                        ui.colored_label(COLOR_INVALID, "⚠️ Файл пустой!");
+                        ui.colored_label(
+                            COLOR_INVALID,
+                            self.tr("⚠️ Файл пустой!", "⚠️ The file is empty!"),
+                        );
                     }
                 }
 
@@ -1057,28 +1345,31 @@ impl eframe::App for App {
             }
 
             if self.screen == Screen::VerifyProject {
-                ui.heading("🔍 Проверка проекта");
+                ui.heading(self.tr("🔍 Проверка проекта", "🔍 Verify Project"));
                 ui.add_space(12.0);
-                ui.label("Выберите проект для проверки:");
+                ui.label(self.tr(
+                    "Выберите проект для проверки:",
+                    "Select a project to verify:",
+                ));
                 ui.add_space(8.0);
 
                 if self.loading_verify_project {
                     ui.spinner();
-                    ui.label("Проверка...");
+                    ui.label(self.tr("Проверка...", "Verifying..."));
                 } else if self.projects.is_empty() {
-                    ui.label("📭 Нет сохранённых проектов.");
+                    ui.label(self.tr("📭 Нет сохранённых проектов.", "📭 No saved projects."));
                 } else {
                     let projects = self.projects.clone();
                     for project in projects {
                         if ui.button(&project).clicked() {
                             self.selected_project = project.clone();
-                    self.verify_project(ui.ctx());
+                            self.verify_project(ui.ctx());
                         }
                     }
                 }
 
                 ui.add_space(12.0);
-                if ui.button("⬅ Назад").clicked() {
+                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
                     self.screen = Screen::FileSelection;
                 }
                 return;
@@ -1086,7 +1377,13 @@ impl eframe::App for App {
 
             if self.screen == Screen::VerifyResult {
                 ui.heading("Evident Ledger");
-                ui.label(egui::RichText::new("Evidence Verification Dashboard").weak());
+                ui.label(
+                    egui::RichText::new(self.tr(
+                        "Панель проверки доказательств",
+                        "Evidence Verification Dashboard",
+                    ))
+                    .weak(),
+                );
                 ui.add_space(12.0);
 
                 egui::Frame::group(ui.style())
@@ -1095,38 +1392,74 @@ impl eframe::App for App {
                     .inner_margin(egui::Margin::same(14))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
-                            ui.label(egui::RichText::new("Project").weak());
+                            ui.label(egui::RichText::new(self.tr("Проект", "Project")).weak());
                         });
-                        ui.label(egui::RichText::new(&self.verification_project).size(16.0).strong());
+                        ui.label(
+                            egui::RichText::new(&self.verification_project)
+                                .size(16.0)
+                                .strong(),
+                        );
                         ui.add_space(10.0);
 
                         let (status_color, status_text) = match self.verify_status {
-                            VerifyStatus::Valid => (COLOR_VALID, "VERIFIED"),
-                            VerifyStatus::Invalid => (COLOR_INVALID, "INVALID"),
-                            VerifyStatus::Partial => (COLOR_PARTIAL, "PARTIAL"),
-                            VerifyStatus::None => (COLOR_BORDER, "NOT VERIFIED"),
+                            VerifyStatus::Valid => {
+                                (COLOR_VALID, self.tr("ПОДТВЕРЖДЕНО", "VERIFIED"))
+                            }
+                            VerifyStatus::Invalid => {
+                                (COLOR_INVALID, self.tr("НЕДЕЙСТВИТЕЛЬНО", "INVALID"))
+                            }
+                            VerifyStatus::Partial => {
+                                (COLOR_PARTIAL, self.tr("ЧАСТИЧНО", "PARTIAL"))
+                            }
+                            VerifyStatus::None => {
+                                (COLOR_BORDER, self.tr("НЕ ПРОВЕРЕНО", "NOT VERIFIED"))
+                            }
                         };
-                        ui.colored_label(status_color, egui::RichText::new(status_text).size(20.0).strong());
+                        ui.colored_label(
+                            status_color,
+                            egui::RichText::new(status_text).size(20.0).strong(),
+                        );
 
                         ui.add_space(10.0);
                         ui.separator();
                         ui.add_space(8.0);
 
                         ui.columns(2, |cols| {
-                            let events_count = self.last_proof.as_ref().map(|p| p.events.len()).unwrap_or(0);
-                            cols[0].label(egui::RichText::new("Events").weak());
-                            cols[0].label(egui::RichText::new(events_count.to_string()).size(16.0).strong());
+                            let events_count = self
+                                .last_proof
+                                .as_ref()
+                                .map(|p| p.events.len())
+                                .unwrap_or(0);
+                            cols[0].label(egui::RichText::new(self.tr("События", "Events")).weak());
+                            cols[0].label(
+                                egui::RichText::new(events_count.to_string())
+                                    .size(16.0)
+                                    .strong(),
+                            );
 
-                            let tsa_present = self.last_proof.as_ref()
+                            let tsa_present = self
+                                .last_proof
+                                .as_ref()
                                 .map(|p| p.tsa.is_some())
                                 .unwrap_or(false);
                             let (tsa_color, tsa_text) = if tsa_present {
-                                (COLOR_VALID, "Present")
+                                (COLOR_VALID, self.tr("Присутствует", "Present"))
                             } else {
-                                (COLOR_PARTIAL, "Not Anchored")
+                                (COLOR_PARTIAL, self.tr("Не закреплено", "Not Anchored"))
                             };
-                            cols[1].label(egui::RichText::new("External Timestamp (TSA)").weak());
-                            cols[1].colored_label(tsa_color, egui::RichText::new(tsa_text).size(16.0).strong());
+                            cols[1].label(
+                                egui::RichText::new(
+                                    self.tr(
+                                        "Внешняя метка времени (TSA)",
+                                        "External Timestamp (TSA)",
+                                    ),
+                                )
+                                .weak(),
+                            );
+                            cols[1].colored_label(
+                                tsa_color,
+                                egui::RichText::new(tsa_text).size(16.0).strong(),
+                            );
                         });
                     });
 
@@ -1134,7 +1467,7 @@ impl eframe::App for App {
                 ui.label(&self.verification_report);
                 ui.add_space(12.0);
 
-                ui.label("Цепочка событий:");
+                ui.label(self.tr("Цепочка событий:", "Event chain:"));
                 ui.add_space(8.0);
 
                 let projects_dir = match self.projects_dir() {
@@ -1146,19 +1479,31 @@ impl eframe::App for App {
                 };
 
                 if !self.network_error {
-                    match Self::validate_chain(&self.verification_events, self.state.head_event_id.as_deref()) {
+                    match Self::validate_chain(
+                        &self.verification_events,
+                        self.state.head_event_id.as_deref(),
+                    ) {
                         Ok(()) => {
                             for event in &self.verification_events {
                                 ui.horizontal(|ui| {
                                     let label = if event.valid {
-format!(
-    "✅ EVENT {:03}    {}   {}",
-    event.sequence,
-    event.file_name,
-    local_marker(event.local_integrity_ok)
-)
+                                        format!(
+                                            "✅ EVENT {:03}    {}   {}",
+                                            event.sequence,
+                                            event.file_name,
+                                            local_marker(event.local_integrity_ok, self.lang)
+                                        )
                                     } else {
-                         format!("❌ EVENT {:03}    {}   {}   ⚠️ {}", event.sequence, event.file_name, local_marker(event.local_integrity_ok), event.error.as_deref().unwrap_or("ошибка"))
+                                        format!(
+                                            "❌ EVENT {:03}    {}   {}   ⚠️ {}",
+                                            event.sequence,
+                                            event.file_name,
+                                            local_marker(event.local_integrity_ok, self.lang),
+                                            event
+                                                .error
+                                                .as_deref()
+                                                .unwrap_or(self.tr("ошибка", "error"))
+                                        )
                                     };
                                     if event.valid {
                                         ui.label(label);
@@ -1167,14 +1512,30 @@ format!(
                                     }
 
                                     ui.add_enabled(false, egui::Button::new("📄 PDF"))
-                                        .on_disabled_hover_text("Доступно в event-level экспорте (скоро)");
+                                        .on_disabled_hover_text(self.tr(
+                                            "Доступно в event-level экспорте (скоро)",
+                                            "Available in event-level export (coming soon)",
+                                        ));
 
-ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
-    .on_disabled_hover_text("Экспорт в ZIP появится в следующей версии");
+                                    ui.add_enabled(
+                                        false,
+                                        egui::Button::new(format!(
+                                            "📦 ZIP ({})",
+                                            self.tr("скоро", "soon")
+                                        )),
+                                    )
+                                    .on_disabled_hover_text(self.tr(
+                                        "Экспорт в ZIP появится в следующей версии",
+                                        "ZIP export will be available in a future version",
+                                    ));
                                 });
 
                                 if !event.valid && event.error_type != ErrorType::None {
-                                    ui.label(format!("   └─ Тип: {:?}", event.error_type));
+                                    ui.label(format!(
+                                        "   └─ {}: {:?}",
+                                        self.tr("Тип", "Type"),
+                                        event.error_type
+                                    ));
                                 }
                             }
                         }
@@ -1186,53 +1547,91 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.button("📄 Скачать заключение (PDF)").clicked() {
+                    if ui
+                        .button(self.tr("📄 Скачать заключение (PDF)", "📄 Download Report (PDF)"))
+                        .clicked()
+                    {
                         let fresh_proof = match &self.last_proof {
-                            Some(cached_proof) => {
-                                Uuid::parse_str(&cached_proof.chain_id).ok().and_then(|chain_uuid| {
+                            Some(cached_proof) => Uuid::parse_str(&cached_proof.chain_id)
+                                .ok()
+                                .and_then(|chain_uuid| {
                                     let client = EvidentClient::new("http://127.0.0.1:3000");
                                     client::fetch_proof(&client, chain_uuid).ok()
-                                })
-                            }
+                                }),
                             None => None,
                         };
 
                         match fresh_proof.as_ref().or(self.last_proof.as_ref()) {
                             Some(proof) => {
-                                let proofs_dir = projects_dir.join(&self.verification_project).join("proofs");
+                                let proofs_dir =
+                                    projects_dir.join(&self.verification_project).join("proofs");
                                 let _ = fs::create_dir_all(&proofs_dir);
 
                                 let verify_valid = self.verify_status == VerifyStatus::Valid;
-                                let (proof_data, verification) = Self::build_evidence_snapshot(proof, &self.verification_events, verify_valid);
+                                let (proof_data, verification) = Self::build_evidence_snapshot(
+                                    proof,
+                                    &self.verification_events,
+                                    verify_valid,
+                                );
                                 let pdf_path = proofs_dir.join("evidence_snapshot.pdf");
 
-                                match generate_report(&proof_data.chain_id.clone(), &proof_data, &verification, &pdf_path) {
+                                match generate_report(
+                                    &proof_data.chain_id.clone(),
+                                    &proof_data,
+                                    &verification,
+                                    &pdf_path,
+                                ) {
                                     Ok(()) => {
                                         let _ = std::process::Command::new("open")
                                             .arg(&pdf_path)
                                             .spawn();
                                         self.status = format!(
-                                            "✅ Заключение сформировано и открыто\nПапка: {}",
-                                            pdf_path.parent().map(|p| p.display().to_string()).unwrap_or_default()
+                                            "{}\n{}: {}",
+                                            self.tr(
+                                                "✅ Заключение сформировано и открыто",
+                                                "✅ Report generated and opened"
+                                            ),
+                                            self.tr("Папка", "Folder"),
+                                            pdf_path
+                                                .parent()
+                                                .map(|p| p.display().to_string())
+                                                .unwrap_or_default()
                                         );
                                     }
                                     Err(e) => {
-                                        self.status = format!("❌ Ошибка генерации PDF: {}", e);
+                                        self.status = format!(
+                                            "{}: {}",
+                                            self.tr(
+                                                "❌ Ошибка генерации PDF",
+                                                "❌ PDF generation error"
+                                            ),
+                                            e
+                                        );
                                     }
                                 }
                             }
                             None => {
-                                self.status = "❌ Нет данных для заключения — сначала выполните проверку".to_string();
+                                self.status = self
+                                    .tr(
+                                        "❌ Нет данных для заключения — сначала выполните проверку",
+                                        "❌ No data for a report — run verification first",
+                                    )
+                                    .to_string();
                             }
                         }
                     }
-                    if ui.button("📦 Скачать проект (ZIP)").clicked() {
-                        self.status = "⏳ Упаковка проекта...".to_string();
+                    if ui
+                        .button(self.tr("📦 Скачать проект (ZIP)", "📦 Download Project (ZIP)"))
+                        .clicked()
+                    {
+                        self.status = self
+                            .tr("⏳ Упаковка проекта...", "⏳ Packaging project...")
+                            .to_string();
                     }
                 });
 
                 ui.add_space(8.0);
-                if ui.button("⬅ Назад").clicked() {
+                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
                     self.screen = Screen::FileSelection;
                     self.verification_complete = false;
                 }
@@ -1245,29 +1644,44 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
             }
 
             if self.screen == Screen::SelectProject {
-                ui.heading("Куда сохранить доказательство?");
+                ui.heading(self.tr(
+                    "Куда сохранить доказательство?",
+                    "Where should the proof be saved?",
+                ));
                 ui.add_space(8.0);
 
-                let size_kb = self.file_size / 1024;
-                let size_mb = self.file_size / (1024 * 1024);
-                let size_str = if size_mb > 0 {
-                    format!("{:.2} МБ", self.file_size as f64 / (1024.0 * 1024.0))
-                } else if size_kb > 0 {
-                    format!("{} КБ", size_kb)
-                } else {
-                    format!("{} байт", self.file_size)
-                };
-                ui.label(format!("📁 Файл: {} ({})", self.file_name, size_str));
+                let size_str = self.format_size(self.file_size);
+                ui.label(format!(
+                    "📁 {}: {} ({})",
+                    self.tr("Файл", "File"),
+                    self.file_name,
+                    size_str
+                ));
                 if self.file_size == 0 {
-                    ui.colored_label(COLOR_INVALID, " ⚠️ Файл пустой!");
+                    ui.colored_label(
+                        COLOR_INVALID,
+                        format!(" {}", self.tr("⚠️ Файл пустой!", "⚠️ The file is empty!")),
+                    );
                 }
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if ui.radio(self.project_mode == ProjectMode::New, "🆕 Создать новый проект").clicked() {
+                    if ui
+                        .radio(
+                            self.project_mode == ProjectMode::New,
+                            self.tr("🆕 Создать новый проект", "🆕 Create New Project"),
+                        )
+                        .clicked()
+                    {
                         self.project_mode = ProjectMode::New;
                     }
-                    if ui.radio(self.project_mode == ProjectMode::Existing, "📂 Использовать существующий").clicked() {
+                    if ui
+                        .radio(
+                            self.project_mode == ProjectMode::Existing,
+                            self.tr("📂 Использовать существующий", "📂 Use Existing"),
+                        )
+                        .clicked()
+                    {
                         self.project_mode = ProjectMode::Existing;
                         self.load_projects();
                     }
@@ -1276,7 +1690,7 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                 ui.add_space(12.0);
 
                 if self.project_mode == ProjectMode::New {
-                    ui.label("Название проекта:");
+                    ui.label(self.tr("Название проекта:", "Project name:"));
                     ui.text_edit_singleline(&mut self.project_name);
                     ui.add_space(8.0);
                     let projects_dir = match self.projects_dir() {
@@ -1286,12 +1700,20 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                             return;
                         }
                     };
-                    ui.label(format!("📁 Папка: {}/{}", projects_dir.display(), self.project_name));
+                    ui.label(format!(
+                        "📁 {}: {}/{}",
+                        self.tr("Папка", "Folder"),
+                        projects_dir.display(),
+                        self.project_name
+                    ));
                 } else {
                     if self.projects.is_empty() {
-                        ui.label("📭 Нет сохранённых проектов. Создайте новый.");
+                        ui.label(self.tr(
+                            "📭 Нет сохранённых проектов. Создайте новый.",
+                            "📭 No saved projects. Create a new one.",
+                        ));
                     } else {
-                        ui.label("Выберите проект:");
+                        ui.label(self.tr("Выберите проект:", "Select a project:"));
                         for project in &self.projects {
                             let is_selected = self.selected_project == *project;
                             let button_text = if is_selected {
@@ -1304,31 +1726,57 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                             }
                         }
                         if !self.selected_project.is_empty() {
-                            ui.colored_label(COLOR_VALID, format!("📂 Выбран проект: {}", self.selected_project));
+                            ui.colored_label(
+                                COLOR_VALID,
+                                format!(
+                                    "📂 {}: {}",
+                                    self.tr("Выбран проект", "Selected project"),
+                                    self.selected_project
+                                ),
+                            );
                         }
                     }
                 }
 
                 ui.add_space(12.0);
-                ui.label("📁 Копия файла будет сохранена в папку проекта.");
-                ui.label("📋 Аудит будет записываться в папку Аудит/");
+                ui.label(self.tr(
+                    "📁 Копия файла будет сохранена в папку проекта.",
+                    "📁 A copy of the file will be saved in the project folder.",
+                ));
+                ui.label(self.tr(
+                    "📋 Аудит будет записываться в папку Аудит/",
+                    "📋 An audit trail will be recorded in the Audit/ folder",
+                ));
                 ui.add_space(8.0);
-                ui.label("Оригинальный файл никогда не изменяется.");
+                ui.label(self.tr(
+                    "Оригинальный файл никогда не изменяется.",
+                    "The original file is never modified.",
+                ));
 
                 ui.add_space(12.0);
 
                 let can_commit = !self.file_path.is_empty()
                     && ((self.project_mode == ProjectMode::New && !self.project_name.is_empty())
-                        || (self.project_mode == ProjectMode::Existing && !self.selected_project.is_empty()));
+                        || (self.project_mode == ProjectMode::Existing
+                            && !self.selected_project.is_empty()));
 
                 if self.loading_commit {
                     ui.spinner();
-                    ui.label("Отправка...");
-                } else if ui.add_enabled(can_commit, egui::Button::new("✅ Зафиксировать")).clicked() {
+                    ui.label(self.tr("Отправка...", "Sending..."));
+                } else if ui
+                    .add_enabled(
+                        can_commit,
+                        egui::Button::new(self.tr("✅ Зафиксировать", "✅ Commit")),
+                    )
+                    .clicked()
+                {
                     self.do_commit(ui.ctx());
                 }
 
-                if ui.button("⬅ Назад к файлу").clicked() {
+                if ui
+                    .button(self.tr("⬅ Назад к файлу", "⬅ Back to File"))
+                    .clicked()
+                {
                     self.screen = Screen::FileSelection;
                     self.file_path.clear();
                     self.file_name.clear();
@@ -1342,28 +1790,42 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
             }
 
             if self.screen == Screen::CommitProgress {
-                ui.heading("Фиксация документа");
+                ui.heading(self.tr("Фиксация документа", "Committing Document"));
                 ui.add_space(12.0);
 
-                ui.label(format!("📁 Файл: {}", self.file_name));
-                ui.label(format!("📁 Проект: {}", if self.project_mode == ProjectMode::New { &self.project_name } else { &self.selected_project }));
+                ui.label(format!(
+                    "📁 {}: {}",
+                    self.tr("Файл", "File"),
+                    self.file_name
+                ));
+                ui.label(format!(
+                    "📁 {}: {}",
+                    self.tr("Проект", "Project"),
+                    if self.project_mode == ProjectMode::New {
+                        &self.project_name
+                    } else {
+                        &self.selected_project
+                    }
+                ));
                 ui.add_space(12.0);
 
                 match self.step {
                     Step::Hashing => {
-                        let _ = ui.label("⏳ Вычисление SHA-256...");
+                        let _ = ui
+                            .label(self.tr("⏳ Вычисление SHA-256...", "⏳ Computing SHA-256..."));
                     }
                     Step::Committing => {
-                        let _ = ui.label("⏳ Отправка на сервер...");
+                        let _ = ui
+                            .label(self.tr("⏳ Отправка на сервер...", "⏳ Sending to server..."));
                     }
                     Step::TsaWaiting => {
-                        let _ = ui.label("⏳ Получение TSA...");
+                        let _ = ui.label(self.tr("⏳ Получение TSA...", "⏳ Retrieving TSA..."));
                     }
                     Step::Done => {
-                        let _ = ui.label("✅ Фиксация завершена");
+                        let _ = ui.label(self.tr("✅ Фиксация завершена", "✅ Commit complete"));
                     }
                     Step::Failed => {
-                        let _ = ui.label("❌ Ошибка");
+                        let _ = ui.label(self.tr("❌ Ошибка", "❌ Error"));
                     }
                     _ => {}
                 }
@@ -1373,14 +1835,17 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
 
                 if self.step == Step::Done {
                     ui.add_space(12.0);
-                    if ui.button("📋 Посмотреть результат").clicked() {
+                    if ui
+                        .button(self.tr("📋 Посмотреть результат", "📋 View Result"))
+                        .clicked()
+                    {
                         self.screen = Screen::Result;
                     }
                 }
 
                 if self.step == Step::Failed {
                     ui.add_space(12.0);
-                    if ui.button("⬅ Назад").clicked() {
+                    if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
                         self.screen = Screen::SelectProject;
                         self.step = Step::Idle;
                     }
@@ -1389,23 +1854,46 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
             }
 
             if self.screen == Screen::Result {
-                ui.heading("✅ Документ успешно зафиксирован");
+                ui.heading(self.tr(
+                    "✅ Документ успешно зафиксирован",
+                    "✅ Document successfully committed",
+                ));
                 ui.add_space(8.0);
 
-                ui.label(format!("📁 Проект: {}", if self.project_mode == ProjectMode::New { &self.project_name } else { &self.selected_project }));
-                ui.label(format!("📄 Событие: {}", self.event_id));
-                ui.label(format!("📄 Доказательство: {}", self.proof_path));
+                ui.label(format!(
+                    "📁 {}: {}",
+                    self.tr("Проект", "Project"),
+                    if self.project_mode == ProjectMode::New {
+                        &self.project_name
+                    } else {
+                        &self.selected_project
+                    }
+                ));
+                ui.label(format!(
+                    "📄 {}: {}",
+                    self.tr("Событие", "Event"),
+                    self.event_id
+                ));
+                ui.label(format!(
+                    "📄 {}: {}",
+                    self.tr("Доказательство", "Proof"),
+                    self.proof_path
+                ));
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if self.loading_verify_chain {
                         ui.spinner();
-                        ui.label("Проверка...");
-                    } else if ui.button("🔍 Проверить").clicked() {
+                        ui.label(self.tr("Проверка...", "Verifying..."));
+                    } else if ui.button(self.tr("🔍 Проверить", "🔍 Verify")).clicked()
+                    {
                         self.do_verify(ui.ctx());
                     }
                     if !self.proof_path.is_empty() {
-                        if ui.button("📄 Открыть PDF").clicked() {
+                        if ui
+                            .button(self.tr("📄 Открыть PDF", "📄 Open PDF"))
+                            .clicked()
+                        {
                             let projects_dir = match self.projects_dir() {
                                 Ok(dir) => dir,
                                 Err(err) => {
@@ -1425,35 +1913,44 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
                             let _ = Command::new("open").arg(&pdf_path).output();
                         }
                     }
-                    if ui.button("📋 Вся цепочка аудита").clicked() {
+                    if ui
+                        .button(self.tr("📋 Вся цепочка аудита", "📋 Full Audit Chain"))
+                        .clicked()
+                    {
                         self.screen = Screen::VerifyProject;
                         self.selected_project = if self.project_mode == ProjectMode::New {
                             self.project_name.clone()
                         } else {
                             self.selected_project.clone()
                         };
-                   self.verify_project(ui.ctx());
+                        self.verify_project(ui.ctx());
                     }
                 });
 
                 match self.verify_status {
                     VerifyStatus::Valid => {
-                        ui.colored_label(COLOR_VALID, "✅ ДЕЙСТВИТЕЛЬНО");
+                        ui.colored_label(COLOR_VALID, self.tr("✅ ДЕЙСТВИТЕЛЬНО", "✅ VALID"));
                         ui.colored_label(COLOR_VALID, &self.verify_details);
                     }
                     VerifyStatus::Invalid => {
-                        ui.colored_label(COLOR_INVALID, "❌ НЕДЕЙСТВИТЕЛЬНО");
+                        ui.colored_label(
+                            COLOR_INVALID,
+                            self.tr("❌ НЕДЕЙСТВИТЕЛЬНО", "❌ INVALID"),
+                        );
                         ui.colored_label(COLOR_INVALID, &self.verify_details);
                     }
                     VerifyStatus::Partial => {
-                        ui.colored_label(COLOR_PARTIAL, "⚠️ ЧАСТИЧНО");
+                        ui.colored_label(COLOR_PARTIAL, self.tr("⚠️ ЧАСТИЧНО", "⚠️ PARTIAL"));
                         ui.colored_label(COLOR_PARTIAL, &self.verify_details);
                     }
                     _ => {}
                 }
 
                 ui.add_space(12.0);
-                if ui.button("📁 К выбору файла").clicked() {
+                if ui
+                    .button(self.tr("📁 К выбору файла", "📁 Back to File Selection"))
+                    .clicked()
+                {
                     self.screen = Screen::FileSelection;
                     self.commit_success = false;
                     self.file_path.clear();
@@ -1472,29 +1969,47 @@ ui.add_enabled(false, egui::Button::new("📦 ZIP (скоро)"))
     }
 }
 
-fn local_marker(status: Option<bool>) -> &'static str {
-    match status {
-        Some(true) => "✅ Local",
-        Some(false) => "❌ Local MODIFIED",
-        None => "⚠️ Local N/A",
+fn local_marker(status: Option<bool>, lang: Lang) -> &'static str {
+    match (status, lang) {
+        (Some(true), Lang::En) => "✅ Local",
+        (Some(true), Lang::Ru) => "✅ Локально",
+        (Some(false), Lang::En) => "❌ Local MODIFIED",
+        (Some(false), Lang::Ru) => "❌ Локально ИЗМЕНЕНО",
+        (None, Lang::En) => "⚠️ Local N/A",
+        (None, Lang::Ru) => "⚠️ Локально Н/Д",
     }
 }
 
-fn friendly_error(e: &impl std::fmt::Display) -> String {
+fn friendly_error(e: &impl std::fmt::Display, lang: Lang) -> String {
     let msg = e.to_string();
-    if msg.contains("connection refused") 
-        || msg.contains("connect") 
-        || msg.contains("error sending request") 
-        || msg.contains("dns") 
-        || msg.contains("failed to lookup") {
-        "Сервер недоступен. Проверьте, что программа Evident Ledger запущена, и повторите попытку.".into()
-    } else if msg.contains("timed out") || msg.contains("timeout") {
-        "Сервер не отвечает слишком долго. Попробуйте ещё раз.".into()
-    } else {
-        format!("Произошла ошибка: {msg}")
+    let unreachable = msg.contains("connection refused")
+        || msg.contains("connect")
+        || msg.contains("error sending request")
+        || msg.contains("dns")
+        || msg.contains("failed to lookup");
+    let timed_out = msg.contains("timed out") || msg.contains("timeout");
+
+    match lang {
+        Lang::En => {
+            if unreachable {
+                "Server unavailable. Make sure Evident Ledger is running, then try again.".into()
+            } else if timed_out {
+                "The server is taking too long to respond. Please try again.".into()
+            } else {
+                format!("An error occurred: {msg}")
+            }
+        }
+        Lang::Ru => {
+            if unreachable {
+                "Сервер недоступен. Проверьте, что программа Evident Ledger запущена, и повторите попытку.".into()
+            } else if timed_out {
+                "Сервер не отвечает слишком долго. Попробуйте ещё раз.".into()
+            } else {
+                format!("Произошла ошибка: {msg}")
+            }
+        }
     }
 }
-
 
 fn main() -> Result<(), eframe::Error> {
     let mut app = App::new();
@@ -1508,10 +2023,5 @@ fn main() -> Result<(), eframe::Error> {
             .with_min_inner_size([500.0, 400.0]),
         ..Default::default()
     };
-    eframe::run_native(
-        "Evident Ledger",
-        options,
-        Box::new(|_cc| Ok(Box::new(app))),
-    )
+    eframe::run_native("Evident Ledger", options, Box::new(|_cc| Ok(Box::new(app))))
 }
-
