@@ -1232,7 +1232,7 @@ impl eframe::App for App {
                             let local_tampered = self
                                 .verification_events
                                 .iter()
-                                .any(|e| e.local_integrity_ok == Some(false));
+                                .any(|e| e.local_integrity_ok != Some(true));
 
                             self.verify_status = if !verify_result.valid {
                                 VerifyStatus::Invalid
