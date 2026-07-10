@@ -42,6 +42,30 @@ const MARGIN_BOTTOM: f32 = 20.0;
 const LINE_HEIGHT: f32 = 6.0;
 const SECTION_GAP: f32 = 6.0;
 
+fn color_navy() -> Rgb {
+    Rgb::new(0.04, 0.14, 0.30, None)
+}
+
+fn color_pass() -> Rgb {
+    Rgb::new(0.08, 0.50, 0.24, None)
+}
+
+fn color_fail() -> Rgb {
+    Rgb::new(0.73, 0.11, 0.11, None)
+}
+
+fn color_gray_line() -> Rgb {
+    Rgb::new(0.60, 0.60, 0.63, None)
+}
+
+fn color_header_bg() -> Rgb {
+    Rgb::new(0.93, 0.93, 0.96, None)
+}
+
+fn color_black() -> Rgb {
+    Rgb::new(0.0, 0.0, 0.0, None)
+}
+
 #[derive(Debug, thiserror::Error)]
 pub enum ReportError {
     #[error("PDF generation failed")]
@@ -194,6 +218,62 @@ impl Ctx {
         self.y -= LINE_HEIGHT;
     }
 
+    fn set_fill(&mut self, rgb: Rgb) {
+        self.layer.set_fill_color(Color::Rgb(rgb));
+    }
+
+    fn reset_fill(&mut self) {
+        self.layer.set_fill_color(Color::Rgb(color_black()));
+    }
+
+    fn set_outline(&mut self, rgb: Rgb) {
+        self.layer.set_outline_color(Color::Rgb(rgb));
+    }
+
+    fn colored_bold_line(&mut self, text: &str, size: f32, rgb: Rgb) {
+        self.ensure_space(1.0);
+        self.set_fill(rgb);
+        self.layer
+            .use_text(text, size, Mm(MARGIN_LEFT), Mm(self.y), &self.bold);
+        self.reset_fill();
+        self.y -= LINE_HEIGHT;
+    }
+
+    fn colored_rule(&mut self, rgb: Rgb, width_mm: f32) {
+        self.ensure_space(0.5);
+        self.set_outline(rgb);
+
+        let line = Line {
+            points: vec![
+                (Point::new(Mm(MARGIN_LEFT), Mm(self.y + 3.0)), false),
+                (
+                    Point::new(Mm(MARGIN_LEFT + width_mm), Mm(self.y + 3.0)),
+                    false,
+                ),
+            ],
+            is_closed: false,
+        };
+
+        self.layer.add_line(line);
+        self.set_outline(color_black());
+    }
+
+    fn table_header_bg(&mut self, width_mm: f32) {
+        let top = self.y + 2.0;
+        let bottom = self.y - LINE_HEIGHT + 1.0;
+
+        self.set_fill(color_header_bg());
+
+        self.layer.add_rect(Rect::new(
+            Mm(MARGIN_LEFT - 2.0),
+            Mm(bottom),
+            Mm(MARGIN_LEFT + width_mm),
+            Mm(top),
+        ));
+
+        self.reset_fill();
+    }
+
     /// Roughly centers a bold line (Base14 metrics estimated at ~0.52em
     /// per character — sufficient for a certificate title).
     fn centered_bold_line(&mut self, text: &str, size: f32) {
@@ -208,7 +288,9 @@ impl Ctx {
     fn heading(&mut self, text: &str) {
         self.ensure_space(2.2);
         self.gap();
-        self.bold_line(text, 12.0);
+        self.colored_bold_line(text, 12.0, color_navy());
+        self.colored_rule(color_gray_line(), PAGE_WIDTH - MARGIN_LEFT - 20.0);
+        self.y -= 2.0;
     }
 
     /// Word-wrapped, paginated block for prose content.
@@ -265,6 +347,7 @@ pub fn write_pdf(
 
 fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationContext) {
     ctx.centered_bold_line("INDEPENDENT EVIDENCE VERIFICATION REPORT", 15.0);
+    ctx.colored_rule(color_navy(), PAGE_WIDTH - MARGIN_LEFT - 20.0);
     ctx.gap();
     ctx.raw_line(&format!("Chain Identifier: {}", proof.chain_id), 10.0);
 
@@ -301,9 +384,9 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
     );
 
     if verification.is_valid {
-        ctx.bold_line("[PASS] LEDGER INTEGRITY: VALID", 11.0);
+        ctx.colored_bold_line("[PASS] LEDGER INTEGRITY: VALID", 11.0, color_pass());
     } else {
-        ctx.bold_line("[FAIL] LEDGER INTEGRITY: INVALID", 11.0);
+        ctx.colored_bold_line("[FAIL] LEDGER INTEGRITY: INVALID", 11.0, color_fail());
         if let Some(seq) = verification.first_failure_sequence {
             ctx.raw_line(&format!("First Integrity Failure: Event #{}", seq), 10.0);
         }
@@ -315,6 +398,8 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
 
 fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
     ctx.heading("3. REGISTERED EVIDENCE ITEMS");
+
+    ctx.table_header_bg(137.0);
 
     ctx.table_row(
         "#",
@@ -362,7 +447,11 @@ fn add_tsa_details_block(ctx: &mut Ctx, proof: &ProofData) {
     ctx.heading("5. TIME ATTESTATION");
     match &proof.tsa {
         Some(tsa) => {
-            ctx.bold_line("[PASS] External TSA timestamp confirmed", 10.0);
+            ctx.colored_bold_line(
+                "[PASS] External TSA timestamp confirmed",
+                10.0,
+                color_pass(),
+            );
             ctx.gap();
             ctx.raw_line("Provider: freetsa.org/tsr", 9.0);
             ctx.raw_line(&format!("Timestamp: {}", tsa.timestamp), 9.0);
