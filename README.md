@@ -150,12 +150,27 @@ Verify independently:
 
 # 📚 Documentation
 
-Technical and security documentation:
+Technical, security, evidence, and legal documentation:
+
+
+## Technical Documentation
 
 - [Architecture](docs/cli_product_layer_tz.md)
+
 - [Protocol Specification](docs/protocol_v0.1.md)
+
 - [Proof Schema](docs/proof_v1.schema.md)
+
 - [Security Policy](SECURITY.md)
+
+
+## Evidence & Legal Documentation
+
+- [Technical Whitepaper](docs/whitepaper/Evident_Ledger_Technical_Whitepaper_v1.0.md)
+
+- [Evidence Assurance Model](docs/specifications/Evidence_Assurance_Model_v1.0.md)
+
+- [Legal Brief for Attorneys](docs/legal/Evident_Ledger_Legal_Brief.md)
 
 ---
 
