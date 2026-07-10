@@ -360,6 +360,98 @@ impl App {
             .map(|e| e.file_name().to_string_lossy().into_owned())
     }
 
+    fn export_event_pdf(
+        projects_dir: &Path,
+        project_name: &str,
+        proof: &client::ProofFile,
+        event: &VerificationEvent,
+    ) -> Result<PathBuf, String> {
+        let project_path = projects_dir.join(project_name);
+        let originals_dir = project_path.join("originals");
+        let proofs_dir = project_path.join("proofs");
+
+        fs::create_dir_all(&proofs_dir).map_err(|e| format!("Failed to create proofs dir: {e}"))?;
+
+        let event_leaf = proof
+            .events
+            .iter()
+            .find(|e| e.event_id == event.event_id)
+            .ok_or_else(|| "Event not found in proof chain".to_string())?;
+
+        let file_name = Self::find_original_name(&originals_dir, event.sequence)
+            .unwrap_or_else(|| event.file_name.clone());
+
+        let fresh_local_integrity_ok =
+            Self::check_local_integrity(&originals_dir, event.sequence, &event_leaf.file_hash);
+
+        let single_event_summary = EventSummary {
+            event_id: event_leaf.event_id.clone(),
+            file_hash: event_leaf.file_hash.clone(),
+            sequence: Some(event.sequence),
+        };
+
+        let tsa_complete =
+            proof
+                .tsa
+                .as_ref()
+                .and_then(|t| match (t.timestamp, &t.serial, t.token_bytes) {
+                    (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
+                        timestamp: ts,
+                        serial: serial.clone(),
+                        token_bytes: tb as usize,
+                    }),
+                    _ => None,
+                });
+
+        let created_at = proof
+            .tsa
+            .as_ref()
+            .and_then(|t| t.timestamp)
+            .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
+
+        let proof_data = ProofData {
+            chain_id: proof.chain_id.clone(),
+            head_event_id: proof.head_event_id.clone(),
+            events: vec![single_event_summary],
+            root: proof.proof.root.clone(),
+            signature: proof.proof.signature.clone(),
+            public_key: proof.proof.public_key.clone(),
+            tsa: tsa_complete,
+            created_at,
+        };
+
+        let verify_valid_now = event.valid && fresh_local_integrity_ok == Some(true);
+
+        let files = vec![FileStatus {
+            file_name,
+            chain_valid: event.valid,
+            local_integrity_ok: fresh_local_integrity_ok,
+        }];
+
+        let verification = VerificationContext {
+            is_valid: verify_valid_now,
+            verified_at: Utc::now(),
+            first_failure_sequence: if verify_valid_now {
+                None
+            } else {
+                Some(event.sequence)
+            },
+            first_failure_error: if verify_valid_now {
+                None
+            } else {
+                Some("Event-level verification failed".to_string())
+            },
+            files,
+        };
+
+        let pdf_path = proofs_dir.join(format!("EVENT_{:03}_attestation.pdf", event.sequence));
+
+        generate_report(&proof_data.chain_id, &proof_data, &verification, &pdf_path)
+            .map_err(|e| format!("Failed to generate PDF: {e}"))?;
+
+        Ok(pdf_path)
+    }
+
     fn build_certificate_input(
         proof: &client::ProofFile,
         events: &[VerificationEvent],
@@ -1758,7 +1850,7 @@ impl eframe::App for App {
                         self.state.head_event_id.as_deref(),
                     ) {
                         Ok(()) => {
-                            for event in &self.verification_events {
+                            for event in self.verification_events.clone() {
                                 ui.horizontal(|ui| {
                                     let label = if event.valid {
                                         format!(
@@ -1785,11 +1877,51 @@ impl eframe::App for App {
                                         ui.colored_label(COLOR_INVALID, label);
                                     }
 
-                                    ui.add_enabled(false, egui::Button::new("📄 PDF"))
-                                        .on_disabled_hover_text(self.tr(
-                                            "Доступно в event-level экспорте (скоро)",
-                                            "Available in event-level export (coming soon)",
-                                        ));
+                                    if ui.button("📄 PDF").clicked() {
+                                        match self.last_proof.as_ref() {
+                                            Some(proof) => {
+                                                match Self::export_event_pdf(
+                                                    &projects_dir,
+                                                    &self.verification_project,
+                                                    proof,
+                                                    &event,
+                                                ) {
+                                                    Ok(pdf_path) => {
+                                                        let _ = std::process::Command::new("open")
+                                                            .arg(&pdf_path)
+                                                            .spawn();
+
+                                                        self.status = format!(
+                                                            "{}: {}",
+                                                            self.tr(
+                                                                "✅ PDF создан",
+                                                                "✅ PDF created"
+                                                            ),
+                                                            pdf_path.display()
+                                                        );
+                                                    }
+                                                    Err(e) => {
+                                                        self.status = format!(
+                                                            "{}: {}",
+                                                            self.tr(
+                                                                "❌ Ошибка генерации PDF",
+                                                                "❌ PDF generation error"
+                                                            ),
+                                                            e
+                                                        );
+                                                    }
+                                                }
+                                            }
+                                            None => {
+                                                self.status = self
+                .tr(
+                    "❌ Нет данных — сначала выполните проверку",
+                    "❌ No data — run verification first",
+                )
+                .to_string();
+                                            }
+                                        }
+                                    }
 
                                     ui.add_enabled(
                                         false,
