@@ -10,9 +10,11 @@ use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use uuid::Uuid;
+use zip::write::{SimpleFileOptions, ZipWriter};
 
 // ============================================================================
 // LANGUAGE
@@ -416,6 +418,128 @@ impl App {
             file_size_kb,
             file_name,
         }
+    }
+
+    fn export_chain_zip(
+        projects_dir: &Path,
+        project_name: &str,
+        proof: &client::ProofFile,
+        events: &[VerificationEvent],
+        verify_valid: bool,
+    ) -> Result<PathBuf, String> {
+        let project_path = projects_dir.join(project_name);
+
+        let originals_dir = project_path.join("originals");
+        let proofs_dir = project_path.join("proofs");
+
+        fs::create_dir_all(&proofs_dir).map_err(|e| e.to_string())?;
+
+        let (proof_data, verification) = Self::build_evidence_snapshot(proof, events, verify_valid);
+
+        let pdf_path = proofs_dir.join("evidence_snapshot.pdf");
+
+        generate_report(&proof_data.chain_id, &proof_data, &verification, &pdf_path)
+            .map_err(|e| format!("{:?}", e))?;
+
+        let zip_path = proofs_dir.join(format!(
+            "{}_evidence_package.zip",
+            project_name.replace(" ", "_")
+        ));
+
+        let file = fs::File::create(&zip_path).map_err(|e| e.to_string())?;
+
+        let mut zip = ZipWriter::new(file);
+
+        let options =
+            SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
+
+        for event in events {
+            if let Some(name) = Self::find_original_name(&originals_dir, event.sequence) {
+                let path = originals_dir.join(&name);
+
+                if let Ok(bytes) = fs::read(&path) {
+                    zip.start_file(format!("events/{}", name), options)
+                        .map_err(|e| e.to_string())?;
+
+                    zip.write_all(&bytes).map_err(|e| e.to_string())?;
+                }
+            }
+        }
+
+        zip.start_file("evidence_snapshot.pdf", options)
+            .map_err(|e| e.to_string())?;
+
+        let pdf = fs::read(&pdf_path).map_err(|e| e.to_string())?;
+
+        zip.write_all(&pdf).map_err(|e| e.to_string())?;
+
+        let manifest = serde_json::json!({
+            "chain_id": proof.chain_id,
+            "head_event_id": proof.head_event_id,
+
+            "root": proof.proof.root,
+            "signature": proof.proof.signature,
+            "public_key": proof.proof.public_key,
+
+            "tsa": proof.tsa,
+
+            "verified": verify_valid,
+
+            "events": proof.events.iter().map(|e| {
+                serde_json::json!({
+                    "sequence": e.sequence,
+                    "event_id": e.event_id,
+                    "file_hash": e.file_hash
+                })
+            }).collect::<Vec<_>>(),
+
+            "exported_at":
+                chrono::Utc::now()
+                .to_rfc3339()
+        });
+
+        zip.start_file("chain_manifest.json", options)
+            .map_err(|e| e.to_string())?;
+
+        zip.write_all(serde_json::to_string_pretty(&manifest).unwrap().as_bytes())
+            .map_err(|e| e.to_string())?;
+
+        let readme = format!(
+            "Evident Ledger — Full Chain Evidence Export\n\
+             ==========================================\n\
+             Project: {}\n\
+             Chain ID: {}\n\
+             Events: {}\n\
+             Status: {}\n\
+             Exported: {}\n\n\
+             Package contents:\n\
+             - events/                 Original evidence files\n\
+             - evidence_snapshot.pdf   Human-readable verification report\n\
+             - chain_manifest.json     Machine-readable proof data\n\
+             - README.txt              Package description\n\n\
+             Verification:\n\
+             Recalculate SHA-256 hashes of files in events/\n\
+             and compare them with chain_manifest.json.\n",
+            project_name,
+            proof.chain_id,
+            events.len(),
+            if verify_valid {
+                "VERIFIED"
+            } else {
+                "NOT VERIFIED"
+            },
+            chrono::Utc::now().to_rfc3339()
+        );
+
+        zip.start_file("README.txt", options)
+            .map_err(|e| e.to_string())?;
+
+        zip.write_all(readme.as_bytes())
+            .map_err(|e| e.to_string())?;
+
+        zip.finish().map_err(|e| e.to_string())?;
+
+        Ok(zip_path)
     }
 
     fn build_evidence_snapshot(
@@ -1774,9 +1898,35 @@ impl eframe::App for App {
                         .button(self.tr("📦 Скачать проект (ZIP)", "📦 Download Project (ZIP)"))
                         .clicked()
                     {
-                        self.status = self
-                            .tr("⏳ Упаковка проекта...", "⏳ Packaging project...")
-                            .to_string();
+                        match &self.last_proof {
+                            Some(proof) => {
+                                let verify_valid = self.verify_status == VerifyStatus::Valid;
+
+                                match Self::export_chain_zip(
+                                    &projects_dir,
+                                    &self.verification_project,
+                                    proof,
+                                    &self.verification_events,
+                                    verify_valid,
+                                ) {
+                                    Ok(path) => {
+                                        let _ = Command::new("open")
+                                            .arg(path.parent().unwrap())
+                                            .spawn();
+
+                                        self.status = format!("✅ ZIP created: {}", path.display());
+                                    }
+
+                                    Err(e) => {
+                                        self.status = format!("❌ {}", e);
+                                    }
+                                }
+                            }
+
+                            None => {
+                                self.status = "❌ Run verification first".to_string();
+                            }
+                        }
                     }
                 });
 
