@@ -12,6 +12,21 @@ July 2026
 
 Evident Ledger is a cryptographic evidence preservation system designed to establish the integrity, chronology, and reproducibility of digital records over time.
 
+
+## Intended Audience
+
+This document is intended for:
+
+- legal professionals evaluating digital evidence workflows;
+- forensic investigators;
+- compliance officers;
+- security teams;
+- technology decision makers.
+
+This document describes the technical capabilities of Evident Ledger.
+
+It does not constitute legal advice and does not guarantee admissibility of any evidence in any jurisdiction.
+
 The system creates cryptographic commitments derived from digital evidence and maintains a verifiable audit trail consisting of signed events, integrity proofs, and optional trusted timestamp records.
 
 Unlike conventional storage systems, Evident Ledger does not rely solely on database records, administrator access, or proprietary platform history.
