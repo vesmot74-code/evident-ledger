@@ -15,6 +15,23 @@ mod signing;
 mod state;
 mod tsa_worker;
 
+
+async fn serve_whitepaper_pdf() -> impl axum::response::IntoResponse {
+    let pdf_bytes: &'static [u8] =
+        include_bytes!("../docs/whitepaper/Evident_Ledger_Technical_Whitepaper_v1.0.pdf");
+
+    (
+        [
+            (axum::http::header::CONTENT_TYPE, "application/pdf"),
+            (
+                axum::http::header::CONTENT_DISPOSITION,
+                "inline; filename=\"Evident_Ledger_Technical_Whitepaper_v1.0.pdf\"",
+            ),
+        ],
+        pdf_bytes,
+    )
+}
+
 #[tokio::main]
 async fn main() {
     dotenvy::dotenv().ok();
@@ -35,6 +52,11 @@ async fn main() {
             "/verify-ui",
             get(|| async { axum::response::Html(include_str!("../static/verify.html")) }),
         )
+        .route(
+            "/whitepaper",
+            get(|| async { axum::response::Html(include_str!("../static/whitepaper.html")) }),
+        )
+        .route("/whitepaper.pdf", get(serve_whitepaper_pdf))
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
         .nest("/identity", api::identity::router(state.clone()));
