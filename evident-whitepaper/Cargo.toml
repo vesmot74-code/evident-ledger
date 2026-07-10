@@ -1,0 +1,9 @@
+[package]
+name = "evident-whitepaper"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+printpdf = "0.7"
+chrono = "0.4"
+thiserror = "1.0"

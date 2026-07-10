@@ -1,7 +1,8 @@
 [workspace]
 members = [
     ".",
-    "evident-report"
+    "evident-report",
+    "evident-whitepaper"
 ]
 resolver = "2"
 
@@ -37,6 +38,10 @@ dirs = "6.0.0"
 printpdf = "0.7"
 zip = "8.6.0"
 
+[dependencies.evident-report]
+path = "evident-report"
+
+
 [[bin]]
 name = "evident-ledger"
 path = "src/main.rs"
@@ -48,9 +53,6 @@ path = "src/bin/verify.rs"
 [[bin]]
 name = "evident"
 path = "src/bin/evident.rs"
-
-[dependencies.evident-report]
-path = "evident-report"
 
 [[bin]]
 name = "evident-gui"
