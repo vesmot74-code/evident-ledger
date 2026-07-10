@@ -35,3 +35,4 @@ proofs/
 
 # Editor / backup files
 *.backup*
+tests/fixtures/proof.json
