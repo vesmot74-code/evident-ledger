@@ -61,6 +61,11 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 .el-btn--light { background: #ffffff; color: var(--bg-hero); }
 .el-btn--light:hover { background: #eef1fa; }
 
+.el-hero__actions { display: flex; gap: 12px; flex-wrap: wrap; }
+.el-download__alt { display: flex; gap: 16px; flex-wrap: wrap; margin-top: 14px; font-family: var(--font-mono); font-size: 12.5px; }
+.el-download__alt a { color: var(--text-secondary); text-decoration: none; border-bottom: 1px solid transparent; }
+.el-download__alt a:hover { color: var(--text); border-bottom-color: var(--text-secondary); }
+
 /* Hero */
 .el-hero { background: var(--bg-hero); color: var(--on-dark); padding: 72px 0 64px; }
 .el-hero__eyebrow { font-size: 12px; font-weight: 600; letter-spacing: 0.14em; text-transform: uppercase; color: var(--on-dark-secondary); margin-bottom: 20px; }
@@ -165,12 +170,27 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
         и независимая офлайн-верификация. Не облачный сервис — вы полностью контролируете
         свои данные локально.
       </p>
-      <a href="/verify-ui" class="el-btn el-btn--light">
-        <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
-        <span class="el-btn__sub" data-ru="проверка по chain_id или хэшу" data-en="check by chain_id or hash">проверка по chain_id или хэшу</span>
-      </a>
+<div class="el-hero__actions">
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-windows-x64.exe"
+           class="el-btn el-btn--primary" id="el-download-main">
+          <span class="el-btn__main" data-ru="Скачать" data-en="Download">Скачать</span>
+          <span class="el-btn__sub" id="el-download-os-label" data-ru="для Windows" data-en="for Windows">для Windows</span>
+        </a>
+        <a href="/verify-ui" class="el-btn el-btn--light">
+          <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
+          <span class="el-btn__sub" data-ru="проверка по chain_id или хэшу" data-en="check by chain_id or hash">проверка по chain_id или хэшу</span>
+        </a>
+      </div>
+      <div class="el-download__alt">
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-windows-x64.exe" data-ru="Windows" data-en="Windows">Windows</a>
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-aarch64-apple-darwin" data-ru="macOS (Apple Silicon)" data-en="macOS (Apple Silicon)">macOS (Apple Silicon)</a>
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-x86_64-apple-darwin" data-ru="macOS (Intel)" data-en="macOS (Intel)">macOS (Intel)</a>
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-x86_64-unknown-linux-gnu" data-ru="Linux" data-en="Linux">Linux</a>
+      </div>
     </div>
   </section>
+
+  <section class="el-strip">
 
   <section class="el-strip">
     <div class="el-container">
@@ -333,9 +353,47 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
     // Default language is English. Once the user picks a language,
     // it is persisted in localStorage and reused on every future visit
     // (today -> EN, tomorrow -> EN, unless the user switches to RU).
-    var saved = null;
+var saved = null;
     try { saved = localStorage.getItem(STORAGE_KEY); } catch (e) {}
     applyLang(saved === 'ru' ? 'ru' : 'en');
+  })();
+
+  (function () {
+    var ua = navigator.userAgent || '';
+    var platform = navigator.platform || '';
+    var mainBtn = document.getElementById('el-download-main');
+    var osLabel = document.getElementById('el-download-os-label');
+    if (!mainBtn || !osLabel) return;
+
+    var links = {
+      windows: 'https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-windows-x64.exe',
+      macArm: 'https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-aarch64-apple-darwin',
+      macIntel: 'https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-x86_64-apple-darwin',
+      linux: 'https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-x86_64-unknown-linux-gnu'
+    };
+
+    var detected = 'windows';
+    if (/Mac/i.test(platform) || /Mac OS X/i.test(ua)) {
+      var isAppleSilicon = /Apple Silicon/i.test(ua) || (navigator.maxTouchPoints > 1 && /MacIntel/.test(platform));
+      detected = isAppleSilicon ? 'macArm' : 'macIntel';
+    } else if (/Linux/i.test(platform) && !/Android/i.test(ua)) {
+      detected = 'linux';
+    } else if (/Win/i.test(platform)) {
+      detected = 'windows';
+    }
+
+    var labels = {
+      windows: { ru: 'для Windows', en: 'for Windows' },
+      macArm: { ru: 'для macOS (Apple Silicon)', en: 'for macOS (Apple Silicon)' },
+      macIntel: { ru: 'для macOS (Intel)', en: 'for macOS (Intel)' },
+      linux: { ru: 'для Linux', en: 'for Linux' }
+    };
+
+    mainBtn.setAttribute('href', links[detected]);
+    osLabel.setAttribute('data-ru', labels[detected].ru);
+    osLabel.setAttribute('data-en', labels[detected].en);
+    var currentLang = document.documentElement.lang === 'ru' ? 'ru' : 'en';
+    osLabel.textContent = labels[detected][currentLang];
   })();
   </script>
 
