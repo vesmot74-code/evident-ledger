@@ -36,3 +36,6 @@ proofs/
 # Editor / backup files
 *.backup*
 tests/fixtures/proof.json
+
+# Whitepaper PDF is embedded via include_bytes! in src/main.rs — must be tracked
+!docs/whitepaper/Evident_Ledger_Technical_Whitepaper_v1.0.pdf
