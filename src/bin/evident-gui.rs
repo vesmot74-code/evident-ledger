@@ -102,12 +102,14 @@ impl Default for ErrorType {
 // ============================================================================
 // COLORS
 // ============================================================================
-const COLOR_NAVY: egui::Color32 = egui::Color32::from_rgb(11, 31, 58);
+const COLOR_NAVY: egui::Color32 = egui::Color32::from_rgb(22, 33, 62);
+const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(107, 113, 111); // RAL 7005 Mouse Grey
+const COLOR_ACCENT_DARK: egui::Color32 = egui::Color32::from_rgb(87, 92, 90); // RAL 7005, darker for hover/active
 const COLOR_VALID: egui::Color32 = egui::Color32::from_rgb(21, 128, 61);
 const COLOR_INVALID: egui::Color32 = egui::Color32::from_rgb(185, 28, 28);
 const COLOR_PARTIAL: egui::Color32 = egui::Color32::from_rgb(180, 83, 9);
 const COLOR_SURFACE: egui::Color32 = egui::Color32::from_rgb(255, 255, 255);
-const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(241, 245, 249);
+const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(245, 247, 251);
 const COLOR_BORDER: egui::Color32 = egui::Color32::from_rgb(203, 213, 225);
 
 // ============================================================================
@@ -1233,32 +1235,42 @@ impl eframe::App for App {
         // Global button styling: rounded corners, comfortable padding,
         // consistent look across the whole app. Cosmetic only — no new
         // widgets or screens, just restyling what already exists.
-        {
+{
             let style = ui.style_mut();
-            style.spacing.button_padding = egui::vec2(14.0, 8.0);
-            style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(6);
-            style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(6);
-            style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(6);
+            style.spacing.button_padding = egui::vec2(16.0, 10.0);
+            style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(8);
+            style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(8);
+            style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(8);
 
-            let btn_fill = egui::Color32::from_rgb(226, 232, 240);
-            let btn_fill_hovered = egui::Color32::from_rgb(203, 213, 225);
-            let btn_fill_active = egui::Color32::from_rgb(180, 192, 209);
-            let black_text = egui::Stroke::new(1.0, egui::Color32::BLACK);
+            let white_text = egui::Stroke::new(1.0, egui::Color32::WHITE);
 
-            style.visuals.widgets.inactive.bg_fill = btn_fill;
-            style.visuals.widgets.inactive.weak_bg_fill = btn_fill;
-            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
-            style.visuals.widgets.inactive.fg_stroke = black_text;
+            style.visuals.widgets.inactive.bg_fill = COLOR_ACCENT;
+            style.visuals.widgets.inactive.weak_bg_fill = COLOR_ACCENT;
+            style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT);
+            style.visuals.widgets.inactive.fg_stroke = white_text;
 
-            style.visuals.widgets.hovered.bg_fill = btn_fill_hovered;
-            style.visuals.widgets.hovered.weak_bg_fill = btn_fill_hovered;
-            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
-            style.visuals.widgets.hovered.fg_stroke = black_text;
+            style.visuals.widgets.hovered.bg_fill = COLOR_ACCENT_DARK;
+            style.visuals.widgets.hovered.weak_bg_fill = COLOR_ACCENT_DARK;
+            style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT_DARK);
+            style.visuals.widgets.hovered.fg_stroke = white_text;
 
-            style.visuals.widgets.active.bg_fill = btn_fill_active;
-            style.visuals.widgets.active.weak_bg_fill = btn_fill_active;
-            style.visuals.widgets.active.bg_stroke = egui::Stroke::new(1.0, COLOR_BORDER);
-            style.visuals.widgets.active.fg_stroke = black_text;
+            style.visuals.widgets.active.bg_fill = COLOR_ACCENT_DARK;
+            style.visuals.widgets.active.weak_bg_fill = COLOR_ACCENT_DARK;
+            style.visuals.widgets.active.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT_DARK);
+            style.visuals.widgets.active.fg_stroke = white_text;
+
+            style.text_styles.insert(
+                egui::TextStyle::Button,
+                egui::FontId::new(15.0, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Body,
+                egui::FontId::new(14.5, egui::FontFamily::Proportional),
+            );
+            style.text_styles.insert(
+                egui::TextStyle::Heading,
+                egui::FontId::new(22.0, egui::FontFamily::Proportional),
+            );
         }
 
         // --- worker response handling ---
@@ -1726,8 +1738,13 @@ impl eframe::App for App {
                     ui.label(self.tr("📭 Нет сохранённых проектов.", "📭 No saved projects."));
                 } else {
                     let projects = self.projects.clone();
+                    let half_width = ui.available_width() * 0.5;
                     for project in projects {
-                        if ui.button(&project).clicked() {
+                        let resp = ui.add_sized(
+                            [half_width, 32.0],
+                            egui::Button::new(&project),
+                        );
+                        if resp.clicked() {
                             self.selected_project = project.clone();
                             self.verify_project(ui.ctx());
                         }
@@ -1877,63 +1894,79 @@ impl eframe::App for App {
                                         ui.colored_label(COLOR_INVALID, label);
                                     }
 
-                                    if ui.button("📄 PDF").clicked() {
-                                        match self.last_proof.as_ref() {
-                                            Some(proof) => {
-                                                match Self::export_event_pdf(
-                                                    &projects_dir,
-                                                    &self.verification_project,
-                                                    proof,
-                                                    &event,
-                                                ) {
-                                                    Ok(pdf_path) => {
-                                                        let _ = std::process::Command::new("open")
-                                                            .arg(&pdf_path)
-                                                            .spawn();
+                                    ui.with_layout(
+                                        egui::Layout::right_to_left(egui::Align::Center),
+                                        |ui| {
+                                            ui.add_enabled(
+                                                false,
+                                                egui::Button::new(format!(
+                                                    "📦 ZIP ({})",
+                                                    self.tr("скоро", "soon")
+                                                ))
+                                                .min_size(egui::vec2(140.0, 0.0)),
+                                            )
+                                            .on_disabled_hover_text(self.tr(
+                                                "Экспорт в ZIP появится в следующей версии",
+                                                "ZIP export will be available in a future version",
+                                            ));
 
-                                                        self.status = format!(
-                                                            "{}: {}",
-                                                            self.tr(
-                                                                "✅ PDF создан",
-                                                                "✅ PDF created"
-                                                            ),
-                                                            pdf_path.display()
-                                                        );
+                                            let pdf_clicked = ui
+                                                .add_sized(
+                                                    [110.0, 0.0],
+                                                    egui::Button::new("📄 PDF"),
+                                                )
+                                                .clicked();
+
+                                            if pdf_clicked {
+                                                match self.last_proof.as_ref() {
+                                                    Some(proof) => {
+                                                        match Self::export_event_pdf(
+                                                            &projects_dir,
+                                                            &self.verification_project,
+                                                            proof,
+                                                            &event,
+                                                        ) {
+                                                            Ok(pdf_path) => {
+                                                                let _ =
+                                                                    std::process::Command::new(
+                                                                        "open",
+                                                                    )
+                                                                    .arg(&pdf_path)
+                                                                    .spawn();
+
+                                                                self.status = format!(
+                                                                    "{}: {}",
+                                                                    self.tr(
+                                                                        "✅ PDF создан",
+                                                                        "✅ PDF created"
+                                                                    ),
+                                                                    pdf_path.display()
+                                                                );
+                                                            }
+                                                            Err(e) => {
+                                                                self.status = format!(
+                                                                    "{}: {}",
+                                                                    self.tr(
+                                                                        "❌ Ошибка генерации PDF",
+                                                                        "❌ PDF generation error"
+                                                                    ),
+                                                                    e
+                                                                );
+                                                            }
+                                                        }
                                                     }
-                                                    Err(e) => {
-                                                        self.status = format!(
-                                                            "{}: {}",
-                                                            self.tr(
-                                                                "❌ Ошибка генерации PDF",
-                                                                "❌ PDF generation error"
-                                                            ),
-                                                            e
-                                                        );
+                                                    None => {
+                                                        self.status = self
+                                                            .tr(
+                                                                "❌ Нет данных — сначала выполните проверку",
+                                                                "❌ No data — run verification first",
+                                                            )
+                                                            .to_string();
                                                     }
                                                 }
                                             }
-                                            None => {
-                                                self.status = self
-                .tr(
-                    "❌ Нет данных — сначала выполните проверку",
-                    "❌ No data — run verification first",
-                )
-                .to_string();
-                                            }
-                                        }
-                                    }
-
-                                    ui.add_enabled(
-                                        false,
-                                        egui::Button::new(format!(
-                                            "📦 ZIP ({})",
-                                            self.tr("скоро", "soon")
-                                        )),
-                                    )
-                                    .on_disabled_hover_text(self.tr(
-                                        "Экспорт в ZIP появится в следующей версии",
-                                        "ZIP export will be available in a future version",
-                                    ));
+                                        },
+                                    );
                                 });
 
                                 if !event.valid && event.error_type != ErrorType::None {
@@ -2096,27 +2129,35 @@ impl eframe::App for App {
                     );
                 }
 
-                ui.add_space(12.0);
-                ui.horizontal(|ui| {
-                    if ui
-                        .radio(
-                            self.project_mode == ProjectMode::New,
-                            self.tr("🆕 Создать новый проект", "🆕 Create New Project"),
-                        )
-                        .clicked()
-                    {
-                        self.project_mode = ProjectMode::New;
-                    }
-                    if ui
-                        .radio(
-                            self.project_mode == ProjectMode::Existing,
-                            self.tr("📂 Использовать существующий", "📂 Use Existing"),
-                        )
-                        .clicked()
-                    {
-                        self.project_mode = ProjectMode::Existing;
-                        self.load_projects();
-                    }
+ui.add_space(12.0);
+                ui.scope(|ui| {
+                    let dark_text = egui::Stroke::new(1.0, egui::Color32::from_rgb(15, 23, 42));
+                    let style = ui.style_mut();
+                    style.visuals.widgets.inactive.fg_stroke = dark_text;
+                    style.visuals.widgets.hovered.fg_stroke = dark_text;
+                    style.visuals.widgets.active.fg_stroke = dark_text;
+
+                    ui.horizontal(|ui| {
+                        if ui
+                            .radio(
+                                self.project_mode == ProjectMode::New,
+                                self.tr("🆕 Создать новый проект", "🆕 Create New Project"),
+                            )
+                            .clicked()
+                        {
+                            self.project_mode = ProjectMode::New;
+                        }
+                        if ui
+                            .radio(
+                                self.project_mode == ProjectMode::Existing,
+                                self.tr("📂 Использовать существующий", "📂 Use Existing"),
+                            )
+                            .clicked()
+                        {
+                            self.project_mode = ProjectMode::Existing;
+                            self.load_projects();
+                        }
+                    });
                 });
 
                 ui.add_space(12.0);
@@ -2144,8 +2185,9 @@ impl eframe::App for App {
                             "📭 Нет сохранённых проектов. Создайте новый.",
                             "📭 No saved projects. Create a new one.",
                         ));
-                    } else {
+                 } else {
                         ui.label(self.tr("Выберите проект:", "Select a project:"));
+                        let half_width = ui.available_width() * 0.5;
                         for project in &self.projects {
                             let is_selected = self.selected_project == *project;
                             let button_text = if is_selected {
@@ -2153,7 +2195,11 @@ impl eframe::App for App {
                             } else {
                                 project.clone()
                             };
-                            if ui.button(button_text).clicked() {
+                            let resp = ui.add_sized(
+                                [half_width, 32.0],
+                                egui::Button::new(button_text),
+                            );
+                            if resp.clicked() {
                                 self.selected_project = project.clone();
                             }
                         }
