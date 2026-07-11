@@ -18,7 +18,7 @@ jobs:
             target: x86_64-pc-windows-msvc
           - os: macos-latest
             target: aarch64-apple-darwin
-          - os: macos-13
+          - os: macos-15-intel
             target: x86_64-apple-darwin
 
     runs-on: ${{ matrix.os }}
@@ -39,9 +39,15 @@ jobs:
         run: |
           mkdir -p artifact
           if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
-            cp target/${{ matrix.target }}/release/*.exe artifact/
+            cp target/${{ matrix.target }}/release/evident-gui.exe artifact/evident-gui-windows-x64.exe
+            cp target/${{ matrix.target }}/release/evident-ledger.exe artifact/evident-ledger-windows-x64.exe
+            cp target/${{ matrix.target }}/release/evident-verify.exe artifact/evident-verify-windows-x64.exe
+            cp target/${{ matrix.target }}/release/evident.exe artifact/evident-windows-x64.exe
           else
-            cp target/${{ matrix.target }}/release/evident* artifact/
+            cp target/${{ matrix.target }}/release/evident-gui artifact/evident-gui-${{ matrix.target }}
+            cp target/${{ matrix.target }}/release/evident-ledger artifact/evident-ledger-${{ matrix.target }}
+            cp target/${{ matrix.target }}/release/evident-verify artifact/evident-verify-${{ matrix.target }}
+            cp target/${{ matrix.target }}/release/evident artifact/evident-${{ matrix.target }}
           fi
 
       - name: Checksums
