@@ -52,7 +52,7 @@ jobs:
 
       - name: Checksums
         shell: bash
-        run: cd artifact && sha256sum * > SHA256SUMS
+        run: cd artifact && sha256sum -- * > SHA256SUMS
 
       - name: Upload
         uses: softprops/action-gh-release@v2
