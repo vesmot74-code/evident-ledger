@@ -1818,7 +1818,8 @@ if self.screen == Screen::FileSelection {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(self.tr("Проект", "Project")).weak());
                         });
-                        ui.label(
+               ui.colored_label(
+                            egui::Color32::from_rgb(15, 23, 42),
                             egui::RichText::new(&self.verification_project)
                                 .size(16.0)
                                 .strong(),
@@ -1854,8 +1855,9 @@ if self.screen == Screen::FileSelection {
                             } else {
                                 self.verification_events.len()
                             };
-                            cols[0].label(egui::RichText::new(self.tr("События", "Events")).weak());
-                            cols[0].label(
+                      cols[0].label(egui::RichText::new(self.tr("События", "Events")).weak());
+                            cols[0].colored_label(
+                                egui::Color32::from_rgb(15, 23, 42),
                                 egui::RichText::new(events_count.to_string())
                                     .size(16.0)
                                     .strong(),
