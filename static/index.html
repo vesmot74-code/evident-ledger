@@ -120,13 +120,27 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
 .el-grid-4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; }
 .el-usecase { border: 1px solid var(--border); border-top: 3px solid var(--accent); border-radius: var(--radius-md); padding: 20px; font-size: 14px; color: var(--text-secondary); }
 
+/* Evidence Assurance Tiers */
+.el-tiers-lead { font-size: 15px; color: var(--text-secondary); max-width: 720px; margin-bottom: 28px; }
+.el-tiers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 18px; }
+.el-tier { border: 1px solid var(--border); border-radius: var(--radius-md); padding: 24px; display: flex; flex-direction: column; }
+.el-tier--free { border-top: 3px solid var(--text-secondary); }
+.el-tier--legal { border-top: 3px solid var(--accent); }
+.el-tier--escrow { border-top: 3px solid var(--accent-dark); }
+.el-tier--personal { border-top: 3px solid var(--success); }
+.el-tier__badge { display: inline-block; font-size: 11px; font-weight: 600; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-secondary); background: var(--bg-alt); border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; margin-bottom: 12px; align-self: flex-start; }
+.el-tier__name { font-size: 17px; font-weight: 700; margin-bottom: 10px; }
+.el-tier__desc { font-size: 13.5px; color: var(--text-secondary); flex: 1; }
+.el-tier__note { font-size: 12.5px; color: var(--text-secondary); font-style: italic; margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--border); }
+.el-tiers-note { font-size: 13px; color: var(--text-secondary); max-width: 820px; margin-top: 28px; }
+
 /* CTA */
 .el-cta { background: var(--bg-hero); color: var(--on-dark); padding: 56px 0; text-align: center; }
 .el-cta__title { font-size: 26px; font-weight: 700; margin-bottom: 24px; }
 
 /* Footer */
 .el-footer { border-top: 1px solid var(--border); padding: 32px 0; }
-.el-footer__inner { display: flex; justify-content: space-between; align-items: flex-start; gap: 24px; flex-wrap: wrap; }
+.el-footer__inner { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; text-align: center; }
 .el-footer__copy { font-size: 13px; color: var(--text-secondary); max-width: 480px; }
 .el-footer__copy p { margin-bottom: 6px; }
 
@@ -144,16 +158,15 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
   <header class="el-header">
     <div class="el-container el-header__inner">
       <a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
-      <nav class="el-header__nav"><a href="/verify-ui" data-ru="Верификация" data-en="Verify">Верификация</a></nav>
-      <div class="el-header__right">
+      <nav class="el-header__nav">
+        <a href="/verify-ui" data-ru="Верификация" data-en="Verify">Верификация</a>
+        <a href="/whitepaper.pdf" target="_blank" rel="noopener" data-ru="Whitepaper" data-en="Whitepaper">Whitepaper</a>
+      </nav>
+<div class="el-header__right">
         <div class="el-langswitch" role="group" aria-label="Language switch">
           <button type="button" data-lang-btn="en" class="is-active">EN</button>
           <button type="button" data-lang-btn="ru">RU</button>
         </div>
-        <a href="/verify-ui" class="el-btn el-btn--primary">
-          <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
-          <span class="el-btn__sub" data-ru="chain_id или SHA-256" data-en="chain_id or SHA-256">chain_id или SHA-256</span>
-        </a>
       </div>
     </div>
   </header>
@@ -190,9 +203,7 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
     </div>
   </section>
 
-  <section class="el-strip">
-
-  <section class="el-strip">
+<section class="el-strip">
     <div class="el-container">
       <p class="el-strip__text">
         <strong data-ru="Файл никогда не покидает вашу среду." data-en="Your file never leaves your environment.">Файл никогда не покидает вашу среду.</strong>
@@ -301,22 +312,115 @@ code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6p
     </div>
   </section>
 
+</div>
+    </div>
+  </section>
+
+  <section class="el-section el-section--alt" id="tiers">
+    <div class="el-container">
+      <h2 class="el-section__title" data-ru="Уровни защищённости доказательств" data-en="Evidence Assurance Tiers">Уровни защищённости доказательств</h2>
+      <p class="el-tiers-lead"
+        data-ru="Evident Ledger спроектирован как платформа с прогрессивной защищённостью доказательств. Каждый следующий уровень добавляет ещё один криптографический или операционный механизм защиты, не изменяя сами зафиксированные данные."
+        data-en="Evident Ledger is designed as a progressive evidence assurance platform. Each successive tier adds an additional cryptographic or operational assurance layer without changing the underlying evidence.">
+        Evident Ledger спроектирован как платформа с прогрессивной защищённостью доказательств. Каждый следующий уровень добавляет ещё один криптографический или операционный механизм защиты, не изменяя сами зафиксированные данные.
+      </p>
+
+      <div class="el-tiers">
+        <article class="el-tier el-tier--free">
+          <span class="el-tier__badge" data-ru="Бесплатно" data-en="Free">Бесплатно</span>
+          <h3 class="el-tier__name" data-ru="Базовый" data-en="Base">Базовый</h3>
+          <p class="el-tier__desc"
+            data-ru="SHA-256 фиксация, hash-linked цепочка событий, машинная временная метка (FreeTSA, RFC 3161)."
+            data-en="SHA-256 capture, hash-linked event chain, machine timestamp (FreeTSA, RFC 3161).">
+            SHA-256 фиксация, hash-linked цепочка событий, машинная временная метка (FreeTSA, RFC 3161).
+          </p>
+          <p class="el-tier__note"
+            data-ru="Временная метка предназначена преимущественно для технической проверки. Её доказательная ценность зависит от применимого законодательства."
+            data-en="The timestamp is suitable primarily for technical verification. Its evidentiary value depends on the applicable legal framework.">
+            Временная метка предназначена преимущественно для технической проверки. Её доказательная ценность зависит от применимого законодательства.
+          </p>
+        </article>
+
+        <article class="el-tier el-tier--legal">
+          <span class="el-tier__badge" data-ru="Уровень 2" data-en="Tier 2">Уровень 2</span>
+          <h3 class="el-tier__name" data-ru="Юридический TSA" data-en="Legal TSA">Юридический TSA</h3>
+          <p class="el-tier__desc"
+            data-ru="Всё из Базового + временная метка от квалифицированного поставщика TSA, признанного в выбранной юрисдикции."
+            data-en="Everything in Base, plus a timestamp from a qualified TSA provider recognized in the selected jurisdiction.">
+            Всё из Базового + временная метка от квалифицированного поставщика TSA, признанного в выбранной юрисдикции.
+          </p>
+          <p class="el-tier__note"
+            data-ru="Обеспечивает независимо проверяемую метку времени, признаваемую применимым законодательством там, где это применимо."
+            data-en="Provides a jurisdiction-recognized, independently verifiable time attestation where supported by applicable law.">
+            Обеспечивает независимо проверяемую метку времени, признаваемую применимым законодательством там, где это применимо.
+          </p>
+        </article>
+
+        <article class="el-tier el-tier--escrow">
+          <span class="el-tier__badge" data-ru="Уровень 3" data-en="Tier 3">Уровень 3</span>
+          <h3 class="el-tier__name" data-ru="Резервируемый аудит" data-en="Escrowed Audit">Резервируемый аудит</h3>
+          <p class="el-tier__desc"
+            data-ru="Всё из уровня 2 + зашифрованная резервная копия аудиторского журнала на сервере компании."
+            data-en="Everything in Tier 2, plus an encrypted secondary copy of the audit trail retained on the company's server.">
+            Всё из уровня 2 + зашифрованная резервная копия аудиторского журнала на сервере компании.
+          </p>
+          <p class="el-tier__note"
+            data-ru="Повышает устойчивость к потере локальных данных и обеспечивает непрерывность аудита."
+            data-en="Improves resilience against local data loss and supports audit continuity.">
+            Повышает устойчивость к потере локальных данных и обеспечивает непрерывность аудита.
+          </p>
+        </article>
+
+        <article class="el-tier el-tier--personal">
+          <span class="el-tier__badge" data-ru="Уровень 4" data-en="Tier 4">Уровень 4</span>
+          <h3 class="el-tier__name" data-ru="Персонализированная подпись" data-en="Personal Signing">Персонализированная подпись</h3>
+          <p class="el-tier__desc"
+            data-ru="Всё из уровня 3 + собственная пара ключей (приватный/публичный) для пользователя."
+            data-en="Everything in Tier 3, plus a personal key pair (private/public) issued to the user.">
+            Всё из уровня 3 + собственная пара ключей (приватный/публичный) для пользователя.
+          </p>
+          <p class="el-tier__note"
+            data-ru="Криптографическая подпись пользователя усиливает атрибуцию, позволяя проверять доказательства независимо от оператора платформы."
+            data-en="User-controlled cryptographic signatures strengthen attribution by allowing evidence to be verified independently of the platform operator.">
+            Криптографическая подпись пользователя усиливает атрибуцию, позволяя проверять доказательства независимо от оператора платформы.
+          </p>
+        </article>
+      </div>
+
+      <p class="el-tiers-note"
+        data-ru="Каждый уровень усиливает техническую защищённость и доказательную устойчивость зафиксированных данных. Юридическая допустимость и доказательственный вес материалов определяются применимым законодательством, процессуальными правилами и решением суда либо соответствующего регулятора."
+        data-en="Each tier strengthens the technical assurance and evidentiary robustness of the recorded data. The legal admissibility and evidentiary weight of any record remain subject to the applicable laws, procedural rules, and the determination of the relevant court or regulatory authority.">
+        Каждый уровень усиливает техническую защищённость и доказательную устойчивость зафиксированных данных. Юридическая допустимость и доказательственный вес материалов определяются применимым законодательством, процессуальными правилами и решением суда либо соответствующего регулятора.
+      </p>
+    </div>
+  </section>
+
   <section class="el-cta" id="verify">
+
+<section class="el-cta" id="verify">
     <div class="el-container">
       <h2 class="el-cta__title" data-ru="Зафиксируйте файл или проверьте существующую запись" data-en="Record a file or check an existing entry">Зафиксируйте файл или проверьте существующую запись</h2>
-      <a href="/verify-ui" class="el-btn el-btn--light">
-        <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
-        <span class="el-btn__sub" data-ru="chain_id или SHA-256" data-en="chain_id or SHA-256">chain_id или SHA-256</span>
-      </a>
+      <div class="el-hero__actions" style="justify-content: center;">
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest/download/evident-gui-windows-x64.exe"
+           class="el-btn el-btn--primary" id="el-download-main-bottom">
+          <span class="el-btn__main" data-ru="Скачать" data-en="Download">Скачать</span>
+          <span class="el-btn__sub" id="el-download-os-label-bottom" data-ru="для Windows" data-en="for Windows">для Windows</span>
+        </a>
+        <a href="/verify-ui" class="el-btn el-btn--light">
+          <span class="el-btn__main" data-ru="Открыть верификатор" data-en="Open verifier">Открыть верификатор</span>
+          <span class="el-btn__sub" data-ru="chain_id или SHA-256" data-en="chain_id or SHA-256">chain_id или SHA-256</span>
+        </a>
+      </div>
     </div>
   </section>
 
   <footer class="el-footer">
     <div class="el-container el-footer__inner">
-      <a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
+<a href="/" class="el-logo"><span class="el-logo__mark">EL</span><span>EVIDENT LEDGER</span></a>
       <div class="el-footer__copy">
         <p data-ru="Evident Ledger — локальный open-source ledger. Данные не покидают вашу среду без явного действия." data-en="Evident Ledger is a local open-source ledger. Data never leaves your environment without an explicit action.">Evident Ledger — локальный open-source ledger. Данные не покидают вашу среду без явного действия.</p>
         <p data-ru="Все доказательства воспроизводимы независимо стандартными криптографическими инструментами." data-en="Every proof can be independently reproduced with standard cryptographic tools.">Все доказательства воспроизводимы независимо стандартными криптографическими инструментами.</p>
+        <p><a href="/whitepaper.pdf" target="_blank" rel="noopener" data-ru="Technical Whitepaper (PDF)" data-en="Technical Whitepaper (PDF)">Technical Whitepaper (PDF)</a></p>
       </div>
     </div>
   </footer>
@@ -363,6 +467,8 @@ var saved = null;
     var platform = navigator.platform || '';
     var mainBtn = document.getElementById('el-download-main');
     var osLabel = document.getElementById('el-download-os-label');
+    var mainBtnBottom = document.getElementById('el-download-main-bottom');
+    var osLabelBottom = document.getElementById('el-download-os-label-bottom');
     if (!mainBtn || !osLabel) return;
 
     var links = {
@@ -388,12 +494,19 @@ var saved = null;
       macIntel: { ru: 'для macOS (Intel)', en: 'for macOS (Intel)' },
       linux: { ru: 'для Linux', en: 'for Linux' }
     };
-
+ 
     mainBtn.setAttribute('href', links[detected]);
     osLabel.setAttribute('data-ru', labels[detected].ru);
     osLabel.setAttribute('data-en', labels[detected].en);
     var currentLang = document.documentElement.lang === 'ru' ? 'ru' : 'en';
     osLabel.textContent = labels[detected][currentLang];
+
+    if (mainBtnBottom && osLabelBottom) {
+      mainBtnBottom.setAttribute('href', links[detected]);
+      osLabelBottom.setAttribute('data-ru', labels[detected].ru);
+      osLabelBottom.setAttribute('data-en', labels[detected].en);
+      osLabelBottom.textContent = labels[detected][currentLang];
+    }
   })();
   </script>
 
