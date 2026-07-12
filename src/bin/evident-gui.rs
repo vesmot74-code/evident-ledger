@@ -398,7 +398,7 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
             let local_integrity_ok =
                 Self::check_local_integrity(originals_dir, leaf.sequence, &leaf.file_hash);
             let file_name = Self::find_original_name(originals_dir, leaf.sequence)
-                .unwrap_or_else(|| format!("event_{:04}", leaf.sequence));
+.unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
 
             events.push(VerificationEvent {
                 sequence: leaf.sequence,
