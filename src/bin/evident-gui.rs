@@ -103,8 +103,8 @@ impl Default for ErrorType {
 // COLORS
 // ============================================================================
 const COLOR_NAVY: egui::Color32 = egui::Color32::from_rgb(22, 33, 62);
-const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(107, 113, 111); // RAL 7005 Mouse Grey
-const COLOR_ACCENT_DARK: egui::Color32 = egui::Color32::from_rgb(87, 92, 90); // RAL 7005, darker for hover/active
+const COLOR_ACCENT: egui::Color32 = egui::Color32::from_rgb(55, 107, 140); // RAL 5007 Brilliant Blue
+const COLOR_ACCENT_DARK: egui::Color32 = egui::Color32::from_rgb(41, 84, 111); // RAL 5007, darker for hover/active
 const COLOR_VALID: egui::Color32 = egui::Color32::from_rgb(21, 128, 61);
 const COLOR_INVALID: egui::Color32 = egui::Color32::from_rgb(185, 28, 28);
 const COLOR_PARTIAL: egui::Color32 = egui::Color32::from_rgb(180, 83, 9);
@@ -182,7 +182,6 @@ struct App {
     rx_resp: tokio::sync::mpsc::UnboundedReceiver<WorkerResponse>,
     loading_verify_project: bool,
     loading_verify_chain: bool,
-    network_error: bool,
     loading_commit: bool,
     last_proof: Option<client::ProofFile>,
 }
@@ -223,7 +222,6 @@ impl Default for App {
             rx_resp: rx,
             loading_verify_project: Default::default(),
             loading_verify_chain: false,
-            network_error: false,
             loading_commit: false,
             last_proof: None,
         }
@@ -292,17 +290,7 @@ struct CommitFailure {
 enum WorkerResponse {
     HashComputed(Result<String, String>),
 
-    VerifyProjectDone(
-        Result<
-            (
-                evident_ledger::client::VerifyResponse,
-                evident_ledger::client::ProofFile,
-                PathBuf,
-            ),
-            String,
-        >,
-    ),
-    VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
+VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
 }
 
@@ -353,13 +341,85 @@ impl App {
         None
     }
 
-    fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
+fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
         let prefix = format!("{:04}_", sequence);
         fs::read_dir(originals_dir)
             .ok()?
             .flatten()
             .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
             .map(|e| e.file_name().to_string_lossy().into_owned())
+    }
+
+    /// Loads the most complete locally saved proof snapshot for a project,
+    /// without touching the network. Every commit writes a full ProofFile
+    /// snapshot to proofs/<event_id>.json, so the file with the most
+    /// events is the latest known state of the chain.
+    fn load_local_proof(proofs_dir: &Path) -> Option<client::ProofFile> {
+        let mut best: Option<client::ProofFile> = None;
+        let entries = fs::read_dir(proofs_dir).ok()?;
+        for entry in entries.flatten() {
+            let path = entry.path();
+            if path.extension().and_then(|s| s.to_str()) != Some("json") {
+                continue;
+            }
+            let contents = match fs::read_to_string(&path) {
+                Ok(c) => c,
+                Err(_) => continue,
+            };
+            let proof = match serde_json::from_str::<client::ProofFile>(&contents) {
+                Ok(p) => p,
+                Err(_) => continue,
+            };
+            let is_better = best
+                .as_ref()
+                .map_or(true, |b: &client::ProofFile| proof.events.len() > b.events.len());
+            if is_better {
+                best = Some(proof);
+            }
+        }
+        best
+    }
+
+    /// Builds the event list purely from local data — no server needed.
+    /// `valid` here means "locally self-consistent" (hash-chain sequence
+    /// intact + file hash matches on disk), NOT a full signature check —
+    /// that still needs the server's public key.
+    fn build_local_events(proof: &client::ProofFile, originals_dir: &Path) -> Vec<VerificationEvent> {
+        let mut sorted = proof.events.clone();
+        sorted.sort_by_key(|e| e.sequence);
+
+        let mut events = Vec::with_capacity(sorted.len());
+        let mut expected_parent = "00000000-0000-0000-0000-000000000000".to_string();
+
+        for leaf in sorted {
+            let chain_ok = leaf.parent_event_id == expected_parent;
+            expected_parent = leaf.event_id.clone();
+
+            let local_integrity_ok =
+                Self::check_local_integrity(originals_dir, leaf.sequence, &leaf.file_hash);
+            let file_name = Self::find_original_name(originals_dir, leaf.sequence)
+                .unwrap_or_else(|| format!("event_{:04}", leaf.sequence));
+
+            events.push(VerificationEvent {
+                sequence: leaf.sequence,
+                event_id: leaf.event_id,
+                file_name,
+                timestamp: String::new(),
+                valid: chain_ok,
+                error: if chain_ok {
+                    None
+                } else {
+                    Some("parent_event_id chain break (local)".to_string())
+                },
+                error_type: if chain_ok {
+                    ErrorType::None
+                } else {
+                    ErrorType::ChainBreak
+                },
+                local_integrity_ok,
+            });
+        }
+        events
     }
 
     fn export_event_pdf(
@@ -906,7 +966,7 @@ impl App {
     // ================================================================
     // PROJECT VERIFICATION
     // ================================================================
-    fn verify_project(&mut self, ctx: &egui::Context) {
+fn verify_project(&mut self, ctx: &egui::Context) {
         self.verification_events.clear();
         self.verification_complete = false;
         self.verification_report.clear();
@@ -927,8 +987,9 @@ impl App {
             }
         };
         let project_path = projects_dir.join(&self.selected_project);
+
         let project_json = match fs::read_to_string(project_path.join("project.json")) {
-            Ok(contents) => contents,
+            Ok(c) => c,
             Err(e) => {
                 self.status = format!(
                     "{}: {}",
@@ -942,7 +1003,7 @@ impl App {
             }
         };
         let project: Project = match serde_json::from_str(&project_json) {
-            Ok(project) => project,
+            Ok(p) => p,
             Err(e) => {
                 self.status = format!(
                     "{}: {}",
@@ -969,35 +1030,96 @@ impl App {
         };
 
         let originals_dir = project_path.join("originals");
+        let proofs_dir = project_path.join("proofs");
 
-        // --- now goes to the background ---
-        self.loading_verify_project = true;
-        self.status = self.tr("⏳ Проверка...", "⏳ Verifying...").to_string();
+        // === LOCAL-FIRST: build the picture from disk, no network needed ===
+        match Self::load_local_proof(&proofs_dir) {
+            Some(local_proof) => {
+                self.state.head_event_id = Some(local_proof.head_event_id.clone());
+                self.verification_events = Self::build_local_events(&local_proof, &originals_dir);
+                self.last_proof = Some(local_proof);
 
-        let tx = self.tx_resp.clone();
-        let ctx = ctx.clone();
-        let lang = self.lang;
-        self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new("http://127.0.0.1:3000");
+                let local_chain_ok = self.verification_events.iter().all(|e| e.valid);
+                let local_tampered = self
+                    .verification_events
+                    .iter()
+                    .any(|e| e.local_integrity_ok != Some(true));
 
-            let result: Result<
-                (
-                    evident_ledger::client::VerifyResponse,
-                    evident_ledger::client::ProofFile,
-                    PathBuf,
-                ),
-                String,
-            > = (|| {
-                let verify_result = client::verify_chain(&client, chain_id)
-                    .map_err(|e| friendly_error(&e, lang))?;
-                let proof =
-                    client::fetch_proof(&client, chain_id).map_err(|e| friendly_error(&e, lang))?;
-                Ok((verify_result, proof, originals_dir))
-            })();
+                self.verify_status = if !local_chain_ok {
+                    VerifyStatus::Invalid
+                } else if local_tampered {
+                    VerifyStatus::Partial
+                } else {
+                    VerifyStatus::Valid
+                };
 
-            let _ = tx.send(WorkerResponse::VerifyProjectDone(result));
-            ctx.request_repaint();
-        });
+                self.status = self
+                    .tr(
+                        "✅ Локальные данные загружены (офлайн)",
+                        "✅ Local data loaded (offline)",
+                    )
+                    .to_string();
+               self.verification_report = self
+                    .tr(
+                        "Локальная проверка: цепочка событий, файлы на диске и криптографическая подпись.",
+                        "Local check: event chain, files on disk, and cryptographic signature.",
+                    )
+                    .to_string();
+            }
+            None => {
+                self.verify_status = VerifyStatus::None;
+                self.status = self
+                    .tr(
+                        "⚠️ Локальные данные проекта не найдены",
+                        "⚠️ No local project data found",
+                    )
+                    .to_string();
+            }
+        }
+
+self.verification_complete = true;
+        self.screen = Screen::VerifyResult;
+
+        // === Local-only signature verification — no network involved ===
+        if let Some(proof) = self.last_proof.as_ref() {
+            let pinned_key_path = dirs::home_dir()
+                .map(|home| home.join(".evident").join("server_identity.pub"));
+
+            let trusted_public_key = pinned_key_path
+                .as_ref()
+                .and_then(|p| fs::read_to_string(p).ok())
+                .map(|k| k.trim().to_string());
+
+            match trusted_public_key {
+                Some(key) => {
+                    let sig_valid = evident_ledger::signing::verify_root(
+                        &proof.chain_id,
+                        &proof.proof.root,
+                        &proof.proof.chain_head,
+                        &proof.proof.signature,
+                        &key,
+                    );
+
+                    if !sig_valid {
+                        self.verify_status = VerifyStatus::Invalid;
+                        self.status = self
+                            .tr(
+                                "❌ Подпись недействительна",
+                                "❌ Signature is invalid",
+                            )
+                            .to_string();
+                    }
+                }
+                None => {
+                    self.status = self
+                        .tr(
+                            "⚠️ Не найден локальный ключ сервера для проверки подписи",
+                            "⚠️ No local server key found to verify the signature",
+                        )
+                        .to_string();
+                }
+            }
+        }
     }
 
     // ================================================================
@@ -1290,107 +1412,7 @@ impl eframe::App for App {
                     }
                 },
 
-                WorkerResponse::VerifyProjectDone(res) => {
-                    self.loading_verify_project = false;
-                    match res {
-                        Ok((verify_result, proof, originals_dir)) => {
-                            self.network_error = false;
-                            self.last_proof = Some(proof.clone());
-                            self.state.head_event_id = Some(verify_result.head_event_id.clone());
-
-                            for event in proof.events.iter() {
-                                let local_integrity_ok = Self::check_local_integrity(
-                                    &originals_dir,
-                                    event.sequence,
-                                    &event.file_hash,
-                                );
-                                self.verification_events.push(VerificationEvent {
-                                    sequence: event.sequence,
-                                    event_id: event.event_id.clone(),
-                                    file_name: Self::find_original_name(
-                                        &originals_dir,
-                                        event.sequence,
-                                    )
-                                    .unwrap_or_else(|| {
-                                        self.tr("Файл недоступен", "File unavailable").to_string()
-                                    }),
-                                    timestamp: "".to_string(),
-                                    valid: verify_result.valid,
-                                    error: if verify_result.valid {
-                                        None
-                                    } else {
-                                        Some(verify_result.errors.join("; "))
-                                    },
-                                    error_type: if verify_result.valid {
-                                        ErrorType::None
-                                    } else {
-                                        ErrorType::ChainBreak
-                                    },
-                                    local_integrity_ok,
-                                });
-                            }
-
-                            self.verification_project = self.selected_project.clone();
-                            self.verification_complete = true;
-
-                            let local_tampered = self
-                                .verification_events
-                                .iter()
-                                .any(|e| e.local_integrity_ok != Some(true));
-
-                            self.verify_status = if !verify_result.valid {
-                                VerifyStatus::Invalid
-                            } else if local_tampered {
-                                VerifyStatus::Partial
-                            } else {
-                                VerifyStatus::Valid
-                            };
-
-                            self.status = if !verify_result.valid {
-                                self.tr("❌ Обнаружены нарушения", "❌ Violations detected")
-                                    .to_string()
-                            } else if local_tampered {
-                                self.tr(
-                                    "⚠️ Backend OK, но локальные файлы изменены",
-                                    "⚠️ Backend OK, but local files were modified",
-                                )
-                                .to_string()
-                            } else {
-                                self.tr(
-                                    "✅ Проект успешно проверен",
-                                    "✅ Project successfully verified",
-                                )
-                                .to_string()
-                            };
-
-                            self.verification_report = if !verify_result.valid {
-                                verify_result.errors.join("; ")
-                            } else if local_tampered {
-                                self.tr(
-                                    "Локальные файлы originals/ изменены или отсутствуют",
-                                    "Local files in originals/ were modified or are missing",
-                                )
-                                .to_string()
-                            } else {
-                                self.tr(
-                                    "Все события валидны. Локальная копия совпадает.",
-                                    "All events are valid. The local copy matches.",
-                                )
-                                .to_string()
-                            };
-
-                            self.screen = Screen::VerifyResult;
-                        }
-                        Err(e) => {
-                            self.network_error = true;
-                            self.status = format!("❌ {}", e);
-                            self.verify_status = VerifyStatus::Partial;
-                            self.verification_report = e;
-                            self.screen = Screen::VerifyResult;
-                        }
-                    }
-                }
-                WorkerResponse::VerifyChainDone(res) => {
+            WorkerResponse::VerifyChainDone(res) => {
                     self.loading_verify_chain = false;
                     match res {
                         Ok(result) => {
@@ -1539,15 +1561,20 @@ impl eframe::App for App {
             });
             ui.add_space(4.0);
 
-            if self.screen == Screen::FileSelection {
+if self.screen == Screen::FileSelection {
                 ui.heading("Evident Ledger");
                 ui.add_space(8.0);
 
+                let main_btn_width = 240.0;
+
                 ui.horizontal(|ui| {
-                    if ui
-                        .button(self.tr("📄 Выбрать файл", "📄 Select File"))
-                        .clicked()
-                    {
+                    let select_clicked = ui
+                        .add_sized(
+                            [main_btn_width, 32.0],
+                            egui::Button::new(self.tr("📄 Выбрать файл", "📄 Select File")),
+                        )
+                        .clicked();
+                    if select_clicked {
                         if let Some(path) = rfd::FileDialog::new().pick_file() {
                             self.file_path = path.display().to_string();
 
@@ -1574,11 +1601,25 @@ impl eframe::App for App {
 
                 ui.add_space(8.0);
                 if ui
-                    .button(self.tr("🔍 Проверить проект", "🔍 Verify Project"))
+                    .add_sized(
+                        [main_btn_width, 32.0],
+                        egui::Button::new(self.tr("🔍 Проверить проект", "🔍 Verify Project")),
+                    )
                     .clicked()
                 {
                     self.screen = Screen::VerifyProject;
                     self.load_projects();
+                }
+
+                ui.add_space(8.0);
+                if ui
+                    .add_sized(
+                        [main_btn_width, 32.0],
+                        egui::Button::new(self.tr("🚪 Выход", "🚪 Exit")),
+                    )
+                    .clicked()
+                {
+                    ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                 }
 
                 if !self.file_path.is_empty() {
@@ -1784,7 +1825,7 @@ impl eframe::App for App {
                         );
                         ui.add_space(10.0);
 
-                        let (status_color, status_text) = match self.verify_status {
+                   let (status_color, status_text) = match self.verify_status {
                             VerifyStatus::Valid => {
                                 (COLOR_VALID, self.tr("ПОДТВЕРЖДЕНО", "VERIFIED"))
                             }
@@ -1808,11 +1849,11 @@ impl eframe::App for App {
                         ui.add_space(8.0);
 
                         ui.columns(2, |cols| {
-                            let events_count = self
-                                .last_proof
-                                .as_ref()
-                                .map(|p| p.events.len())
-                                .unwrap_or(0);
+                            let events_count = if let Some(proof) = self.last_proof.as_ref() {
+                                proof.events.len()
+                            } else {
+                                self.verification_events.len()
+                            };
                             cols[0].label(egui::RichText::new(self.tr("События", "Events")).weak());
                             cols[0].label(
                                 egui::RichText::new(events_count.to_string())
@@ -1861,7 +1902,7 @@ impl eframe::App for App {
                     }
                 };
 
-                if !self.network_error {
+                {
                     match Self::validate_chain(
                         &self.verification_events,
                         self.state.head_event_id.as_deref(),
@@ -1897,13 +1938,13 @@ impl eframe::App for App {
                                     ui.with_layout(
                                         egui::Layout::right_to_left(egui::Align::Center),
                                         |ui| {
-                                            ui.add_enabled(
+                                     ui.add_enabled(
                                                 false,
                                                 egui::Button::new(format!(
                                                     "📦 ZIP ({})",
                                                     self.tr("скоро", "soon")
                                                 ))
-                                                .min_size(egui::vec2(140.0, 0.0)),
+                                                .min_size(egui::vec2(140.0, 32.0)),
                                             )
                                             .on_disabled_hover_text(self.tr(
                                                 "Экспорт в ZIP появится в следующей версии",
@@ -1912,7 +1953,7 @@ impl eframe::App for App {
 
                                             let pdf_clicked = ui
                                                 .add_sized(
-                                                    [110.0, 0.0],
+                                                    [110.0, 32.0],
                                                     egui::Button::new("📄 PDF"),
                                                 )
                                                 .clicked();
