@@ -2,7 +2,8 @@
 members = [
     ".",
     "evident-report",
-    "evident-whitepaper"
+    "evident-whitepaper",
+    "evident-gui-app"
 ]
 resolver = "2"
 
@@ -31,12 +32,7 @@ tempfile = "3"
 anyhow = "1"
 base64 = "0.21"
 notary-pdf = { path = "vendor/notary-pdf" }
-eframe = "0.35.0"
-egui = "0.35.0"
-rfd = "0.17.2"
-dirs = "6.0.0"
 printpdf = "0.7"
-zip = "8.6.0"
 
 [dependencies.evident-report]
 path = "evident-report"
@@ -54,6 +50,3 @@ path = "src/bin/verify.rs"
 name = "evident"
 path = "src/bin/evident.rs"
 
-[[bin]]
-name = "evident-gui"
-path = "src/bin/evident-gui.rs"
