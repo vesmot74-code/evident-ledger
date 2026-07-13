@@ -290,7 +290,7 @@ struct CommitFailure {
 enum WorkerResponse {
     HashComputed(Result<String, String>),
 
-VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
+    VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
 }
 
@@ -341,7 +341,7 @@ impl App {
         None
     }
 
-fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
+    fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
         let prefix = format!("{:04}_", sequence);
         fs::read_dir(originals_dir)
             .ok()?
@@ -370,9 +370,9 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
                 Ok(p) => p,
                 Err(_) => continue,
             };
-            let is_better = best
-                .as_ref()
-                .map_or(true, |b: &client::ProofFile| proof.events.len() > b.events.len());
+            let is_better = best.as_ref().map_or(true, |b: &client::ProofFile| {
+                proof.events.len() > b.events.len()
+            });
             if is_better {
                 best = Some(proof);
             }
@@ -384,7 +384,10 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
     /// `valid` here means "locally self-consistent" (hash-chain sequence
     /// intact + file hash matches on disk), NOT a full signature check —
     /// that still needs the server's public key.
-    fn build_local_events(proof: &client::ProofFile, originals_dir: &Path) -> Vec<VerificationEvent> {
+    fn build_local_events(
+        proof: &client::ProofFile,
+        originals_dir: &Path,
+    ) -> Vec<VerificationEvent> {
         let mut sorted = proof.events.clone();
         sorted.sort_by_key(|e| e.sequence);
 
@@ -398,7 +401,7 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
             let local_integrity_ok =
                 Self::check_local_integrity(originals_dir, leaf.sequence, &leaf.file_hash);
             let file_name = Self::find_original_name(originals_dir, leaf.sequence)
-.unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
+                .unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
 
             events.push(VerificationEvent {
                 sequence: leaf.sequence,
@@ -966,7 +969,7 @@ fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
     // ================================================================
     // PROJECT VERIFICATION
     // ================================================================
-fn verify_project(&mut self, ctx: &egui::Context) {
+    fn verify_project(&mut self, ctx: &egui::Context) {
         self.verification_events.clear();
         self.verification_complete = false;
         self.verification_report.clear();
@@ -1059,7 +1062,7 @@ fn verify_project(&mut self, ctx: &egui::Context) {
                         "✅ Local data loaded (offline)",
                     )
                     .to_string();
-               self.verification_report = self
+                self.verification_report = self
                     .tr(
                         "Локальная проверка: цепочка событий, файлы на диске и криптографическая подпись.",
                         "Local check: event chain, files on disk, and cryptographic signature.",
@@ -1077,13 +1080,13 @@ fn verify_project(&mut self, ctx: &egui::Context) {
             }
         }
 
-self.verification_complete = true;
+        self.verification_complete = true;
         self.screen = Screen::VerifyResult;
 
         // === Local-only signature verification — no network involved ===
         if let Some(proof) = self.last_proof.as_ref() {
-            let pinned_key_path = dirs::home_dir()
-                .map(|home| home.join(".evident").join("server_identity.pub"));
+            let pinned_key_path =
+                dirs::home_dir().map(|home| home.join(".evident").join("server_identity.pub"));
 
             let trusted_public_key = pinned_key_path
                 .as_ref()
@@ -1103,10 +1106,7 @@ self.verification_complete = true;
                     if !sig_valid {
                         self.verify_status = VerifyStatus::Invalid;
                         self.status = self
-                            .tr(
-                                "❌ Подпись недействительна",
-                                "❌ Signature is invalid",
-                            )
+                            .tr("❌ Подпись недействительна", "❌ Signature is invalid")
                             .to_string();
                     }
                 }
@@ -1357,7 +1357,7 @@ impl eframe::App for App {
         // Global button styling: rounded corners, comfortable padding,
         // consistent look across the whole app. Cosmetic only — no new
         // widgets or screens, just restyling what already exists.
-{
+        {
             let style = ui.style_mut();
             style.spacing.button_padding = egui::vec2(16.0, 10.0);
             style.visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(8);
@@ -1412,7 +1412,7 @@ impl eframe::App for App {
                     }
                 },
 
-            WorkerResponse::VerifyChainDone(res) => {
+                WorkerResponse::VerifyChainDone(res) => {
                     self.loading_verify_chain = false;
                     match res {
                         Ok(result) => {
@@ -1910,116 +1910,122 @@ if self.screen == Screen::FileSelection {
                         self.state.head_event_id.as_deref(),
                     ) {
                         Ok(()) => {
-                            for event in self.verification_events.clone() {
-                                ui.horizontal(|ui| {
-                                    let label = if event.valid {
-                                        format!(
-                                            "✅ EVENT {:03}    {}   {}",
-                                            event.sequence,
-                                            event.file_name,
-                                            local_marker(event.local_integrity_ok, self.lang)
-                                        )
-                                    } else {
-                                        format!(
-                                            "❌ EVENT {:03}    {}   {}   ⚠️ {}",
-                                            event.sequence,
-                                            event.file_name,
-                                            local_marker(event.local_integrity_ok, self.lang),
-                                            event
-                                                .error
-                                                .as_deref()
-                                                .unwrap_or(self.tr("ошибка", "error"))
-                                        )
-                                    };
-                                    if event.valid {
-                                        ui.label(label);
-                                    } else {
-                                        ui.colored_label(COLOR_INVALID, label);
-                                    }
-
-                                    ui.with_layout(
-                                        egui::Layout::right_to_left(egui::Align::Center),
-                                        |ui| {
-                                     ui.add_enabled(
-                                                false,
-                                                egui::Button::new(format!(
-                                                    "📦 ZIP ({})",
-                                                    self.tr("скоро", "soon")
-                                                ))
-                                                .min_size(egui::vec2(140.0, 32.0)),
+                            egui::ScrollArea::vertical()
+                              .id_salt("verify_event_list")
+                             .max_height(120.0)
+                              .auto_shrink([false, true])
+                              .show(ui, |ui| {
+                                for event in self.verification_events.clone() {
+                                    ui.horizontal(|ui| {
+                                        let label = if event.valid {
+                                            format!(
+                                                "✅ EVENT {:03}    {}   {}",
+                                                event.sequence,
+                                                event.file_name,
+                                                local_marker(event.local_integrity_ok, self.lang)
                                             )
-                                            .on_disabled_hover_text(self.tr(
-                                                "Экспорт в ZIP появится в следующей версии",
-                                                "ZIP export will be available in a future version",
-                                            ));
+                                        } else {
+                                            format!(
+                                                "❌ EVENT {:03}    {}   {}   ⚠️ {}",
+                                                event.sequence,
+                                                event.file_name,
+                                                local_marker(event.local_integrity_ok, self.lang),
+                                                event
+                                                    .error
+                                                    .as_deref()
+                                                    .unwrap_or(self.tr("ошибка", "error"))
+                                            )
+                                        };
+                                        if event.valid {
+                                            ui.label(label);
+                                        } else {
+                                            ui.colored_label(COLOR_INVALID, label);
+                                        }
 
-                                            let pdf_clicked = ui
-                                                .add_sized(
-                                                    [110.0, 32.0],
-                                                    egui::Button::new("📄 PDF"),
+                                        ui.with_layout(
+                                            egui::Layout::right_to_left(egui::Align::Center),
+                                            |ui| {
+                                         ui.add_enabled(
+                                                    false,
+                                                    egui::Button::new(format!(
+                                                        "📦 ZIP ({})",
+                                                        self.tr("скоро", "soon")
+                                                    ))
+                                                    .min_size(egui::vec2(140.0, 32.0)),
                                                 )
-                                                .clicked();
+                                                .on_disabled_hover_text(self.tr(
+                                                    "Экспорт в ZIP появится в следующей версии",
+                                                    "ZIP export will be available in a future version",
+                                                ));
 
-                                            if pdf_clicked {
-                                                match self.last_proof.as_ref() {
-                                                    Some(proof) => {
-                                                        match Self::export_event_pdf(
-                                                            &projects_dir,
-                                                            &self.verification_project,
-                                                            proof,
-                                                            &event,
-                                                        ) {
-                                                            Ok(pdf_path) => {
-                                                                let _ =
-                                                                    std::process::Command::new(
-                                                                        "open",
-                                                                    )
-                                                                    .arg(&pdf_path)
-                                                                    .spawn();
+                                                let pdf_clicked = ui
+                                                    .add_sized(
+                                                        [110.0, 32.0],
+                                                        egui::Button::new("📄 PDF"),
+                                                    )
+                                                    .clicked();
 
-                                                                self.status = format!(
-                                                                    "{}: {}",
-                                                                    self.tr(
-                                                                        "✅ PDF создан",
-                                                                        "✅ PDF created"
-                                                                    ),
-                                                                    pdf_path.display()
-                                                                );
-                                                            }
-                                                            Err(e) => {
-                                                                self.status = format!(
-                                                                    "{}: {}",
-                                                                    self.tr(
-                                                                        "❌ Ошибка генерации PDF",
-                                                                        "❌ PDF generation error"
-                                                                    ),
-                                                                    e
-                                                                );
+                                                if pdf_clicked {
+                                                    match self.last_proof.as_ref() {
+                                                        Some(proof) => {
+                                                            match Self::export_event_pdf(
+                                                                &projects_dir,
+                                                                &self.verification_project,
+                                                                proof,
+                                                                &event,
+                                                            ) {
+                                                                Ok(pdf_path) => {
+                                                                    let _ =
+                                                                        std::process::Command::new(
+                                                                            "open",
+                                                                        )
+                                                                        .arg(&pdf_path)
+                                                                        .spawn();
+
+                                                                    self.status = format!(
+                                                                        "{}: {}",
+                                                                        self.tr(
+                                                                            "✅ PDF создан",
+                                                                            "✅ PDF created"
+                                                                        ),
+                                                                        pdf_path.display()
+                                                                    );
+                                                                }
+                                                                Err(e) => {
+                                                                    self.status = format!(
+                                                                        "{}: {}",
+                                                                        self.tr(
+                                                                            "❌ Ошибка генерации PDF",
+                                                                            "❌ PDF generation error"
+                                                                        ),
+                                                                        e
+                                                                    );
+                                                                }
                                                             }
                                                         }
-                                                    }
-                                                    None => {
-                                                        self.status = self
-                                                            .tr(
-                                                                "❌ Нет данных — сначала выполните проверку",
-                                                                "❌ No data — run verification first",
-                                                            )
-                                                            .to_string();
+                                                        None => {
+                                                            self.status = self
+                                                                .tr(
+                                                                    "❌ Нет данных — сначала выполните проверку",
+                                                                    "❌ No data — run verification first",
+                                                                )
+                                                                .to_string();
+                                                        }
                                                     }
                                                 }
-                                            }
-                                        },
-                                    );
-                                });
+                                            },
+                                        );
+                                    });
 
-                                if !event.valid && event.error_type != ErrorType::None {
-                                    ui.label(format!(
-                                        "   └─ {}: {:?}",
-                                        self.tr("Тип", "Type"),
-                                        event.error_type
-                                    ));
+                                    if !event.valid && event.error_type != ErrorType::None {
+                                        ui.label(format!(
+                                            "   └─ {}: {:?}",
+                                            self.tr("Тип", "Type"),
+                                            event.error_type
+                                        ));
+                                    }
                                 }
-                            }
+                            });
                         }
                         Err(error) => {
                             self.render_chain_error(ui, &error);
