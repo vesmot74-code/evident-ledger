@@ -1,0 +1,6 @@
+target/
+.git/
+*.bak
+*.backup*
+evident_revision.sh
+.env
