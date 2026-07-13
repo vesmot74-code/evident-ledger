@@ -84,9 +84,11 @@ footer a { color: var(--accent); text-decoration: none; }
   <button class="lang-btn active" id="langRuBtn">RU</button>
 </div>
 
-  <span class="eyebrow" data-i18n="eyebrow">Deterministic Event Ledger</span>
+<span class="eyebrow" data-i18n="eyebrow">Deterministic Event Ledger</span>
   <h1 data-i18n="h1">Верификатор<br>цепочки событий</h1>
   <p data-i18n="intro">Проверка криптографической целостности цепочки по chain_id — merkle root, подпись, количество событий.</p>
+
+  <p data-i18n="betaNotice" style="background:#fef3c7; color:#92400e; border:1px solid #fde68a; border-radius:6px; padding:10px 14px; font-size:13.5px; margin: 12px 0;">Тестовый режим: сервис проходит обкатку, возможна задержка при первом обращении.</p>
 
   <hr>
 
@@ -156,6 +158,7 @@ footer a { color: var(--accent); text-decoration: none; }
         eyebrow: 'Deterministic Event Ledger',
         h1: 'Верификатор<br>цепочки событий',
         intro: 'Проверка криптографической целостности цепочки по chain_id — merkle root, подпись, количество событий.',
+        betaNotice: 'Тестовый режим: сервис проходит обкатку, возможна задержка при первом обращении.',
         tabChain: 'По chain_id',
         tabHash: 'По хэшу файла',
         chainH2: 'Введите chain_id',
@@ -183,6 +186,7 @@ footer a { color: var(--accent); text-decoration: none; }
         eyebrow: 'Deterministic Event Ledger',
         h1: 'Event Chain<br>Verifier',
         intro: 'Verify the cryptographic integrity of a chain by chain_id — merkle root, signature, event count.',
+        betaNotice: 'Beta: this service is under active testing, first request may take a few seconds.',
         tabChain: 'By chain_id',
         tabHash: 'By file hash',
         chainH2: 'Enter chain_id',
