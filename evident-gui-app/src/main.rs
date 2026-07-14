@@ -404,12 +404,15 @@ fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, Pat
     /// `valid` here means "locally self-consistent" (hash-chain sequence
     /// intact + file hash matches on disk), NOT a full signature check —
     /// that still needs the server's public key.
-    fn build_local_events(
+fn build_local_events(
         proof: &client::ProofFile,
         originals_dir: &Path,
+        proofs_dir: &Path,
     ) -> Vec<VerificationEvent> {
         let mut sorted = proof.events.clone();
         sorted.sort_by_key(|e| e.sequence);
+
+        let local_copies = Self::load_local_copies(proofs_dir);
 
         let mut events = Vec::with_capacity(sorted.len());
         let mut expected_parent = "00000000-0000-0000-0000-000000000000".to_string();
@@ -418,10 +421,29 @@ fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, Pat
             let chain_ok = leaf.parent_event_id == expected_parent;
             expected_parent = leaf.event_id.clone();
 
-            let local_integrity_ok =
-                Self::check_local_integrity(originals_dir, leaf.sequence, &leaf.file_hash);
-            let file_name = Self::find_original_name(originals_dir, leaf.sequence)
-                .unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
+            let (local_integrity_ok, file_name) =
+                if let Some(copy_path) = local_copies.get(&leaf.event_id) {
+                    match fs::read(copy_path) {
+                        Ok(bytes) => {
+                            let actual_hash = file_hash_from_bytes(&bytes);
+                            let name = copy_path
+                                .file_name()
+                                .map(|n| n.to_string_lossy().to_string())
+                                .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
+                            (Some(actual_hash == leaf.file_hash), name)
+                        }
+                        Err(_) => (None, format!("event {:04} (missing)", leaf.sequence)),
+                    }
+                } else {
+                    let ok = Self::check_local_integrity(
+                        originals_dir,
+                        leaf.sequence,
+                        &leaf.file_hash,
+                    );
+                    let name = Self::find_original_name(originals_dir, leaf.sequence)
+                        .unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
+                    (ok, name)
+                };
 
             events.push(VerificationEvent {
                 sequence: leaf.sequence,
@@ -1137,7 +1159,8 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
         match Self::load_local_proof(&proofs_dir) {
             Some(local_proof) => {
                 self.state.head_event_id = Some(local_proof.head_event_id.clone());
-                self.verification_events = Self::build_local_events(&local_proof, &originals_dir);
+                    self.verification_events =
+                    Self::build_local_events(&local_proof, &originals_dir, &proofs_dir);
                 self.last_proof = Some(local_proof);
 
                 let local_chain_ok = self.verification_events.iter().all(|e| e.valid);
