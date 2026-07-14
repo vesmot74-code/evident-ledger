@@ -18,8 +18,7 @@ fn main() {
     println!("Evident Whitepaper Generator");
     println!("Input: {}", input);
 
-    let content = fs::read_to_string(input)
-        .expect("Cannot read whitepaper markdown file");
+    let content = fs::read_to_string(input).expect("Cannot read whitepaper markdown file");
 
     generate_pdf(&content, output);
 
@@ -70,20 +69,18 @@ fn parse_table_row(line: &str) -> Option<Vec<String>> {
 
 // Returns true if the row is a markdown separator row like | --- | --- | --- |
 fn is_separator_row(cells: &[String]) -> bool {
-    cells.iter().all(|c| {
-        !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':')
-    })
+    cells
+        .iter()
+        .all(|c| !c.is_empty() && c.chars().all(|ch| ch == '-' || ch == ':'))
 }
 
 fn generate_pdf(text: &str, output: &str) {
-
-    let (doc, page1, layer1) =
-        PdfDocument::new(
-            "Evident Ledger Technical Whitepaper",
-            Mm(210.0),
-            Mm(297.0),
-            "Cover",
-        );
+    let (doc, page1, layer1) = PdfDocument::new(
+        "Evident Ledger Technical Whitepaper",
+        Mm(210.0),
+        Mm(297.0),
+        "Cover",
+    );
 
     let doc = doc
         .with_title("Evident Ledger Technical Whitepaper")
@@ -105,9 +102,7 @@ fn generate_pdf(text: &str, output: &str) {
         .add_builtin_font(BuiltinFont::HelveticaBold)
         .expect("Cannot load bold font");
 
-    let current_date = Local::now()
-        .format("%B %Y")
-        .to_string();
+    let current_date = Local::now().format("%B %Y").to_string();
 
     //
     // COVER PAGE
@@ -118,8 +113,20 @@ fn generate_pdf(text: &str, output: &str) {
     cover.use_text("EVIDENT LEDGER", 28.0, Mm(25.0), Mm(245.0), &font);
     cover.use_text("Technical Whitepaper", 18.0, Mm(25.0), Mm(220.0), &font);
     cover.use_text("Version 1.0", 12.0, Mm(25.0), Mm(205.0), &font);
-    cover.use_text("Cryptographic Evidence Infrastructure", 12.0, Mm(25.0), Mm(190.0), &font);
-    cover.use_text(format!("{}", current_date), 10.0, Mm(25.0), Mm(170.0), &font);
+    cover.use_text(
+        "Cryptographic Evidence Infrastructure",
+        12.0,
+        Mm(25.0),
+        Mm(190.0),
+        &font,
+    );
+    cover.use_text(
+        format!("{}", current_date),
+        10.0,
+        Mm(25.0),
+        Mm(170.0),
+        &font,
+    );
 
     add_footer(&cover, &font, 1);
 
@@ -161,28 +168,24 @@ fn generate_pdf(text: &str, output: &str) {
     let mut page_num = 3;
     let mut y = page_height_top;
 
-    let (mut current_page, mut current_layer) =
-        doc.add_page(Mm(210.0), Mm(297.0), "Whitepaper");
+    let (mut current_page, mut current_layer) = doc.add_page(Mm(210.0), Mm(297.0), "Whitepaper");
 
     let mut layer = doc.get_page(current_page).get_layer(current_layer);
 
     let mut table_row_index: usize = 0;
     let mut was_table_line = false;
 
-    let ensure_space = |
-        y: &mut f32,
-        page_num: &mut usize,
-        current_page: &mut PdfPageIndex,
-        current_layer: &mut PdfLayerIndex,
-        layer: &mut PdfLayerReference,
-        doc: &PdfDocumentReference,
-        font: &IndirectFontRef,
-    | {
+    let ensure_space = |y: &mut f32,
+                        page_num: &mut usize,
+                        current_page: &mut PdfPageIndex,
+                        current_layer: &mut PdfLayerIndex,
+                        layer: &mut PdfLayerReference,
+                        doc: &PdfDocumentReference,
+                        font: &IndirectFontRef| {
         if *y < page_height_bottom {
             add_footer(layer, font, *page_num);
             *page_num += 1;
-            let (new_page, new_layer) =
-                doc.add_page(Mm(210.0), Mm(297.0), "Whitepaper");
+            let (new_page, new_layer) = doc.add_page(Mm(210.0), Mm(297.0), "Whitepaper");
             *current_page = new_page;
             *current_layer = new_layer;
             *layer = doc.get_page(*current_page).get_layer(*current_layer);
@@ -191,7 +194,6 @@ fn generate_pdf(text: &str, output: &str) {
     };
 
     for raw_line in text.lines() {
-
         if let Some(cells) = parse_table_row(raw_line) {
             was_table_line = true;
 
@@ -199,9 +201,21 @@ fn generate_pdf(text: &str, output: &str) {
                 continue;
             }
 
-            ensure_space(&mut y, &mut page_num, &mut current_page, &mut current_layer, &mut layer, &doc, &font);
+            ensure_space(
+                &mut y,
+                &mut page_num,
+                &mut current_page,
+                &mut current_layer,
+                &mut layer,
+                &doc,
+                &font,
+            );
 
-            let row_font = if table_row_index == 0 { &font_bold } else { &font };
+            let row_font = if table_row_index == 0 {
+                &font_bold
+            } else {
+                &font
+            };
 
             let c0 = cells.get(0).map(|s| s.as_str()).unwrap_or("");
             let c1 = cells.get(1).map(|s| s.as_str()).unwrap_or("");
@@ -223,16 +237,22 @@ fn generate_pdf(text: &str, output: &str) {
             was_table_line = false;
         }
 
-        let clean = raw_line
-            .replace("#", "")
-            .replace("*", "");
+        let clean = raw_line.replace("#", "").replace("*", "");
 
         if clean.trim().is_empty() {
             continue;
         }
 
         for wrapped in wrap_line(clean.trim(), MAX_CHARS_PER_LINE) {
-            ensure_space(&mut y, &mut page_num, &mut current_page, &mut current_layer, &mut layer, &doc, &font);
+            ensure_space(
+                &mut y,
+                &mut page_num,
+                &mut current_page,
+                &mut current_layer,
+                &mut layer,
+                &doc,
+                &font,
+            );
             layer.use_text(wrapped, 10.0, Mm(25.0), Mm(y), &font);
             y -= line_height;
         }
@@ -244,18 +264,13 @@ fn generate_pdf(text: &str, output: &str) {
     // SAVE
     //
 
-    let file = File::create(Path::new(output))
-        .expect("Cannot create PDF file");
+    let file = File::create(Path::new(output)).expect("Cannot create PDF file");
 
     doc.save(&mut BufWriter::new(file))
         .expect("Cannot save PDF");
 }
 
-fn add_footer(
-    layer: &PdfLayerReference,
-    font: &IndirectFontRef,
-    page: usize,
-) {
+fn add_footer(layer: &PdfLayerReference, font: &IndirectFontRef, page: usize) {
     layer.use_text(
         format!(
             "Evident Ledger Technical Whitepaper v1.0 | Confidential Technical Documentation | Page {}",

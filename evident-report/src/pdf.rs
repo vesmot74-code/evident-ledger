@@ -405,7 +405,7 @@ fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
         "#",
         "Evidence Item",
         "Chain Status",
-     "Original File Verification",
+        "Original File Verification",
         8.0,
         true,
     );
@@ -413,12 +413,12 @@ fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
 
     for (i, file) in verification.files.iter().enumerate() {
         let chain_status = if file.chain_valid { "VALID" } else { "INVALID" };
-     let local_status = match file.local_integrity_ok {
+        let local_status = match file.local_integrity_ok {
             Some(true) => "VALID",
             Some(false) => "TAMPERED",
             None => "NOT STORED",
         };
-      let display_name: String = file.file_name.chars().take(36).collect();
+        let display_name: String = file.file_name.chars().take(36).collect();
         ctx.table_row(
             &format!("{}", i + 1),
             &display_name,

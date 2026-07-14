@@ -6,7 +6,6 @@ use evident_report::{
     generate_report, EventSummary, FileStatus, ProofData, TsaData as ReportTsaData,
     VerificationContext,
 };
-use notary_pdf::{generate_certificate_pdf, CertificateInput, CertificateStatus};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -330,24 +329,13 @@ impl App {
         }
     }
 
-    fn check_local_integrity(
-        originals_dir: &Path,
-        sequence: i64,
-        expected_hash: &str,
-    ) -> Option<bool> {
-        let prefix = format!("{:04}_", sequence);
-        let entries = fs::read_dir(originals_dir).ok()?;
-        for entry in entries.flatten() {
-            let path = entry.path();
-            if let Some(name) = path.file_name().and_then(|n| n.to_str()) {
-                if name.starts_with(&prefix) && path.is_file() {
-                    let bytes = fs::read(&path).ok()?;
-                    let actual_hash = file_hash_from_bytes(&bytes);
-                    return Some(actual_hash == expected_hash);
-                }
-            }
+    fn check_local_integrity(local_path: &Path, expected_hash: &str) -> Option<bool> {
+        if !local_path.is_file() {
+            return None;
         }
-        None
+        let bytes = fs::read(local_path).ok()?;
+        let actual_hash = file_hash_from_bytes(&bytes);
+        Some(actual_hash == expected_hash)
     }
 
     fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, PathBuf> {
@@ -365,15 +353,6 @@ impl App {
         let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
         fs::create_dir_all(proofs_dir).map_err(|e| e.to_string())?;
         fs::write(proofs_dir.join("local_copies.json"), json).map_err(|e| e.to_string())
-    }
-
-    fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
-        let prefix = format!("{:04}_", sequence);
-        fs::read_dir(originals_dir)
-            .ok()?
-            .flatten()
-            .find(|e| e.file_name().to_string_lossy().starts_with(&prefix))
-            .map(|e| e.file_name().to_string_lossy().into_owned())
     }
 
     /// Loads the most complete locally saved proof snapshot for a project,
@@ -412,7 +391,6 @@ impl App {
     /// that still needs the server's public key.
     fn build_local_events(
         proof: &client::ProofFile,
-        originals_dir: &Path,
         proofs_dir: &Path,
     ) -> Vec<VerificationEvent> {
         let mut sorted = proof.events.clone();
@@ -430,22 +408,17 @@ impl App {
             let (local_integrity_ok, file_name) = if let Some(copy_path) =
                 local_copies.get(&leaf.event_id)
             {
-                match fs::read(copy_path) {
-                    Ok(bytes) => {
-                        let actual_hash = file_hash_from_bytes(&bytes);
-                        let name = copy_path
-                            .file_name()
-                            .map(|n| n.to_string_lossy().to_string())
-                            .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
-                        (Some(actual_hash == leaf.file_hash), name)
-                    }
-                    Err(_) => (None, format!("event {:04} (missing)", leaf.sequence)),
-                }
-            } else {
-                let ok = Self::check_local_integrity(originals_dir, leaf.sequence, &leaf.file_hash);
-                let name = Self::find_original_name(originals_dir, leaf.sequence)
-                    .unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
+                let ok = Self::check_local_integrity(copy_path, &leaf.file_hash);
+                let name = copy_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
                 (ok, name)
+            } else {
+                (
+                    None,
+                    format!("event {:04} (not stored)", leaf.sequence),
+                )
             };
 
             events.push(VerificationEvent {
@@ -477,7 +450,6 @@ impl App {
         event: &VerificationEvent,
     ) -> Result<PathBuf, String> {
         let project_path = projects_dir.join(project_name);
-        let originals_dir = project_path.join("originals");
         let proofs_dir = project_path.join("proofs");
 
         fs::create_dir_all(&proofs_dir).map_err(|e| format!("Failed to create proofs dir: {e}"))?;
@@ -488,30 +460,18 @@ impl App {
             .find(|e| e.event_id == event.event_id)
             .ok_or_else(|| "Event not found in proof chain".to_string())?;
 
-        // Та же двухуровневая логика, что и в build_local_events: сначала
-        // проверяем local_copies.json (осознанный выбор пользователя),
-        // и только если записи нет — fallback на legacy originals/.
         let local_copies = Self::load_local_copies(&proofs_dir);
         let (fresh_local_integrity_ok, file_name) = if let Some(copy_path) =
             local_copies.get(&event.event_id)
         {
-            match fs::read(copy_path) {
-                Ok(bytes) => {
-                    let actual_hash = file_hash_from_bytes(&bytes);
-                    let name = copy_path
-                        .file_name()
-                        .map(|n| n.to_string_lossy().to_string())
-                        .unwrap_or_else(|| event.file_name.clone());
-                    (Some(actual_hash == event_leaf.file_hash), name)
-                }
-                Err(_) => (None, format!("event {:04} (missing)", event.sequence)),
-            }
-        } else {
-            let ok =
-                Self::check_local_integrity(&originals_dir, event.sequence, &event_leaf.file_hash);
-            let name = Self::find_original_name(&originals_dir, event.sequence)
+            let ok = Self::check_local_integrity(copy_path, &event_leaf.file_hash);
+            let name = copy_path
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
                 .unwrap_or_else(|| event.file_name.clone());
             (ok, name)
+        } else {
+            (None, event.file_name.clone())
         };
 
         let single_event_summary = EventSummary {
@@ -634,66 +594,6 @@ impl App {
         (proof_data, verification)
     }
 
-    fn build_certificate_input(
-        proof: &client::ProofFile,
-        events: &[VerificationEvent],
-        originals_dir: &Path,
-        verify_valid: bool,
-    ) -> CertificateInput {
-        let head_event = events.iter().find(|e| e.event_id == proof.head_event_id);
-
-        let file_name = head_event
-            .map(|e| e.file_name.clone())
-            .unwrap_or_else(|| "unknown".to_string());
-
-        let file_size_kb = fs::metadata(originals_dir.join(&file_name))
-            .map(|m| m.len() / 1024)
-            .unwrap_or(0);
-
-        let sha256 = proof
-            .events
-            .iter()
-            .find(|e| e.event_id == proof.head_event_id)
-            .map(|e| e.file_hash.clone())
-            .or_else(|| proof.events.last().map(|e| e.file_hash.clone()))
-            .unwrap_or_default();
-
-        let status = if !verify_valid {
-            CertificateStatus::InvalidHash
-        } else if proof.tsa.is_none() {
-            CertificateStatus::MissingTsa
-        } else {
-            CertificateStatus::Valid
-        };
-
-        let tsa_timestamp_utc = match proof.tsa.as_ref().and_then(|t| t.timestamp) {
-            Some(ts) => CertificateInput::format_timestamp_unix(ts as u64),
-            None => "not confirmed".to_string(),
-        };
-        let tsa_token = proof
-            .tsa
-            .as_ref()
-            .and_then(|t| t.token_bytes)
-            .unwrap_or(0)
-            .to_string();
-
-        CertificateInput {
-            status,
-            file_hash_valid: verify_valid,
-            tsa_valid: proof.tsa.is_some(),
-            proof_id: proof.chain_id.clone(),
-            sha256,
-            object_type: "file".into(),
-            created_at_utc: Utc::now().to_rfc3339(),
-            tsa_provider: "FreeTSA".into(),
-            tsa_timestamp_utc,
-            tsa_token_base64: tsa_token,
-            verify_url: format!("https://example.com/verify/{}", proof.chain_id),
-            file_size_kb,
-            file_name,
-        }
-    }
-
     fn export_chain_zip(
         projects_dir: &Path,
         project_name: &str,
@@ -704,7 +604,6 @@ impl App {
     ) -> Result<PathBuf, String> {
         let project_path = projects_dir.join(project_name);
 
-        let originals_dir = project_path.join("originals");
         let proofs_dir = project_path.join("proofs");
 
         fs::create_dir_all(&proofs_dir).map_err(|e| e.to_string())?;
@@ -729,16 +628,18 @@ impl App {
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
         // Файлы система никогда не хранит. Если пользователь явно включил
-        // опцию, они читаются с его устройства и кладутся в архив только
-        // сейчас, в момент экспорта — это разовое действие пользователя,
-        // а не хранение внутри системы.
+        // опцию, они читаются с его устройства по пути из local_copies.json
+        // и кладутся в архив только сейчас, в момент экспорта.
+        let local_copies = Self::load_local_copies(&proofs_dir);
         let mut included_files_count = 0usize;
         if include_originals {
             for event in events {
-                if let Some(name) = Self::find_original_name(&originals_dir, event.sequence) {
-                    let path = originals_dir.join(&name);
-
-                    if let Ok(bytes) = fs::read(&path) {
+                if let Some(path) = local_copies.get(&event.event_id) {
+                    if let Ok(bytes) = fs::read(path) {
+                        let name = path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| format!("event_{:04}", event.sequence));
                         zip.start_file(format!("events/{}", name), options)
                             .map_err(|e| e.to_string())?;
 
@@ -755,6 +656,12 @@ impl App {
         let pdf = fs::read(&pdf_path).map_err(|e| e.to_string())?;
 
         zip.write_all(&pdf).map_err(|e| e.to_string())?;
+
+        let proof_json = serde_json::to_string_pretty(proof).map_err(|e| e.to_string())?;
+        zip.start_file("proof.json", options)
+            .map_err(|e| e.to_string())?;
+        zip.write_all(proof_json.as_bytes())
+            .map_err(|e| e.to_string())?;
 
         let manifest = serde_json::json!({
             "chain_id": proof.chain_id,
@@ -786,11 +693,18 @@ impl App {
                 .to_rfc3339()
         });
 
-        zip.start_file("chain_manifest.json", options)
+        zip.start_file("manifest.json", options)
             .map_err(|e| e.to_string())?;
 
         zip.write_all(serde_json::to_string_pretty(&manifest).unwrap().as_bytes())
             .map_err(|e| e.to_string())?;
+
+        let audit_path = project_path.join("audit").join("audit.jsonl");
+        if let Ok(audit_bytes) = fs::read(&audit_path) {
+            zip.start_file("audit.jsonl", options)
+                .map_err(|e| e.to_string())?;
+            zip.write_all(&audit_bytes).map_err(|e| e.to_string())?;
+        }
 
         let contents_line = if include_originals {
             "- events/                 Original evidence files (added from your device at export time)\n"
@@ -815,7 +729,9 @@ impl App {
              Package contents:\n\
              {}\
              - evidence_snapshot.pdf   Human-readable verification report\n\
-             - chain_manifest.json     Machine-readable proof data\n\
+             - manifest.json           Machine-readable proof data\n\
+             - proof.json              Full cryptographic proof snapshot\n\
+             - audit.jsonl             Append-only audit chain\n\
              - README.txt              Package description\n\n\
              Verification:\n\
              Recalculate SHA-256 hashes of any presented file and compare\n\
@@ -962,62 +878,6 @@ impl App {
             )
         })?;
         Ok(())
-    }
-
-    fn persist_original(
-        &self,
-        project_path: &Path,
-        source_path: &Path,
-        sequence: i64,
-    ) -> Result<String, String> {
-        assert!(sequence > 0, "invalid sequence");
-
-        let originals_dir = project_path.join("originals");
-        fs::create_dir_all(&originals_dir).map_err(|e| {
-            format!(
-                "{} originals: {e}",
-                self.tr("Не удалось создать", "Failed to create")
-            )
-        })?;
-
-        let file_name = source_path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("document")
-            .to_string();
-        let stem = source_path
-            .file_stem()
-            .and_then(|name| name.to_str())
-            .unwrap_or("document")
-            .to_string();
-        let ext = source_path
-            .extension()
-            .and_then(|name| name.to_str())
-            .unwrap_or("")
-            .to_string();
-
-        let mut candidate_sequence = sequence;
-        loop {
-            let candidate_name = if ext.is_empty() {
-                format!("{:04}_{}", candidate_sequence, file_name)
-            } else {
-                format!("{:04}_{}.{}", candidate_sequence, stem, ext)
-            };
-            let candidate_path = originals_dir.join(&candidate_name);
-            if !candidate_path.exists() {
-                fs::copy(source_path, &candidate_path).map_err(|e| {
-                    format!(
-                        "{}: {e}",
-                        self.tr(
-                            "Не удалось сохранить оригинал",
-                            "Failed to save the original file"
-                        )
-                    )
-                })?;
-                return Ok(candidate_name);
-            }
-            candidate_sequence += 1;
-        }
     }
 
     fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
@@ -1168,7 +1028,6 @@ impl App {
             }
         };
 
-        let originals_dir = project_path.join("originals");
         let proofs_dir = project_path.join("proofs");
 
         // === LOCAL-FIRST: build the picture from disk, no network needed ===
@@ -1176,7 +1035,7 @@ impl App {
             Some(local_proof) => {
                 self.state.head_event_id = Some(local_proof.head_event_id.clone());
                 self.verification_events =
-                    Self::build_local_events(&local_proof, &originals_dir, &proofs_dir);
+                    Self::build_local_events(&local_proof, &proofs_dir);
                 self.last_proof = Some(local_proof);
 
                 let local_chain_ok = self.verification_events.iter().all(|e| e.valid);

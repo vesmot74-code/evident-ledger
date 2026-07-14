@@ -17,17 +17,22 @@ Deterministic verifiable event ledger with cryptographic proofs and offline veri
 
 ## 2. STORAGE MODEL
 
+Evident Ledger follows a zero-file custody model.
+Original documents are never stored automatically.
+The system stores cryptographic references only.
+Optional local copies are user-controlled and referenced through `local_copies.json`.
+
 The system currently utilizes two independent storage backends.
 
 ## 2.1 GUI Storage (`evident-gui`)
 
-
-
 ```text
 ~/Evident Projects/<project_name>/
-  originals/
+  project.json
   proofs/
-  Audit/
+    <event_id>.json
+    local_copies.json   (optional, user-controlled)
+  audit/
     audit.jsonl
 ```
 
@@ -40,6 +45,9 @@ project.json
 ```
 
 with a unique `chain_id` (UUID v4).
+
+The GUI never creates an `originals/` directory and never copies user files automatically.
+After commit, the user may optionally save a local copy; if they do, the absolute path is recorded in `proofs/local_copies.json`.
 
 ---
 
@@ -95,10 +103,12 @@ proof
 verify
  ↓
 report
+ ↓
+(optional) user saves local copy → local_copies.json
 ```
 
 The cryptographic pipeline is identical for GUI and CLI.
-
+The GUI never stores the original file automatically.
 Storage entry points differ.
 
 ---
@@ -135,18 +145,36 @@ Response:
 
 ## 4.2 Local File Verification
 
-The GUI additionally verifies local files.
+The GUI optionally verifies user-controlled local copies.
 
-Verification compares:
+Verification reads paths from:
 
 ```text
-originals/*
+proofs/local_copies.json
 ```
 
-SHA-256 hashes against recorded:
+and compares SHA-256 hashes against recorded:
 
 ```text
 file_hash
+```
+
+If no local copy was saved by the user, integrity status is:
+
+```text
+NOT STORED (local_integrity_ok = None)
+```
+
+If a local copy exists and matches:
+
+```text
+VALID (local_integrity_ok = Some(true))
+```
+
+If a local copy exists but the hash differs:
+
+```text
+TAMPERED (local_integrity_ok = Some(false))
 ```
 
 Final GUI status consists of two independent checks:
@@ -249,20 +277,24 @@ Created after backend confirmation.
 
 ---
 
-# 6. ORIGINAL FILE NAMING
+# 6. LOCAL COPY REFERENCE MODEL
+
+Optional user-controlled local copies are referenced in:
+
+```text
+proofs/local_copies.json
+```
 
 Format:
 
-```text
-originals/{sequence:04}_{filename}
+```json
+{
+  "<event_uuid>": "/absolute/path/to/file.pdf"
+}
 ```
 
-Examples:
-
-```text
-0001_document.rtf
-0002_report.pdf
-```
+The system never writes to this file automatically during commit.
+The user explicitly chooses whether to save a local copy after commit.
 
 ---
 
@@ -363,7 +395,6 @@ is used.
 # 10. KNOWN LIMITATIONS
 
 * GUI and CLI use separate storage backends.
-* GUI ZIP export button exists but functionality is not implemented.
 * TSA depends on external provider availability.
 * Server requires PostgreSQL.
 * Storage unification is planned future work.
@@ -420,10 +451,11 @@ CLI sequence checking.
 
 ## Local Integrity Verification
 
-Verified manually through regression testing:
+Verified through `local_copies.json` workflow:
 
-* original file modification detection
-* hash mismatch detection
+* missing local copy → NOT STORED
+* matching hash → VALID
+* modified file → TAMPERED
 
 ---
 
@@ -439,11 +471,11 @@ Implemented:
 * PDF evidence reports
 * RFC3161 TSA integration layer
 * GUI verification workflow
+* GUI ZIP evidence export (via local_copies.json)
 * CLI verification workflow
 
 Future improvements:
 
 * unified storage model
-* automated ZIP evidence export
 * expanded automated test coverage
 * additional TSA providers

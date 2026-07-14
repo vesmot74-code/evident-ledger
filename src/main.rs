@@ -15,7 +15,6 @@ mod signing;
 mod state;
 mod tsa_worker;
 
-
 async fn serve_whitepaper_pdf() -> impl axum::response::IntoResponse {
     let pdf_bytes: &'static [u8] =
         include_bytes!("../docs/whitepaper/Evident_Ledger_Technical_Whitepaper_v1.0.pdf");
