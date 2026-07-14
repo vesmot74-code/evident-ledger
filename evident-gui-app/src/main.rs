@@ -16,6 +16,14 @@ use std::process::Command;
 use uuid::Uuid;
 use zip::write::{SimpleFileOptions, ZipWriter};
 
+/// Базовый URL сервера Evident Ledger.
+/// По умолчанию — локальный сервер для разработки.
+/// Переопределяется переменной окружения EVIDENT_SERVER_URL,
+/// например EVIDENT_SERVER_URL=https://api.evident-ledger.com
+fn server_url() -> String {
+    std::env::var("EVIDENT_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string())
+}
+
 // ============================================================================
 // LANGUAGE
 // ============================================================================
@@ -44,7 +52,6 @@ impl Project {
     fn save(&self, projects_dir: &PathBuf) -> Result<(), std::io::Error> {
         let project_path = Self::path(projects_dir, &self.name);
         fs::create_dir_all(&project_path)?;
-        fs::create_dir_all(project_path.join("originals"))?;
         fs::create_dir_all(project_path.join("proofs"))?;
         fs::create_dir_all(project_path.join("audit"))?;
         let path = project_path.join("project.json");
@@ -343,7 +350,7 @@ impl App {
         None
     }
 
-fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, PathBuf> {
+    fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, PathBuf> {
         let path = proofs_dir.join("local_copies.json");
         let Ok(contents) = fs::read_to_string(&path) else {
             return std::collections::HashMap::new();
@@ -359,7 +366,6 @@ fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, Pat
         fs::create_dir_all(proofs_dir).map_err(|e| e.to_string())?;
         fs::write(proofs_dir.join("local_copies.json"), json).map_err(|e| e.to_string())
     }
-
 
     fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
         let prefix = format!("{:04}_", sequence);
@@ -404,7 +410,7 @@ fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, Pat
     /// `valid` here means "locally self-consistent" (hash-chain sequence
     /// intact + file hash matches on disk), NOT a full signature check —
     /// that still needs the server's public key.
-fn build_local_events(
+    fn build_local_events(
         proof: &client::ProofFile,
         originals_dir: &Path,
         proofs_dir: &Path,
@@ -421,29 +427,26 @@ fn build_local_events(
             let chain_ok = leaf.parent_event_id == expected_parent;
             expected_parent = leaf.event_id.clone();
 
-            let (local_integrity_ok, file_name) =
-                if let Some(copy_path) = local_copies.get(&leaf.event_id) {
-                    match fs::read(copy_path) {
-                        Ok(bytes) => {
-                            let actual_hash = file_hash_from_bytes(&bytes);
-                            let name = copy_path
-                                .file_name()
-                                .map(|n| n.to_string_lossy().to_string())
-                                .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
-                            (Some(actual_hash == leaf.file_hash), name)
-                        }
-                        Err(_) => (None, format!("event {:04} (missing)", leaf.sequence)),
+            let (local_integrity_ok, file_name) = if let Some(copy_path) =
+                local_copies.get(&leaf.event_id)
+            {
+                match fs::read(copy_path) {
+                    Ok(bytes) => {
+                        let actual_hash = file_hash_from_bytes(&bytes);
+                        let name = copy_path
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
+                        (Some(actual_hash == leaf.file_hash), name)
                     }
-                } else {
-                    let ok = Self::check_local_integrity(
-                        originals_dir,
-                        leaf.sequence,
-                        &leaf.file_hash,
-                    );
-                    let name = Self::find_original_name(originals_dir, leaf.sequence)
-                        .unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
-                    (ok, name)
-                };
+                    Err(_) => (None, format!("event {:04} (missing)", leaf.sequence)),
+                }
+            } else {
+                let ok = Self::check_local_integrity(originals_dir, leaf.sequence, &leaf.file_hash);
+                let name = Self::find_original_name(originals_dir, leaf.sequence)
+                    .unwrap_or_else(|| format!("event {:04} (missing)", leaf.sequence));
+                (ok, name)
+            };
 
             events.push(VerificationEvent {
                 sequence: leaf.sequence,
@@ -485,11 +488,31 @@ fn build_local_events(
             .find(|e| e.event_id == event.event_id)
             .ok_or_else(|| "Event not found in proof chain".to_string())?;
 
-        let file_name = Self::find_original_name(&originals_dir, event.sequence)
-            .unwrap_or_else(|| event.file_name.clone());
-
-        let fresh_local_integrity_ok =
-            Self::check_local_integrity(&originals_dir, event.sequence, &event_leaf.file_hash);
+        // Та же двухуровневая логика, что и в build_local_events: сначала
+        // проверяем local_copies.json (осознанный выбор пользователя),
+        // и только если записи нет — fallback на legacy originals/.
+        let local_copies = Self::load_local_copies(&proofs_dir);
+        let (fresh_local_integrity_ok, file_name) = if let Some(copy_path) =
+            local_copies.get(&event.event_id)
+        {
+            match fs::read(copy_path) {
+                Ok(bytes) => {
+                    let actual_hash = file_hash_from_bytes(&bytes);
+                    let name = copy_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| event.file_name.clone());
+                    (Some(actual_hash == event_leaf.file_hash), name)
+                }
+                Err(_) => (None, format!("event {:04} (missing)", event.sequence)),
+            }
+        } else {
+            let ok =
+                Self::check_local_integrity(&originals_dir, event.sequence, &event_leaf.file_hash);
+            let name = Self::find_original_name(&originals_dir, event.sequence)
+                .unwrap_or_else(|| event.file_name.clone());
+            (ok, name)
+        };
 
         let single_event_summary = EventSummary {
             event_id: event_leaf.event_id.clone(),
@@ -527,7 +550,7 @@ fn build_local_events(
             created_at,
         };
 
-        let verify_valid_now = event.valid && fresh_local_integrity_ok == Some(true);
+        let verify_valid_now = event.valid && fresh_local_integrity_ok != Some(false);
 
         let files = vec![FileStatus {
             file_name,
@@ -559,9 +582,7 @@ fn build_local_events(
         Ok(pdf_path)
     }
 
-    fn build_registration_snapshot(
-        proof: &client::ProofFile,
-    ) -> (ProofData, VerificationContext) {
+    fn build_registration_snapshot(proof: &client::ProofFile) -> (ProofData, VerificationContext) {
         let event_summaries: Vec<EventSummary> = proof
             .events
             .iter()
@@ -572,16 +593,18 @@ fn build_local_events(
             })
             .collect();
 
-        let tsa_complete = proof.tsa.as_ref().and_then(|t| {
-            match (t.timestamp, &t.serial, t.token_bytes) {
-                (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
-                    timestamp: ts,
-                    serial: serial.clone(),
-                    token_bytes: tb as usize,
-                }),
-                _ => None,
-            }
-        });
+        let tsa_complete =
+            proof
+                .tsa
+                .as_ref()
+                .and_then(|t| match (t.timestamp, &t.serial, t.token_bytes) {
+                    (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
+                        timestamp: ts,
+                        serial: serial.clone(),
+                        token_bytes: tb as usize,
+                    }),
+                    _ => None,
+                });
 
         let created_at = proof
             .tsa
@@ -671,7 +694,7 @@ fn build_local_events(
         }
     }
 
-     fn export_chain_zip(
+    fn export_chain_zip(
         projects_dir: &Path,
         project_name: &str,
         proof: &client::ProofFile,
@@ -769,8 +792,7 @@ fn build_local_events(
         zip.write_all(serde_json::to_string_pretty(&manifest).unwrap().as_bytes())
             .map_err(|e| e.to_string())?;
 
-       
-let contents_line = if include_originals {
+        let contents_line = if include_originals {
             "- events/                 Original evidence files (added from your device at export time)\n"
         } else {
             ""
@@ -927,19 +949,13 @@ let contents_line = if include_originals {
     }
 
     fn ensure_project_layout(&self, project_path: &Path) -> Result<(), String> {
-        fs::create_dir_all(project_path.join("originals")).map_err(|e| {
-            format!(
-                "{} originals: {e}",
-                self.tr("Не удалось создать", "Failed to create")
-            )
-        })?;
         fs::create_dir_all(project_path.join("proofs")).map_err(|e| {
             format!(
                 "{} proofs: {e}",
                 self.tr("Не удалось создать", "Failed to create")
             )
         })?;
-fs::create_dir_all(project_path.join("audit")).map_err(|e| {
+        fs::create_dir_all(project_path.join("audit")).map_err(|e| {
             format!(
                 "{} audit: {e}",
                 self.tr("Не удалось создать", "Failed to create")
@@ -1004,7 +1020,7 @@ fs::create_dir_all(project_path.join("audit")).map_err(|e| {
         }
     }
 
-fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
+    fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
         let audit_path = project_path.join("audit").join("audit.jsonl");
         let store = AuditStore::new(&audit_path);
         store.append(&event).map_err(|e| {
@@ -1159,15 +1175,23 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
         match Self::load_local_proof(&proofs_dir) {
             Some(local_proof) => {
                 self.state.head_event_id = Some(local_proof.head_event_id.clone());
-                    self.verification_events =
+                self.verification_events =
                     Self::build_local_events(&local_proof, &originals_dir, &proofs_dir);
                 self.last_proof = Some(local_proof);
 
                 let local_chain_ok = self.verification_events.iter().all(|e| e.valid);
+                // "Tampered" — это только реальное несовпадение хэша (Some(false)).
+                // Some(None) означает "файл не был предоставлен для сверки" —
+                // это ожидаемое, нормальное состояние в модели без хранения
+                // файлов, а не проблема с доказательством.
                 let local_tampered = self
                     .verification_events
                     .iter()
-                    .any(|e| e.local_integrity_ok != Some(true));
+                    .any(|e| e.local_integrity_ok == Some(false));
+                let any_not_stored = self
+                    .verification_events
+                    .iter()
+                    .any(|e| e.local_integrity_ok.is_none());
 
                 self.verify_status = if !local_chain_ok {
                     VerifyStatus::Invalid
@@ -1176,6 +1200,10 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
                 } else {
                     VerifyStatus::Valid
                 };
+
+                // Not stored files are normal and don't affect verify_status,
+                // but worth surfacing separately if needed later:
+                let _ = any_not_stored;
 
                 self.status = self
                     .tr(
@@ -1209,10 +1237,45 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
             let pinned_key_path =
                 dirs::home_dir().map(|home| home.join(".evident").join("server_identity.pub"));
 
-            let trusted_public_key = pinned_key_path
+            let mut trusted_public_key = pinned_key_path
                 .as_ref()
                 .and_then(|p| fs::read_to_string(p).ok())
                 .map(|k| k.trim().to_string());
+
+            // TOFU: если локального ключа ещё нет вообще (первое использование
+            // на этой машине), запрашиваем его у сервера один раз и сохраняем.
+            // Если ключ уже есть — НЕ трогаем его автоматически: молчаливая
+            // замена доверенного ключа убила бы саму цель пиннинга (позволила
+            // бы не заметить подмену ключа сервером/атакующим).
+            if trusted_public_key.is_none() {
+                if let Some(path) = pinned_key_path.as_ref() {
+                    let client = EvidentClient::new(server_url());
+                    match client.fetch_identity() {
+                        Ok(key) => {
+                            let _ = fs::write(path, &key);
+                            let key_prefix = &key[..16.min(key.len())];
+                            self.status = if self.lang == Lang::Ru {
+                                format!("🔑 Ключ сервера сохранён впервые (TOFU): {}", key_prefix)
+                            } else {
+                                format!(
+                                    "🔑 Server key pinned for the first time (TOFU): {}",
+                                    key_prefix
+                                )
+                            };
+                            trusted_public_key = Some(key);
+                        }
+                        Err(e) => {
+                            self.status = format!(
+                                "⚠️ {}: {e}",
+                                self.tr(
+                                    "Не удалось получить ключ сервера",
+                                    "Failed to fetch the server key"
+                                )
+                            );
+                        }
+                    }
+                }
+            }
 
             match trusted_public_key {
                 Some(key) => {
@@ -1227,7 +1290,12 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
                     if !sig_valid {
                         self.verify_status = VerifyStatus::Invalid;
                         self.status = self
-                            .tr("❌ Подпись недействительна", "❌ Signature is invalid")
+                            .tr(
+                                "❌ Подпись недействительна — ключ сервера мог измениться. \
+                                 Если вы уверены, что это ожидаемо, обновите доверенный ключ вручную.",
+                                "❌ Signature is invalid — the server key may have changed. \
+                                 If this is expected, update the trusted key manually."
+                            )
                             .to_string();
                     }
                 }
@@ -1375,7 +1443,7 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
         let file_name = self.file_name.clone();
 
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new("http://127.0.0.1:3000");
+            let client = EvidentClient::new(server_url());
             match client.submit_event(chain_uuid, &file_bytes) {
                 Ok((commit, proof_path, file_hash)) => {
                     let _ = tx.send(WorkerResponse::CommitDone(Ok(CommitSuccess {
@@ -1464,7 +1532,7 @@ fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(
         let ctx = ctx.clone();
         let lang = self.lang;
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new("http://127.0.0.1:3000");
+            let client = EvidentClient::new(server_url());
             let result =
                 client::verify_chain(&client, chain_id).map_err(|e| friendly_error(&e, lang));
             let _ = tx.send(WorkerResponse::VerifyChainDone(result));
@@ -1574,7 +1642,7 @@ impl eframe::App for App {
 
                             self.state.head_event_id = Some(commit.head_event_id.clone());
 
-self.event_id = commit.event_id.clone();
+                            self.event_id = commit.event_id.clone();
                             let proof_name = format!("{}.json", self.event_id);
                             let dest_proof = proofs_dir.join(&proof_name);
                             let _ = fs::copy(&proof_path, &dest_proof);
@@ -1594,9 +1662,7 @@ self.event_id = commit.event_id.clone();
                                     .events
                                     .iter()
                                     .find(|leaf| leaf.event_id == commit.event_id)
-                                    .and_then(|leaf| {
-                                        Uuid::parse_str(&leaf.parent_event_id).ok()
-                                    });
+                                    .and_then(|leaf| Uuid::parse_str(&leaf.parent_event_id).ok());
 
                                 let proof = commit.tsa.as_ref().map(|_tsa| {
                                     ChainAnchorProof::new(
@@ -1616,12 +1682,11 @@ self.event_id = commit.event_id.clone();
                                         server_event_id,
                                         proof,
                                     );
-                                    let _ =
-                                        self.append_audit_event(&project_path, anchored_event);
+                                    let _ = self.append_audit_event(&project_path, anchored_event);
                                 }
                             }
 
-                            let report_client = EvidentClient::new("http://127.0.0.1:3000");
+                            let report_client = EvidentClient::new(server_url());
                             self.last_proof = client::fetch_proof(&report_client, chain_uuid).ok();
 
                             self.step = Step::Done;
@@ -2142,6 +2207,18 @@ if self.screen == Screen::FileSelection {
                     }
                 }
 
+              ui.add_space(12.0);
+                if ui
+                    .button(self.tr("🔄 Обновить проверку", "🔄 Re-check"))
+                    .clicked()
+                {
+                    self.verify_project(ui.ctx());
+                }
+                ui.small(self.tr(
+                    "Если вы изменили файл на диске, нажмите здесь, чтобы проверить его заново.",
+                    "If you changed the file on disk, click here to re-check it.",
+                ));
+
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui
@@ -2152,7 +2229,7 @@ if self.screen == Screen::FileSelection {
                             Some(cached_proof) => Uuid::parse_str(&cached_proof.chain_id)
                                 .ok()
                                 .and_then(|chain_uuid| {
-                                    let client = EvidentClient::new("http://127.0.0.1:3000");
+let client = EvidentClient::new(server_url());
                                     client::fetch_proof(&client, chain_uuid).ok()
                                 }),
                             None => None,
@@ -2164,7 +2241,11 @@ if self.screen == Screen::FileSelection {
                                     projects_dir.join(&self.verification_project).join("proofs");
                                 let _ = fs::create_dir_all(&proofs_dir);
 
-                                let verify_valid = self.verify_status == VerifyStatus::Valid;
+// LEDGER INTEGRITY отражает только целостность цепочки (parent-chain +
+// подпись). Испорченная/отсутствующая локальная копия файла — это
+// Partial, отдельная построчная история (FileStatus.local_integrity_ok),
+// и не должна ронять весь сертификат в FAIL. FAIL — только Invalid.
+let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStatus::Partial);
                                 let (proof_data, verification) = Self::build_evidence_snapshot(
                                     proof,
                                     &self.verification_events,
@@ -2235,7 +2316,11 @@ if self.screen == Screen::FileSelection {
                     {
                         match &self.last_proof {
                             Some(proof) => {
-                                let verify_valid = self.verify_status == VerifyStatus::Valid;
+// LEDGER INTEGRITY отражает только целостность цепочки (parent-chain +
+// подпись). Испорченная/отсутствующая локальная копия файла — это
+// Partial, отдельная построчная история (FileStatus.local_integrity_ok),
+// и не должна ронять весь сертификат в FAIL. FAIL — только Invalid.
+let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStatus::Partial);
 
                           match Self::export_chain_zip(
                                     &projects_dir,

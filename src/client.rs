@@ -122,6 +122,22 @@ impl EvidentClient {
             .and_then(|s| Uuid::parse_str(s).ok()))
     }
 
+    /// Запрашивает у сервера текущий публичный ключ подписи (Ed25519, hex).
+    /// Не сохраняет ничего на диск — сохранение/пиннинг ключа делает вызывающий
+    /// код осознанно (TOFU при первом использовании, либо явное обновление
+    /// по нажатию пользователя).
+    pub fn fetch_identity(&self) -> Result<String, ClientError> {
+        let resp = self
+            .client
+            .get(format!("{}/identity", self.base_url))
+            .send()?;
+        let json: serde_json::Value = resp.json()?;
+        json["public_key"]
+            .as_str()
+            .map(|s| s.to_string())
+            .ok_or_else(|| ClientError::Server("identity response missing public_key".to_string()))
+    }
+
     /// Отправляет событие на сервер, сохраняет ProofFile на диск.
     /// Возвращает (CommitResponse, путь_к_сохранённому_proof_json, sha256_файла).
     pub fn submit_event(

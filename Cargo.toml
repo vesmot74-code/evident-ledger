@@ -33,6 +33,7 @@ anyhow = "1"
 base64 = "0.21"
 notary-pdf = { path = "vendor/notary-pdf" }
 printpdf = "0.7"
+dirs = "6.0.0"
 
 [dependencies.evident-report]
 path = "evident-report"
