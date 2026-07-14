@@ -46,10 +46,7 @@ impl Project {
         fs::create_dir_all(&project_path)?;
         fs::create_dir_all(project_path.join("originals"))?;
         fs::create_dir_all(project_path.join("proofs"))?;
-        // NOTE: the on-disk folder name is kept as "Аудит" for backward
-        // compatibility with existing projects created before the EN/RU
-        // language switch was added. This is a storage path, not UI text.
-        fs::create_dir_all(project_path.join("Аудит"))?;
+        fs::create_dir_all(project_path.join("audit"))?;
         let path = project_path.join("project.json");
         fs::write(&path, serde_json::to_string_pretty(self)?)?;
         Ok(())
@@ -184,6 +181,10 @@ struct App {
     loading_verify_chain: bool,
     loading_commit: bool,
     last_proof: Option<client::ProofFile>,
+    // Пользовательский выбор для ZIP-экспорта: включать ли оригиналы файлов
+    // в архив. По умолчанию false — система не хранит и не экспортирует
+    // файлы без явного согласия пользователя на каждый конкретный экспорт.
+    include_originals_in_zip: bool,
 }
 
 impl Default for App {
@@ -224,6 +225,7 @@ impl Default for App {
             loading_verify_chain: false,
             loading_commit: false,
             last_proof: None,
+            include_originals_in_zip: false,
         }
     }
 }
@@ -340,6 +342,24 @@ impl App {
         }
         None
     }
+
+fn load_local_copies(proofs_dir: &Path) -> std::collections::HashMap<String, PathBuf> {
+        let path = proofs_dir.join("local_copies.json");
+        let Ok(contents) = fs::read_to_string(&path) else {
+            return std::collections::HashMap::new();
+        };
+        serde_json::from_str(&contents).unwrap_or_default()
+    }
+
+    fn save_local_copy(proofs_dir: &Path, event_id: &str, file_path: &Path) -> Result<(), String> {
+        let mut map = Self::load_local_copies(proofs_dir);
+        map.insert(event_id.to_string(), file_path.to_path_buf());
+
+        let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
+        fs::create_dir_all(proofs_dir).map_err(|e| e.to_string())?;
+        fs::write(proofs_dir.join("local_copies.json"), json).map_err(|e| e.to_string())
+    }
+
 
     fn find_original_name(originals_dir: &Path, sequence: i64) -> Option<String> {
         let prefix = format!("{:04}_", sequence);
@@ -517,6 +537,58 @@ impl App {
         Ok(pdf_path)
     }
 
+    fn build_registration_snapshot(
+        proof: &client::ProofFile,
+    ) -> (ProofData, VerificationContext) {
+        let event_summaries: Vec<EventSummary> = proof
+            .events
+            .iter()
+            .map(|e| EventSummary {
+                event_id: e.event_id.clone(),
+                file_hash: e.file_hash.clone(),
+                sequence: Some(e.sequence),
+            })
+            .collect();
+
+        let tsa_complete = proof.tsa.as_ref().and_then(|t| {
+            match (t.timestamp, &t.serial, t.token_bytes) {
+                (Some(ts), Some(serial), Some(tb)) => Some(ReportTsaData {
+                    timestamp: ts,
+                    serial: serial.clone(),
+                    token_bytes: tb as usize,
+                }),
+                _ => None,
+            }
+        });
+
+        let created_at = proof
+            .tsa
+            .as_ref()
+            .and_then(|t| t.timestamp)
+            .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
+
+        let proof_data = ProofData {
+            chain_id: proof.chain_id.clone(),
+            head_event_id: proof.head_event_id.clone(),
+            events: event_summaries,
+            root: proof.proof.root.clone(),
+            signature: proof.proof.signature.clone(),
+            public_key: proof.proof.public_key.clone(),
+            tsa: tsa_complete,
+            created_at,
+        };
+
+        let verification = VerificationContext {
+            is_valid: true,
+            verified_at: Utc::now(),
+            first_failure_sequence: None,
+            first_failure_error: None,
+            files: Vec::new(),
+        };
+
+        (proof_data, verification)
+    }
+
     fn build_certificate_input(
         proof: &client::ProofFile,
         events: &[VerificationEvent],
@@ -577,12 +649,13 @@ impl App {
         }
     }
 
-    fn export_chain_zip(
+     fn export_chain_zip(
         projects_dir: &Path,
         project_name: &str,
         proof: &client::ProofFile,
         events: &[VerificationEvent],
         verify_valid: bool,
+        include_originals: bool,
     ) -> Result<PathBuf, String> {
         let project_path = projects_dir.join(project_name);
 
@@ -610,15 +683,23 @@ impl App {
         let options =
             SimpleFileOptions::default().compression_method(zip::CompressionMethod::Deflated);
 
-        for event in events {
-            if let Some(name) = Self::find_original_name(&originals_dir, event.sequence) {
-                let path = originals_dir.join(&name);
+        // Файлы система никогда не хранит. Если пользователь явно включил
+        // опцию, они читаются с его устройства и кладутся в архив только
+        // сейчас, в момент экспорта — это разовое действие пользователя,
+        // а не хранение внутри системы.
+        let mut included_files_count = 0usize;
+        if include_originals {
+            for event in events {
+                if let Some(name) = Self::find_original_name(&originals_dir, event.sequence) {
+                    let path = originals_dir.join(&name);
 
-                if let Ok(bytes) = fs::read(&path) {
-                    zip.start_file(format!("events/{}", name), options)
-                        .map_err(|e| e.to_string())?;
+                    if let Ok(bytes) = fs::read(&path) {
+                        zip.start_file(format!("events/{}", name), options)
+                            .map_err(|e| e.to_string())?;
 
-                    zip.write_all(&bytes).map_err(|e| e.to_string())?;
+                        zip.write_all(&bytes).map_err(|e| e.to_string())?;
+                        included_files_count += 1;
+                    }
                 }
             }
         }
@@ -642,6 +723,11 @@ impl App {
 
             "verified": verify_valid,
 
+            "contains_original_files": include_originals,
+            "original_files_count": included_files_count,
+            "note": "The system does not store original files. This package \
+                     was assembled from the user's local device at export time.",
+
             "events": proof.events.iter().map(|e| {
                 serde_json::json!({
                     "sequence": e.sequence,
@@ -661,22 +747,35 @@ impl App {
         zip.write_all(serde_json::to_string_pretty(&manifest).unwrap().as_bytes())
             .map_err(|e| e.to_string())?;
 
+       
+let contents_line = if include_originals {
+            "- events/                 Original evidence files (added from your device at export time)\n"
+        } else {
+            ""
+        };
+
         let readme = format!(
-            "Evident Ledger — Full Chain Evidence Export\n\
-             ==========================================\n\
+            "Evident Ledger — Evidence Export\n\
+             =================================\n\
              Project: {}\n\
              Chain ID: {}\n\
              Events: {}\n\
              Status: {}\n\
+             Original files included: {}\n\
              Exported: {}\n\n\
+             Important:\n\
+             The Evident Ledger system does not store original files.\n\
+             It registers cryptographic hashes only. Any files present\n\
+             in this package (if any) were added from your device at\n\
+             the moment of export, by your explicit choice.\n\n\
              Package contents:\n\
-             - events/                 Original evidence files\n\
+             {}\
              - evidence_snapshot.pdf   Human-readable verification report\n\
              - chain_manifest.json     Machine-readable proof data\n\
              - README.txt              Package description\n\n\
              Verification:\n\
-             Recalculate SHA-256 hashes of files in events/\n\
-             and compare them with chain_manifest.json.\n",
+             Recalculate SHA-256 hashes of any presented file and compare\n\
+             them with the hashes recorded in chain_manifest.json.\n",
             project_name,
             proof.chain_id,
             events.len(),
@@ -685,7 +784,9 @@ impl App {
             } else {
                 "NOT VERIFIED"
             },
-            chrono::Utc::now().to_rfc3339()
+            if include_originals { "yes" } else { "no" },
+            chrono::Utc::now().to_rfc3339(),
+            contents_line
         );
 
         zip.start_file("README.txt", options)
@@ -816,11 +917,10 @@ impl App {
                 self.tr("Не удалось создать", "Failed to create")
             )
         })?;
-        fs::create_dir_all(project_path.join("Аудит")).map_err(|e| {
+fs::create_dir_all(project_path.join("audit")).map_err(|e| {
             format!(
-                "{} {}: {e}",
-                self.tr("Не удалось создать", "Failed to create"),
-                self.tr("Аудит", "Audit")
+                "{} audit: {e}",
+                self.tr("Не удалось создать", "Failed to create")
             )
         })?;
         Ok(())
@@ -882,10 +982,8 @@ impl App {
         }
     }
 
-    fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
-        // The on-disk folder is intentionally kept as "Аудит" for backward
-        // compatibility with existing projects.
-        let audit_path = project_path.join("Аудит").join("audit.jsonl");
+fn append_audit_event(&self, project_path: &Path, event: AuditEvent) -> Result<(), String> {
+        let audit_path = project_path.join("audit").join("audit.jsonl");
         let store = AuditStore::new(&audit_path);
         store.append(&event).map_err(|e| {
             format!(
@@ -1453,75 +1551,63 @@ impl eframe::App for App {
 
                             self.state.head_event_id = Some(commit.head_event_id.clone());
 
-                            let original_name = match self.persist_original(
-                                &project_path,
-                                Path::new(&source_file_path),
-                                commit.sequence,
-                            ) {
-                                Ok(name) => Some(name),
-                                Err(err) => {
-                                    self.step = Step::Failed;
-                                    self.status = format!("❌ {err}");
-                                    None
-                                }
-                            };
+self.event_id = commit.event_id.clone();
+                            let proof_name = format!("{}.json", self.event_id);
+                            let dest_proof = proofs_dir.join(&proof_name);
+                            let _ = fs::copy(&proof_path, &dest_proof);
+                            self.proof_path = dest_proof.display().to_string();
 
-                            if let Some(original_name) = original_name {
-                                self.event_id = commit.event_id.clone();
-                                let proof_name = format!("{}.json", self.event_id);
-                                let dest_proof = proofs_dir.join(&proof_name);
-                                let _ = fs::copy(&proof_path, &dest_proof);
-                                self.proof_path = dest_proof.display().to_string();
+                            if let Ok(event_id) = Uuid::parse_str(&commit.event_id) {
+                                let audit_event = AuditEvent::submitted(
+                                    event_id,
+                                    chain_uuid,
+                                    file_hash.clone(),
+                                    None,
+                                    file_name.clone(),
+                                );
+                                let _ = self.append_audit_event(&project_path, audit_event);
 
-                                if let Ok(event_id) = Uuid::parse_str(&commit.event_id) {
-                                    let audit_event = AuditEvent::submitted(
-                                        event_id,
-                                        chain_uuid,
-                                        file_hash.clone(),
-                                        None,
-                                        format!("{}:{}", original_name, file_name),
-                                    );
-                                    let _ = self.append_audit_event(&project_path, audit_event);
-
-                                    let parent_event_id = commit
-                                        .events
-                                        .iter()
-                                        .find(|leaf| leaf.event_id == commit.event_id)
-                                        .and_then(|leaf| {
-                                            Uuid::parse_str(&leaf.parent_event_id).ok()
-                                        });
-
-                                    let proof = commit.tsa.as_ref().map(|_tsa| {
-                                        ChainAnchorProof::new(
-                                            commit.proof.root.clone(),
-                                            commit.proof.signature.clone(),
-                                            "evident-ledger".to_string(),
-                                        )
+                                let parent_event_id = commit
+                                    .events
+                                    .iter()
+                                    .find(|leaf| leaf.event_id == commit.event_id)
+                                    .and_then(|leaf| {
+                                        Uuid::parse_str(&leaf.parent_event_id).ok()
                                     });
 
-                                    if let Ok(server_event_id) = Uuid::parse_str(&commit.event_id) {
-                                        let anchored_event = AuditEvent::anchored(
-                                            Uuid::new_v4(),
-                                            chain_uuid,
-                                            file_hash,
-                                            parent_event_id,
-                                            commit.sequence,
-                                            server_event_id,
-                                            proof,
-                                        );
-                                        let _ =
-                                            self.append_audit_event(&project_path, anchored_event);
-                                    }
-                                }
+                                let proof = commit.tsa.as_ref().map(|_tsa| {
+                                    ChainAnchorProof::new(
+                                        commit.proof.root.clone(),
+                                        commit.proof.signature.clone(),
+                                        "evident-ledger".to_string(),
+                                    )
+                                });
 
-                                self.step = Step::Done;
-                                self.status = self
-                                    .tr("✅ Фиксация завершена", "✅ Commit complete")
-                                    .to_string();
-                                self.commit_success = true;
-                                self.screen = Screen::Result;
-                                self.load_projects();
+                                if let Ok(server_event_id) = Uuid::parse_str(&commit.event_id) {
+                                    let anchored_event = AuditEvent::anchored(
+                                        Uuid::new_v4(),
+                                        chain_uuid,
+                                        file_hash,
+                                        parent_event_id,
+                                        commit.sequence,
+                                        server_event_id,
+                                        proof,
+                                    );
+                                    let _ =
+                                        self.append_audit_event(&project_path, anchored_event);
+                                }
                             }
+
+                            let report_client = EvidentClient::new("http://127.0.0.1:3000");
+                            self.last_proof = client::fetch_proof(&report_client, chain_uuid).ok();
+
+                            self.step = Step::Done;
+                            self.status = self
+                                .tr("✅ Фиксация завершена", "✅ Commit complete")
+                                .to_string();
+                            self.commit_success = true;
+                            self.screen = Screen::Result;
+                            self.load_projects();
                         }
                         Err(failure) => {
                             let _ = self.append_audit_event(
@@ -2108,6 +2194,18 @@ if self.screen == Screen::FileSelection {
                             }
                         }
                     }
+                    let include_originals_label = self.tr(
+                        "Включить оригиналы файлов в архив",
+                        "Include original files in the archive",
+                    );
+                    ui.checkbox(&mut self.include_originals_in_zip, include_originals_label);
+                    ui.small(self.tr(
+                        "Система не хранит файлы. Если включено, файлы будут добавлены в архив \
+                         с вашего устройства только в момент экспорта.",
+                        "The system does not store files. If enabled, files will be added to \
+                         the archive from your device only at export time.",
+                    ));
+
                     if ui
                         .button(self.tr("📦 Скачать проект (ZIP)", "📦 Download Project (ZIP)"))
                         .clicked()
@@ -2116,12 +2214,13 @@ if self.screen == Screen::FileSelection {
                             Some(proof) => {
                                 let verify_valid = self.verify_status == VerifyStatus::Valid;
 
-                                match Self::export_chain_zip(
+                          match Self::export_chain_zip(
                                     &projects_dir,
                                     &self.verification_project,
                                     proof,
                                     &self.verification_events,
                                     verify_valid,
+                                    self.include_originals_in_zip,
                                 ) {
                                     Ok(path) => {
                                         let _ = Command::new("open")
@@ -2267,12 +2366,12 @@ ui.add_space(12.0);
 
                 ui.add_space(12.0);
                 ui.label(self.tr(
-                    "📁 Копия файла будет сохранена в папку проекта.",
-                    "📁 A copy of the file will be saved in the project folder.",
+                    "📁 Файл никуда не копируется автоматически. Копию можно сохранить вручную после фиксации.",
+                    "📁 The file is never copied automatically. You can save a copy manually after registration.",
                 ));
                 ui.label(self.tr(
-                    "📋 Аудит будет записываться в папку Аудит/",
-                    "📋 An audit trail will be recorded in the Audit/ folder",
+                    "📋 Аудит будет записываться в папку audit/",
+                    "📋 An audit trail will be recorded in the audit/ folder",
                 ));
                 ui.add_space(8.0);
                 ui.label(self.tr(
@@ -2422,23 +2521,52 @@ ui.add_space(12.0);
                             .button(self.tr("📄 Открыть PDF", "📄 Open PDF"))
                             .clicked()
                         {
-                            let projects_dir = match self.projects_dir() {
-                                Ok(dir) => dir,
-                                Err(err) => {
-                                    self.status = format!("⚠️ {err}");
-                                    return;
+                           match self.last_proof.as_ref() {
+                                Some(proof) => {
+                                    let projects_dir = match self.projects_dir() {
+                                        Ok(dir) => dir,
+                                        Err(err) => {
+                                            self.status = format!("⚠️ {err}");
+                                            return;
+                                        }
+                                    };
+                                    let project_name = if self.project_mode == ProjectMode::New {
+                                        &self.project_name
+                                    } else {
+                                        &self.selected_project
+                                    };
+                                    let proofs_dir =
+                                        projects_dir.join(project_name).join("proofs");
+                                    let _ = fs::create_dir_all(&proofs_dir);
+                                    let pdf_path = proofs_dir
+                                        .join(format!("{}_attestation.pdf", self.event_id));
+
+                                    let (proof_data, verification) =
+                                        Self::build_registration_snapshot(proof);
+                                    match generate_report(
+                                        &proof_data.chain_id.clone(),
+                                        &proof_data,
+                                        &verification,
+                                        &pdf_path,
+                                    ) {
+                                        Ok(()) => {
+                                            let _ = Command::new("open").arg(&pdf_path).output();
+                                        }
+                                        Err(e) => {
+                                            self.status =
+                                                format!("⚠️ Failed to generate PDF: {e}");
+                                        }
+                                    }
                                 }
-                            };
-                            let project_name = if self.project_mode == ProjectMode::New {
-                                &self.project_name
-                            } else {
-                                &self.selected_project
-                            };
-                            let pdf_path = projects_dir
-                                .join(project_name)
-                                .join("proofs")
-                                .join("proof.pdf");
-                            let _ = Command::new("open").arg(&pdf_path).output();
+                                None => {
+                                    self.status = self
+                                        .tr(
+                                            "⚠️ Нет данных доказательства",
+                                            "⚠️ No proof data available",
+                                        )
+                                        .to_string();
+                                }
+                            }
                         }
                     }
                     if ui
@@ -2452,6 +2580,46 @@ ui.add_space(12.0);
                             self.selected_project.clone()
                         };
                         self.verify_project(ui.ctx());
+                    }
+                    if !self.file_path.is_empty()
+                        && ui
+                            .button(self.tr("💾 Сохранить копию файла", "💾 Save local copy"))
+                            .clicked()
+                    {
+                   let default_name = Path::new(&self.file_path)
+                            .file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| "document".to_string());
+
+                        if let Some(dest) = rfd::FileDialog::new()
+                            .set_file_name(&default_name)
+                            .save_file()
+                        {
+                     match fs::copy(&self.file_path, &dest) {
+                                Ok(_) => {
+                                    let saved = self.projects_dir().and_then(|projects_dir| {
+                                        let project_name = if self.project_mode == ProjectMode::New
+                                        {
+                                            &self.project_name
+                                        } else {
+                                            &self.selected_project
+                                        };
+                                        let proofs_dir =
+                                            projects_dir.join(project_name).join("proofs");
+                                        Self::save_local_copy(&proofs_dir, &self.event_id, &dest)
+                                    });
+                                    match saved {
+                                        Ok(()) => {
+                                            self.status = self
+                                                .tr("✅ Копия сохранена", "✅ Local copy saved")
+                                                .to_string();
+                                        }
+                                        Err(err) => self.status = format!("⚠️ {err}"),
+                                    }
+                                }
+                                Err(err) => self.status = format!("⚠️ {err}"),
+                            }
+                        }
                     }
                 });
 
