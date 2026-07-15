@@ -6,6 +6,8 @@ use std::process;
 use std::process::Command as ProcessCommand;
 
 use evident_ledger::freeze::{self, Event};
+use evident_ledger::service::capabilities::{AccountCapabilities, TsaMode};
+use evident_ledger::service::entitlements::{allowed, Feature};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sha2::{Digest, Sha256};
@@ -532,59 +534,51 @@ fn cmd_account_info() -> Result<(), CliError> {
         return Err(CliError::Server(format!("server error {status}: {body}")));
     }
 
-    let capabilities: serde_json::Value = response.json()?;
-
-    let plan = capabilities
-        .get("plan_name")
-        .and_then(|v| v.as_str())
-        .unwrap_or("unknown");
-    let tsa_mode = capabilities
-        .get("tsa_mode")
-        .and_then(|v| v.as_str())
-        .unwrap_or("machine");
-    let server_backup = capabilities
-        .get("server_backup")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let history_recovery = capabilities
-        .get("history_recovery")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
-    let identity_enabled = capabilities
-        .get("identity_enabled")
-        .and_then(|v| v.as_bool())
-        .unwrap_or(false);
+    let caps: AccountCapabilities = response.json()?;
 
     println!("Account");
     println!("Status: ACTIVE");
-    println!("Plan: {}", plan.to_uppercase());
+    println!("Plan: {}", caps.plan_name.to_uppercase());
     println!("Capabilities:");
     println!(
         "  TSA mode:         {}",
-        if tsa_mode == "qualified" {
-            "Qualified TSA"
-        } else {
-            "Machine TSA"
+        match caps.tsa_mode {
+            TsaMode::Qualified => "Qualified TSA",
+            TsaMode::Machine => "Machine TSA",
         }
     );
     println!(
         "  Server backup:    {}",
-        if server_backup { "enabled" } else { "disabled" }
+        if caps.server_backup { "enabled" } else { "disabled" }
     );
     println!(
         "  History recovery: {}",
-        if history_recovery { "enabled" } else { "disabled" }
+        if caps.history_recovery { "enabled" } else { "disabled" }
     );
     println!(
         "  Identity:         {}",
-        if identity_enabled {
+        if caps.identity_enabled {
             "enabled"
         } else {
             "disabled"
         }
     );
+    println!("Features:");
+    let tsa_label = match caps.tsa_mode {
+        TsaMode::Qualified => "Qualified TSA",
+        TsaMode::Machine => "Machine TSA",
+    };
+    print_feature_line(&caps, Feature::Tsa, tsa_label);
+    print_feature_line(&caps, Feature::ServerBackup, "Server Backup");
+    print_feature_line(&caps, Feature::Identity, "Identity");
+    print_feature_line(&caps, Feature::HistoryRecovery, "History Recovery");
 
     Ok(())
+}
+
+fn print_feature_line(caps: &AccountCapabilities, feature: Feature, label: &str) {
+    let mark = if allowed(caps, feature) { "✓" } else { "✗" };
+    println!("{mark} {label}");
 }
 
 fn cmd_key_status() -> Result<(), CliError> {
