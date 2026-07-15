@@ -1,4 +1,4 @@
-use reqwest::blocking::Client;
+use reqwest::blocking::{Client, RequestBuilder};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -63,6 +63,7 @@ pub struct VerifyResponse {
 pub struct EvidentClient {
     base_url: String,
     client: Client,
+    api_key: Option<String>,
 }
 
 #[derive(Debug)]
@@ -100,10 +101,45 @@ impl std::fmt::Display for ClientError {
 }
 
 impl EvidentClient {
+    /// Создаёт клиента и пытается загрузить API-ключ автоматически:
+    /// 1) переменная окружения EVIDENT_API_KEY,
+    /// 2) файл ~/.evident/api_key.
+    /// Если ключ не найден — клиент создаётся без него (запросы на защищённые
+    /// эндпоинты вернут 401 от сервера, а не упадут на этапе создания клиента).
     pub fn new(base_url: impl Into<String>) -> Self {
         Self {
             base_url: base_url.into(),
             client: Client::new(),
+            api_key: Self::load_api_key(),
+        }
+    }
+
+    /// Явно задать/переопределить API-ключ (например, GUI после того как
+    /// пользователь вставил ключ в поле настроек).
+    pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
+        self.api_key = Some(api_key.into());
+        self
+    }
+
+    fn load_api_key() -> Option<String> {
+        if let Ok(key) = std::env::var("EVIDENT_API_KEY") {
+            let key = key.trim().to_string();
+            if !key.is_empty() {
+                return Some(key);
+            }
+        }
+        let key_path = Self::evident_dir().join("api_key");
+        fs::read_to_string(key_path)
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Добавляет заголовок X-API-KEY к запросу, если ключ загружен.
+    fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
+        match &self.api_key {
+            Some(key) => builder.header("X-API-KEY", key),
+            None => builder,
         }
     }
 
@@ -154,8 +190,7 @@ impl EvidentClient {
         let idempotency_key = Uuid::new_v4().to_string();
 
         let resp = self
-            .client
-            .post(format!("{}/events", self.base_url))
+            .authed(self.client.post(format!("{}/events", self.base_url)))
             .json(&serde_json::json!({
                 "chain_id": chain_id,
                 "parent_event_id": parent_event_id,

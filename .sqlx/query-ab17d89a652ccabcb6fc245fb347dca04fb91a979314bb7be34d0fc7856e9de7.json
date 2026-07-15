@@ -1,0 +1,15 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "UPDATE chains SET account_id = $1 WHERE chain_id = $2",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid",
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "ab17d89a652ccabcb6fc245fb347dca04fb91a979314bb7be34d0fc7856e9de7"
+}

@@ -57,7 +57,6 @@ async fn main() {
             get(|| async { axum::response::Html(include_str!("../static/whitepaper.html")) }),
         )
         .route("/whitepaper.pdf", get(serve_whitepaper_pdf))
-        .nest("/chains", api::chains::router(state.clone()))
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
         .nest("/identity", api::identity::router(state.clone()));

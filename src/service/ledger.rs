@@ -10,6 +10,7 @@ use crate::{models::event::SubmitEventRequest, signing::ServerSigner};
 #[derive(Debug)]
 pub enum LedgerError {
     ChainNotFound,
+    ChainAccessDenied,
     ParentMismatch,
     DuplicateIdempotencyKey,
     DatabaseError(sqlx::Error),
@@ -30,6 +31,9 @@ impl IntoResponse for LedgerError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             LedgerError::ChainNotFound => (StatusCode::NOT_FOUND, "Chain not found"),
+            LedgerError::ChainAccessDenied => {
+                (StatusCode::FORBIDDEN, "Chain belongs to a different account")
+            }
             LedgerError::ParentMismatch => {
                 (StatusCode::CONFLICT, "Parent hash mismatch — fork detected")
             }
@@ -45,6 +49,7 @@ impl IntoResponse for LedgerError {
 pub async fn submit_event(
     pool: &PgPool,
     signer: &ServerSigner,
+    account_id: Uuid,
     req: SubmitEventRequest,
 ) -> Result<Value, LedgerError> {
     let mut tx = pool.begin().await?;
@@ -53,17 +58,19 @@ pub async fn submit_event(
     struct ChainRow {
         chain_id: Uuid,
         head_event_id: Option<Uuid>,
+        account_id: Option<Uuid>,
     }
 
     let chain = sqlx::query_as::<_, ChainRow>(
         r#"
-        INSERT INTO chains (chain_id, head_event_id)
-        VALUES ($1, NULL)
+        INSERT INTO chains (chain_id, head_event_id, account_id)
+        VALUES ($1, NULL, $2)
         ON CONFLICT (chain_id) DO NOTHING
-        RETURNING chain_id, head_event_id
+        RETURNING chain_id, head_event_id, account_id
         "#,
     )
     .bind(req.chain_id)
+    .bind(account_id)
     .fetch_optional(&mut *tx)
     .await?;
 
@@ -71,7 +78,7 @@ pub async fn submit_event(
         Some(chain) => chain,
         None => sqlx::query_as::<_, ChainRow>(
             r#"
-                SELECT chain_id, head_event_id
+                SELECT chain_id, head_event_id, account_id
                 FROM chains
                 WHERE chain_id = $1
                 FOR UPDATE
@@ -82,6 +89,24 @@ pub async fn submit_event(
         .await?
         .ok_or(LedgerError::ChainNotFound)?,
     };
+
+    // проверка владения цепочкой
+    match chain.account_id {
+        Some(owner) if owner != account_id => {
+            return Err(LedgerError::ChainAccessDenied);
+        }
+        None => {
+            // бесхозная цепочка (создана до миграции accounts/api_keys) — усыновляем текущим аккаунтом
+            sqlx::query!(
+                "UPDATE chains SET account_id = $1 WHERE chain_id = $2",
+                account_id,
+                req.chain_id
+            )
+            .execute(&mut *tx)
+            .await?;
+        }
+        _ => {}
+    }
 
     // 2. CHECK idempotency
     if let Some(existing) = sqlx::query!(

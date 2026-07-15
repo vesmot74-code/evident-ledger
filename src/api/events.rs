@@ -1,3 +1,4 @@
+use crate::auth::AuthedAccount;
 use crate::models::event::SubmitEventRequest;
 use crate::service::ledger::{submit_event, LedgerError};
 use crate::state::AppState;
@@ -13,8 +14,9 @@ pub fn router(state: AppState) -> Router {
 
 async fn handler(
     State(state): State<AppState>,
+    auth: AuthedAccount,
     Json(req): Json<SubmitEventRequest>,
 ) -> Result<Json<serde_json::Value>, LedgerError> {
-    let res = submit_event(&state.db, state.signer.as_ref(), req).await?;
+    let res = submit_event(&state.db, state.signer.as_ref(), auth.account_id, req).await?;
     Ok(Json(res))
 }
