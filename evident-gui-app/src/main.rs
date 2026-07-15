@@ -1642,18 +1642,34 @@ impl eframe::App for App {
                 ui.add_space(8.0);
 
                 if self.loading_account {
-                    ui.label(self.tr("⏳ Загрузка...", "⏳ Loading..."));
+                    ui.label(self.tr("Загрузка...", "Loading..."));
                 } else if let Some(caps) = self.account_data.clone() {
-                    let plan = caps["plan_name"].as_str().unwrap_or("unknown");
-                    let tsa_mode = caps["tsa_mode"].as_str().unwrap_or("machine");
-                    let server_backup = caps["server_backup"].as_bool().unwrap_or(false);
-                    let identity_enabled = caps["identity_enabled"].as_bool().unwrap_or(false);
+                    let plan = caps
+                        .get("plan_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let tsa_mode = caps
+                        .get("tsa_mode")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("machine");
+                    let server_backup = caps
+                        .get("server_backup")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let identity_enabled = caps
+                        .get("identity_enabled")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
 
                     ui.label(format!("{}: {}", self.tr("План", "Plan"), plan.to_uppercase()));
                     ui.label(format!(
                         "{}: {}",
-                        self.tr("TSA", "TSA"),
-                        if tsa_mode == "qualified" { "Qualified" } else { "Machine" }
+                        self.tr("Уровень доверия", "Trust Level"),
+                        if tsa_mode == "qualified" {
+                            self.tr("Квалифицированный TSA", "Qualified TSA")
+                        } else {
+                            self.tr("Машинный TSA", "Machine TSA")
+                        }
                     ));
                     ui.label(format!(
                         "{}: {}",
@@ -1667,9 +1683,16 @@ impl eframe::App for App {
                     ));
                 } else {
                     ui.label(self.tr(
-                        "⚠️ Не удалось загрузить данные аккаунта",
-                        "⚠️ Failed to load account data",
+                        "Не удалось загрузить данные аккаунта",
+                        "Failed to load account data",
                     ));
+                }
+
+                if !self.loading_account {
+                    if ui.button(self.tr("Обновить", "Refresh")).clicked() {
+                        let ctx = ui.ctx().clone();
+                        self.start_account_fetch(&ctx);
+                    }
                 }
 
                 ui.add_space(16.0);
