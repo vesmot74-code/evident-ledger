@@ -13,6 +13,9 @@ pub enum LedgerError {
     ChainAccessDenied,
     ParentMismatch,
     DuplicateIdempotencyKey,
+    UsageLimitExceeded,
+    TsaLimitExceeded,
+    QualifiedTsaUnavailable,
     DatabaseError(sqlx::Error),
 }
 
@@ -40,6 +43,18 @@ impl IntoResponse for LedgerError {
             LedgerError::DuplicateIdempotencyKey => {
                 (StatusCode::CONFLICT, "Duplicate idempotency key")
             }
+            LedgerError::UsageLimitExceeded => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Monthly commit limit exceeded for your tariff plan",
+            ),
+            LedgerError::TsaLimitExceeded => (
+                StatusCode::TOO_MANY_REQUESTS,
+                "Monthly TSA limit exceeded for your tariff plan",
+            ),
+            LedgerError::QualifiedTsaUnavailable => (
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Qualified TSA is not yet available for your tariff plan",
+            ),
             LedgerError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
         };
         (status, Json(json!({ "error": message }))).into_response()
@@ -96,7 +111,6 @@ pub async fn submit_event(
             return Err(LedgerError::ChainAccessDenied);
         }
         None => {
-            // бесхозная цепочка (создана до миграции accounts/api_keys) — усыновляем текущим аккаунтом
             sqlx::query!(
                 "UPDATE chains SET account_id = $1 WHERE chain_id = $2",
                 account_id,
@@ -127,6 +141,54 @@ pub async fn submit_event(
             "head_event_id": chain.head_event_id,
             "cached": true
         }));
+    }
+
+    // usage-лимиты: гарантируем существование строки за текущий месяц и блокируем её
+    sqlx::query!(
+        r#"
+        INSERT INTO usage_monthly (account_id, period_start)
+        VALUES ($1, date_trunc('month', now())::date)
+        ON CONFLICT (account_id, period_start) DO NOTHING
+        "#,
+        account_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
+    let usage = sqlx::query!(
+        r#"
+        SELECT server_commits, tsa_requests
+        FROM usage_monthly
+        WHERE account_id = $1 AND period_start = date_trunc('month', now())::date
+        FOR UPDATE
+        "#,
+        account_id
+    )
+    .fetch_one(&mut *tx)
+    .await?;
+
+// Capabilities читаются вне транзакции tx (это отдельный pool-запрос,
+    // без FOR UPDATE — тарифный план не меняется во время commit, только
+    // usage-счётчики нуждаются в блокировке, что уже сделано выше).
+    let capabilities = crate::service::capabilities::get_account_capabilities(pool, account_id)
+        .await?;
+
+    if !capabilities.can_commit(usage.server_commits) {
+        return Err(LedgerError::UsageLimitExceeded);
+    }
+    // TSA-квота проверяется и резервируется здесь же, ДО реального вызова TSA
+    // (который произойдёт позже, после tx.commit()) — иначе параллельные запросы
+    // могли бы обойти лимит, пока счётчик ещё не обновлён.
+    if !capabilities.can_use_tsa(usage.tsa_requests) {
+        return Err(LedgerError::TsaLimitExceeded);
+    }
+    // Тариф Free получает только "machine"-уровень TSA. Если план обещает
+    // "qualified" TSA (Legal/Vault/Identity), но реального квалифицированного
+    // провайдера ещё нет — честно возвращаем ошибку недоступности, а не
+    // молча выдаём machine-TSA под видом qualified. Ложная юридическая
+    // значимость хуже отсутствия функции.
+    if !capabilities.tsa_available() {
+        return Err(LedgerError::QualifiedTsaUnavailable);
     }
 
     let parent_event_id = chain.head_event_id.unwrap_or(Uuid::nil());
@@ -181,9 +243,22 @@ pub async fn submit_event(
     .execute(&mut *tx)
     .await?;
 
+    // usage: резервируем commit и TSA-запрос заранее, атомарно, до сетевого вызова TSA
+    sqlx::query!(
+        r#"
+        UPDATE usage_monthly
+        SET server_commits = server_commits + 1,
+            tsa_requests = tsa_requests + 1
+        WHERE account_id = $1 AND period_start = date_trunc('month', now())::date
+        "#,
+        account_id
+    )
+    .execute(&mut *tx)
+    .await?;
+
     tx.commit().await?;
 
-    // Сначала делаем TSA stamp (синхронно)
+    // Сначала делаем TSA stamp (синхронно) — квота уже зарезервирована выше
     if let Some(root) = compute_chain_root(pool, req.chain_id).await {
         crate::tsa_worker::stamp_chain(pool, req.chain_id, &root, event_id).await;
     }

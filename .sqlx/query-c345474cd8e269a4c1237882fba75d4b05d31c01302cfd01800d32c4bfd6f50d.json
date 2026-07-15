@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        INSERT INTO usage_monthly (account_id, period_start)\n        VALUES ($1, date_trunc('month', now())::date)\n        ON CONFLICT (account_id, period_start) DO NOTHING\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "c345474cd8e269a4c1237882fba75d4b05d31c01302cfd01800d32c4bfd6f50d"
+}

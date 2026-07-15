@@ -1,0 +1,52 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            tp.name AS plan_name,\n            tp.monthly_commits_limit,\n            tp.monthly_tsa_limit,\n            date_trunc('month', now())::date AS \"period_start!\",\n            COALESCE(um.server_commits, 0) AS \"server_commits!\",\n            COALESCE(um.tsa_requests, 0) AS \"tsa_requests!\"\n        FROM accounts a\n        JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id\n        LEFT JOIN usage_monthly um\n            ON um.account_id = a.account_id\n            AND um.period_start = date_trunc('month', now())::date\n        WHERE a.account_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plan_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "monthly_commits_limit",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 2,
+        "name": "monthly_tsa_limit",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 3,
+        "name": "period_start!",
+        "type_info": "Date"
+      },
+      {
+        "ordinal": 4,
+        "name": "server_commits!",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 5,
+        "name": "tsa_requests!",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      true,
+      true,
+      null,
+      null,
+      null
+    ]
+  },
+  "hash": "ac7c252565d51bfbbdd1ba2f7b0787832b5001bfc9096a6d9abd76fe0367387d"
+}

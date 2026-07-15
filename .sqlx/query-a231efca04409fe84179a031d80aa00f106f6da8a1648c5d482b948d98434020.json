@@ -1,0 +1,28 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT server_commits, tsa_requests\n        FROM usage_monthly\n        WHERE account_id = $1 AND period_start = date_trunc('month', now())::date\n        FOR UPDATE\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "server_commits",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 1,
+        "name": "tsa_requests",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false
+    ]
+  },
+  "hash": "a231efca04409fe84179a031d80aa00f106f6da8a1648c5d482b948d98434020"
+}

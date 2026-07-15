@@ -1,0 +1,14 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        UPDATE usage_monthly\n        SET server_commits = server_commits + 1,\n            tsa_requests = tsa_requests + 1\n        WHERE account_id = $1 AND period_start = date_trunc('month', now())::date\n        ",
+  "describe": {
+    "columns": [],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": []
+  },
+  "hash": "84e0f36133a043c0612f451f42194d9efbf14a344af7f0eec369cafab6a1efdd"
+}

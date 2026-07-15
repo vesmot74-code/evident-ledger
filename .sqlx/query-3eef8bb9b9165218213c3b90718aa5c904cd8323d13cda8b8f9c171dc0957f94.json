@@ -1,0 +1,58 @@
+{
+  "db_name": "PostgreSQL",
+  "query": "\n        SELECT\n            tp.name AS plan_name,\n            tp.tsa_mode,\n            tp.server_backup,\n            tp.history_recovery,\n            tp.identity_enabled,\n            tp.monthly_commits_limit,\n            tp.monthly_tsa_limit\n        FROM accounts a\n        JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id\n        WHERE a.account_id = $1\n        ",
+  "describe": {
+    "columns": [
+      {
+        "ordinal": 0,
+        "name": "plan_name",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 1,
+        "name": "tsa_mode",
+        "type_info": "Text"
+      },
+      {
+        "ordinal": 2,
+        "name": "server_backup",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 3,
+        "name": "history_recovery",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 4,
+        "name": "identity_enabled",
+        "type_info": "Bool"
+      },
+      {
+        "ordinal": 5,
+        "name": "monthly_commits_limit",
+        "type_info": "Int4"
+      },
+      {
+        "ordinal": 6,
+        "name": "monthly_tsa_limit",
+        "type_info": "Int4"
+      }
+    ],
+    "parameters": {
+      "Left": [
+        "Uuid"
+      ]
+    },
+    "nullable": [
+      false,
+      false,
+      false,
+      false,
+      false,
+      true,
+      true
+    ]
+  },
+  "hash": "3eef8bb9b9165218213c3b90718aa5c904cd8323d13cda8b8f9c171dc0957f94"
+}
