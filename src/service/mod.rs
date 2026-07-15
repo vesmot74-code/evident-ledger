@@ -1,5 +1,6 @@
 pub mod account;
 pub mod attestation;
+pub mod backup;
 pub mod capabilities;
 pub mod chains;
 pub mod entitlements;

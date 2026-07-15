@@ -58,6 +58,7 @@ async fn main() {
         )
         .route("/whitepaper.pdf", get(serve_whitepaper_pdf))
         .nest("/account", api::account::router(state.clone()))
+        .nest("/backup", api::backup::router(state.clone()))
         .nest("/chains", api::chains::router(state.clone()))
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
