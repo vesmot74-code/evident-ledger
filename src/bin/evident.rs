@@ -62,22 +62,41 @@ fn evident_dir() -> PathBuf {
     PathBuf::from(home).join(".evident")
 }
 
+#[derive(Debug, Clone, Copy)]
+enum KeySource {
+    Env,
+    File,
+}
+
+fn load_api_key_with_source() -> Result<(String, KeySource), CliError> {
+    if let Ok(val) = std::env::var("EVIDENT_API_KEY") {
+        let trimmed = val.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok((trimmed, KeySource::Env));
+        }
+    }
+
+    if let Ok(content) = fs::read_to_string(evident_dir().join("api_key")) {
+        let trimmed = content.trim().to_string();
+        if !trimmed.is_empty() {
+            return Ok((trimmed, KeySource::File));
+        }
+    }
+
+    Err(CliError::Usage(
+        "No API key found. Set EVIDENT_API_KEY or create ~/.evident/api_key".into(),
+    ))
+}
+
 fn load_api_key() -> Result<String, CliError> {
-    std::env::var("EVIDENT_API_KEY")
-        .ok()
-        .filter(|s| !s.trim().is_empty())
-        .map(|s| s.trim().to_string())
-        .or_else(|| {
-            fs::read_to_string(evident_dir().join("api_key"))
-                .ok()
-                .map(|s| s.trim().to_string())
-                .filter(|s| !s.is_empty())
-        })
-        .ok_or_else(|| {
-            CliError::Usage(
-                "No API key found. Set EVIDENT_API_KEY or create ~/.evident/api_key".into(),
-            )
-        })
+    load_api_key_with_source().map(|(key, _)| key)
+}
+
+fn api_key_fingerprint(raw: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(raw.as_bytes());
+    let hash = format!("{:x}", hasher.finalize());
+    hash[..12.min(hash.len())].to_string()
 }
 
 #[derive(Debug, Deserialize)]
@@ -129,7 +148,7 @@ fn run() -> Result<(), CliError> {
         Some("init") => cmd_init(),
         Some("help") | Some("--help") | Some("-h") => {
             println!(
-                "usage: evident <init|new-chain|commit|verify|status|account|key status|report generate>"
+                "usage: evident <init|new-chain|commit|verify|status|account|key status|key info|report generate>"
             );
             Ok(())
         }
@@ -183,14 +202,15 @@ fn run() -> Result<(), CliError> {
         Some("key") => {
             let subcommand = args
                 .next()
-                .ok_or_else(|| CliError::Usage("usage: evident key status".into()))?;
-            if subcommand != "status" {
-                return Err(CliError::Usage("usage: evident key status".into()));
+                .ok_or_else(|| CliError::Usage("usage: evident key <status|info>".into()))?;
+            match subcommand.as_str() {
+                "status" => cmd_key_status(),
+                "info" => cmd_key_info(),
+                _ => Err(CliError::Usage("usage: evident key <status|info>".into())),
             }
-            cmd_key_status()
         }
         _ => Err(CliError::Usage(
-            "usage: evident <init|new-chain|commit|verify|status|account|key status|report generate>"
+            "usage: evident <init|new-chain|commit|verify|status|account|key status|key info|report generate>"
                 .into(),
         )),
     }
@@ -509,6 +529,29 @@ fn cmd_key_status() -> Result<(), CliError> {
     println!("{label}");
     println!("Created:");
     println!("{created_at}");
+
+    Ok(())
+}
+
+fn cmd_key_info() -> Result<(), CliError> {
+    println!("API Key");
+
+    match load_api_key_with_source() {
+        Ok((key, source)) => {
+            let source_label = match source {
+                KeySource::Env => "env (EVIDENT_API_KEY)",
+                KeySource::File => "file (~/.evident/api_key)",
+            };
+            println!("Configured: YES");
+            println!("Source: {source_label}");
+            println!("Fingerprint: {}", api_key_fingerprint(&key));
+        }
+        Err(_) => {
+            println!("Status: NOT CONFIGURED");
+            println!("Set EVIDENT_API_KEY or create:");
+            println!("~/.evident/api_key");
+        }
+    }
 
     Ok(())
 }
