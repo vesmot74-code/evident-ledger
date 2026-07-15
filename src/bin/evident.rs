@@ -219,17 +219,81 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     let event_log = evident_dir().join("events.jsonl");
     freeze::append_event_log(&event_log, &event)?;
 
-print_commit_success(&commit.event_id, &proof_path);
+    let capabilities = fetch_capabilities_best_effort();
+    print_commit_success(&commit.event_id, &proof_path, capabilities.as_ref());
     Ok(())
+}
+
+/// Пытается получить capabilities аккаунта для расширенного вывода commit.
+/// Best-effort: любая ошибка (нет ключа, сервер недоступен, битый JSON)
+/// молча игнорируется — commit уже состоялся, отсутствие этой информации
+/// не должно превращаться в ошибку всей команды.
+fn fetch_capabilities_best_effort() -> Option<serde_json::Value> {
+    let api_key = std::env::var("EVIDENT_API_KEY").ok().or_else(|| {
+        fs::read_to_string(evident_dir().join("api_key"))
+            .ok()
+            .map(|s| s.trim().to_string())
+    })?;
+
+    let client = reqwest::blocking::Client::new();
+    client
+        .get("http://127.0.0.1:3000/account/capabilities")
+        .header("X-API-KEY", &api_key)
+        .send()
+        .ok()?
+        .json()
+        .ok()
 }
 
 /// Печатает результат успешного commit. Вынесено в отдельную функцию, чтобы
 /// в будущем сюда можно было добавить тариф-специфичный вывод (Machine vs
 /// Qualified TSA, "Server backup enabled" для Vault, "Identity signature
 /// attached" для Identity) без раздувания cmd_commit.
-fn print_commit_success(event_id: &str, proof_path: &Path) {
+/// Если capabilities удалось получить (Some), дополнительно печатает
+/// Trust Level / Plan / Available upgrades.
+fn print_commit_success(
+    event_id: &str,
+    proof_path: &Path,
+    capabilities: Option<&serde_json::Value>,
+) {
     println!("anchored    event={}", event_id);
     println!("proof       {}", proof_path.display());
+
+    let Some(caps) = capabilities else {
+        return;
+    };
+
+    let plan = caps["plan_name"].as_str().unwrap_or("unknown");
+    let tsa_mode = caps["tsa_mode"].as_str().unwrap_or("machine");
+    let server_backup = caps["server_backup"].as_bool().unwrap_or(false);
+    let identity_enabled = caps["identity_enabled"].as_bool().unwrap_or(false);
+
+    let trust_level = if tsa_mode == "qualified" && identity_enabled {
+        "High (Qualified TSA + Identity)"
+    } else if tsa_mode == "qualified" {
+        "Elevated (Qualified TSA)"
+    } else {
+        "Standard (Machine TSA)"
+    };
+
+    println!();
+    println!("Trust Level {}", trust_level);
+    println!("Plan        {}", plan.to_uppercase());
+
+    let mut upgrades: Vec<&str> = Vec::new();
+    if tsa_mode != "qualified" {
+        upgrades.push("Qualified TSA");
+    }
+    if !server_backup {
+        upgrades.push("Vault Backup");
+    }
+    if !identity_enabled {
+        upgrades.push("Identity");
+    }
+
+    if !upgrades.is_empty() {
+        println!("Available upgrades: {}", upgrades.join(", "));
+    }
 }
 
 fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
