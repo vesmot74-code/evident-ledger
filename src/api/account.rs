@@ -1,5 +1,5 @@
 use crate::auth::AuthedAccount;
-use crate::service::account::get_usage;
+use crate::service::account::{get_key_status, get_usage};
 use crate::service::capabilities::get_account_capabilities;
 use crate::state::AppState;
 use axum::{extract::State, routing::get, Json, Router};
@@ -8,7 +8,20 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/usage", get(usage_handler))
         .route("/capabilities", get(capabilities_handler))
+        .route("/key-status", get(key_status_handler))
         .with_state(state)
+}
+
+async fn key_status_handler(
+    State(state): State<AppState>,
+    auth: AuthedAccount,
+) -> Result<Json<serde_json::Value>, String> {
+    let key_status = get_key_status(&state.db, &auth.key_hash)
+        .await
+        .map_err(|e| e.to_string())?;
+    Ok(Json(
+        serde_json::to_value(key_status).map_err(|e| e.to_string())?,
+    ))
 }
 
 async fn usage_handler(

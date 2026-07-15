@@ -62,6 +62,24 @@ fn evident_dir() -> PathBuf {
     PathBuf::from(home).join(".evident")
 }
 
+fn load_api_key() -> Result<String, CliError> {
+    std::env::var("EVIDENT_API_KEY")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
+        .map(|s| s.trim().to_string())
+        .or_else(|| {
+            fs::read_to_string(evident_dir().join("api_key"))
+                .ok()
+                .map(|s| s.trim().to_string())
+                .filter(|s| !s.is_empty())
+        })
+        .ok_or_else(|| {
+            CliError::Usage(
+                "No API key found. Set EVIDENT_API_KEY or create ~/.evident/api_key".into(),
+            )
+        })
+}
+
 #[derive(Debug, Deserialize)]
 struct CommitResponse {
     event_id: String,
@@ -111,7 +129,7 @@ fn run() -> Result<(), CliError> {
         Some("init") => cmd_init(),
         Some("help") | Some("--help") | Some("-h") => {
             println!(
-                "usage: evident <init|new-chain|commit|verify|status|account|report generate>"
+                "usage: evident <init|new-chain|commit|verify|status|account|key status|report generate>"
             );
             Ok(())
         }
@@ -162,8 +180,18 @@ fn run() -> Result<(), CliError> {
             cmd_verify(&proof_path)
         }
         Some("account") => cmd_account(),
+        Some("key") => {
+            let subcommand = args
+                .next()
+                .ok_or_else(|| CliError::Usage("usage: evident key status".into()))?;
+            if subcommand != "status" {
+                return Err(CliError::Usage("usage: evident key status".into()));
+            }
+            cmd_key_status()
+        }
         _ => Err(CliError::Usage(
-            "usage: evident <init|new-chain|commit|verify|status|account|report generate>".into(),
+            "usage: evident <init|new-chain|commit|verify|status|account|key status|report generate>"
+                .into(),
         )),
     }
 }
@@ -229,11 +257,7 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
 /// молча игнорируется — commit уже состоялся, отсутствие этой информации
 /// не должно превращаться в ошибку всей команды.
 fn fetch_capabilities_best_effort() -> Option<serde_json::Value> {
-    let api_key = std::env::var("EVIDENT_API_KEY").ok().or_else(|| {
-        fs::read_to_string(evident_dir().join("api_key"))
-            .ok()
-            .map(|s| s.trim().to_string())
-    })?;
+    let api_key = load_api_key().ok()?;
 
     let client = reqwest::blocking::Client::new();
     client
@@ -392,15 +416,7 @@ fn cmd_new_chain() -> Result<(), CliError> {
 
 fn cmd_account() -> Result<(), CliError> {
     let client = reqwest::blocking::Client::new();
-    let api_key = std::env::var("EVIDENT_API_KEY").ok().or_else(|| {
-        fs::read_to_string(evident_dir().join("api_key"))
-            .ok()
-            .map(|s| s.trim().to_string())
-    });
-
-    let api_key = api_key.ok_or_else(|| {
-        CliError::Usage("No API key found. Set EVIDENT_API_KEY or create ~/.evident/api_key".into())
-    })?;
+    let api_key = load_api_key()?;
 
     let capabilities: serde_json::Value = client
         .get("http://127.0.0.1:3000/account/capabilities")
@@ -457,6 +473,42 @@ fn cmd_account() -> Result<(), CliError> {
         }
     );
     println!("--------------------------------");
+
+    Ok(())
+}
+
+fn cmd_key_status() -> Result<(), CliError> {
+    let client = reqwest::blocking::Client::new();
+    let api_key = load_api_key()?;
+
+    let response = client
+        .get("http://127.0.0.1:3000/account/key-status")
+        .header("X-API-KEY", &api_key)
+        .send()?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        return Err(CliError::Server("API key rejected by server".into()));
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(CliError::Server(format!("server error {status}: {body}")));
+    }
+
+    let json: serde_json::Value = response.json()?;
+
+    let status = json["status"].as_str().unwrap_or("unknown").to_uppercase();
+    let label = json["label"].as_str().unwrap_or("unknown");
+    let created_at = json["created_at"].as_str().unwrap_or("unknown");
+
+    println!("API Key");
+    println!("Status:");
+    println!("{status}");
+    println!("Label:");
+    println!("{label}");
+    println!("Created:");
+    println!("{created_at}");
 
     Ok(())
 }

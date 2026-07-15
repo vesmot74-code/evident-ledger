@@ -13,6 +13,7 @@ use crate::state::AppState;
 
 pub struct AuthedAccount {
     pub account_id: Uuid,
+    pub key_hash: String,
 }
 
 pub enum AuthError {
@@ -50,7 +51,7 @@ impl FromRequestParts<AppState> for AuthedAccount {
 
         let row = sqlx::query!(
             r#"
-            SELECT account_id
+            SELECT account_id, key_hash
             FROM api_keys
             WHERE key_hash = $1 AND revoked_at IS NULL
             "#,
@@ -60,8 +61,11 @@ impl FromRequestParts<AppState> for AuthedAccount {
         .await
         .map_err(|_| AuthError::Invalid)?;
 
-        let account_id = row.ok_or(AuthError::Invalid)?.account_id;
+        let row = row.ok_or(AuthError::Invalid)?;
 
-        Ok(AuthedAccount { account_id })
+        Ok(AuthedAccount {
+            account_id: row.account_id,
+            key_hash: row.key_hash,
+        })
     }
 }

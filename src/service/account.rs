@@ -3,6 +3,46 @@ use sqlx::PgPool;
 use uuid::Uuid;
 
 #[derive(Debug, Serialize)]
+pub struct KeyStatusResponse {
+    pub label: String,
+    pub status: String,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub revoked_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub async fn get_key_status(
+    pool: &PgPool,
+    key_hash: &str,
+) -> Result<KeyStatusResponse, sqlx::Error> {
+    let row = sqlx::query!(
+        r#"
+        SELECT
+            label,
+            created_at,
+            revoked_at
+        FROM api_keys
+        WHERE key_hash = $1
+        "#,
+        key_hash
+    )
+    .fetch_one(pool)
+    .await?;
+
+    let status = if row.revoked_at.is_some() {
+        "revoked"
+    } else {
+        "active"
+    };
+
+    Ok(KeyStatusResponse {
+        label: row.label,
+        status: status.into(),
+        created_at: row.created_at,
+        revoked_at: row.revoked_at,
+    })
+}
+
+#[derive(Debug, Serialize)]
 pub struct UsageResponse {
     pub plan: String,
     pub period_start: chrono::NaiveDate,
