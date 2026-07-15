@@ -191,6 +191,10 @@ struct App {
     // в архив. По умолчанию false — система не хранит и не экспортирует
     // файлы без явного согласия пользователя на каждый конкретный экспорт.
     include_originals_in_zip: bool,
+
+    // === Account panel ===
+    account_data: Option<serde_json::Value>,
+    loading_account: bool,
 }
 
 impl Default for App {
@@ -232,6 +236,8 @@ impl Default for App {
             loading_commit: false,
             last_proof: None,
             include_originals_in_zip: false,
+            account_data: None,
+            loading_account: false,
         }
     }
 }
@@ -273,6 +279,7 @@ enum Screen {
     Result,
     VerifyProject,
     VerifyResult,
+    Account,
 }
 
 #[derive(Debug)]
@@ -300,6 +307,7 @@ enum WorkerResponse {
 
     VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
+    AccountFetchDone(Result<serde_json::Value, String>),
 }
 
 impl App {
@@ -1389,6 +1397,23 @@ impl App {
             ctx.request_repaint();
         });
     }
+
+    /// Запрашивает account capabilities асинхронно, аналогично verify_chain.
+    /// Результат приходит через WorkerResponse::AccountFetchDone.
+    fn start_account_fetch(&mut self, ctx: &egui::Context) {
+        self.loading_account = true;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let lang = self.lang;
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new(server_url());
+            let result =
+                client::fetch_capabilities(&client).map_err(|e| friendly_error(&e, lang));
+            let _ = tx.send(WorkerResponse::AccountFetchDone(result));
+            ctx.request_repaint();
+        });
+    }
 }
 
 impl eframe::App for App {
@@ -1472,6 +1497,22 @@ impl eframe::App for App {
                             self.verify_details = format!(
                                 "{}: {}",
                                 self.tr("⚠️ Ошибка проверки", "⚠️ Verification error"),
+                                e
+                            );
+                        }
+                    }
+                }
+                WorkerResponse::AccountFetchDone(res) => {
+                    self.loading_account = false;
+                    match res {
+                        Ok(json) => {
+                            self.account_data = Some(json);
+                        }
+                        Err(e) => {
+                            self.account_data = None;
+                            self.status = format!(
+                                "{}: {}",
+                                self.tr("⚠️ Не удалось загрузить аккаунт", "⚠️ Failed to load account"),
                                 e
                             );
                         }
@@ -1586,9 +1627,56 @@ impl eframe::App for App {
                     if ui.selectable_label(self.lang == Lang::En, "EN").clicked() {
                         self.lang = Lang::En;
                     }
+                    ui.add_space(8.0);
+                    if ui.button(self.tr("⚙ Аккаунт", "⚙ Account")).clicked() {
+                        let ctx = ui.ctx().clone();
+                        self.screen = Screen::Account;
+                        self.start_account_fetch(&ctx);
+                    }
                 });
             });
             ui.add_space(4.0);
+
+            if self.screen == Screen::Account {
+                ui.heading(self.tr("Аккаунт", "Account"));
+                ui.add_space(8.0);
+
+                if self.loading_account {
+                    ui.label(self.tr("⏳ Загрузка...", "⏳ Loading..."));
+                } else if let Some(caps) = self.account_data.clone() {
+                    let plan = caps["plan_name"].as_str().unwrap_or("unknown");
+                    let tsa_mode = caps["tsa_mode"].as_str().unwrap_or("machine");
+                    let server_backup = caps["server_backup"].as_bool().unwrap_or(false);
+                    let identity_enabled = caps["identity_enabled"].as_bool().unwrap_or(false);
+
+                    ui.label(format!("{}: {}", self.tr("План", "Plan"), plan.to_uppercase()));
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("TSA", "TSA"),
+                        if tsa_mode == "qualified" { "Qualified" } else { "Machine" }
+                    ));
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("Резервное копирование", "Backup"),
+                        if server_backup { "ON" } else { "OFF" }
+                    ));
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("Идентификация", "Identity"),
+                        if identity_enabled { "ON" } else { "OFF" }
+                    ));
+                } else {
+                    ui.label(self.tr(
+                        "⚠️ Не удалось загрузить данные аккаунта",
+                        "⚠️ Failed to load account data",
+                    ));
+                }
+
+                ui.add_space(16.0);
+                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
+                    self.screen = Screen::FileSelection;
+                }
+            }
 
             if self.screen == Screen::FileSelection {
                 ui.heading("Evident Ledger");

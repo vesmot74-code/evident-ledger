@@ -245,6 +245,25 @@ impl EvidentClient {
         let proof: ProofFile = resp.json()?;
         Ok(proof)
     }
+
+    /// Запрашивает account capabilities текущего пользователя (тариф, лимиты,
+    /// включённые продуктовые слои). Требует X-API-KEY — если ключ не
+    /// загружен, сервер вернёт 401, что будет отражено в ClientError::Server.
+    pub fn fetch_capabilities(&self) -> Result<serde_json::Value, ClientError> {
+        let resp = self
+            .authed(self.client.get(format!("{}/account/capabilities", self.base_url)))
+            .send()?;
+        if !resp.status().is_success() {
+            let body = resp.text().unwrap_or_default();
+            return Err(ClientError::Server(body));
+        }
+        let json: serde_json::Value = resp.json()?;
+        Ok(json)
+    }
+}
+
+pub fn fetch_capabilities(client: &EvidentClient) -> Result<serde_json::Value, ClientError> {
+    client.fetch_capabilities()
 }
 
 pub fn verify_chain(client: &EvidentClient, chain_id: Uuid) -> Result<VerifyResponse, ClientError> {
