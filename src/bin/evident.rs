@@ -148,7 +148,7 @@ fn run() -> Result<(), CliError> {
         Some("init") => cmd_init(),
         Some("help") | Some("--help") | Some("-h") => {
             println!(
-                "usage: evident <init|new-chain|commit|verify|status|account|key status|key info|report generate>"
+                "usage: evident <init|new-chain|commit|verify|status|account|account info|key status|key info|report generate>"
             );
             Ok(())
         }
@@ -198,7 +198,11 @@ fn run() -> Result<(), CliError> {
                 .ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
             cmd_verify(&proof_path)
         }
-        Some("account") => cmd_account(),
+        Some("account") => match args.next().as_deref() {
+            None => cmd_account(),
+            Some("info") => cmd_account_info(),
+            Some(_) => Err(CliError::Usage("usage: evident account [info]".into())),
+        },
         Some("key") => {
             let subcommand = args
                 .next()
@@ -210,7 +214,7 @@ fn run() -> Result<(), CliError> {
             }
         }
         _ => Err(CliError::Usage(
-            "usage: evident <init|new-chain|commit|verify|status|account|key status|key info|report generate>"
+            "usage: evident <init|new-chain|commit|verify|status|account|account info|key status|key info|report generate>"
                 .into(),
         )),
     }
@@ -493,6 +497,92 @@ fn cmd_account() -> Result<(), CliError> {
         }
     );
     println!("--------------------------------");
+
+    Ok(())
+}
+
+fn cmd_account_info() -> Result<(), CliError> {
+    let api_key = match load_api_key() {
+        Ok(key) => key,
+        Err(_) => {
+            println!("Account");
+            println!("Status: NOT CONFIGURED");
+            println!("Set EVIDENT_API_KEY or create:");
+            println!("~/.evident/api_key");
+            return Ok(());
+        }
+    };
+
+    let client = reqwest::blocking::Client::new();
+    let response = client
+        .get("http://127.0.0.1:3000/account/capabilities")
+        .header("X-API-KEY", &api_key)
+        .send()?;
+
+    if response.status() == reqwest::StatusCode::UNAUTHORIZED {
+        println!("Account");
+        println!("Status: REJECTED");
+        println!("API key rejected by server");
+        return Ok(());
+    }
+
+    if !response.status().is_success() {
+        let status = response.status();
+        let body = response.text().unwrap_or_default();
+        return Err(CliError::Server(format!("server error {status}: {body}")));
+    }
+
+    let capabilities: serde_json::Value = response.json()?;
+
+    let plan = capabilities
+        .get("plan_name")
+        .and_then(|v| v.as_str())
+        .unwrap_or("unknown");
+    let tsa_mode = capabilities
+        .get("tsa_mode")
+        .and_then(|v| v.as_str())
+        .unwrap_or("machine");
+    let server_backup = capabilities
+        .get("server_backup")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let history_recovery = capabilities
+        .get("history_recovery")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+    let identity_enabled = capabilities
+        .get("identity_enabled")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
+
+    println!("Account");
+    println!("Status: ACTIVE");
+    println!("Plan: {}", plan.to_uppercase());
+    println!("Capabilities:");
+    println!(
+        "  TSA mode:         {}",
+        if tsa_mode == "qualified" {
+            "Qualified TSA"
+        } else {
+            "Machine TSA"
+        }
+    );
+    println!(
+        "  Server backup:    {}",
+        if server_backup { "enabled" } else { "disabled" }
+    );
+    println!(
+        "  History recovery: {}",
+        if history_recovery { "enabled" } else { "disabled" }
+    );
+    println!(
+        "  Identity:         {}",
+        if identity_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
 
     Ok(())
 }
