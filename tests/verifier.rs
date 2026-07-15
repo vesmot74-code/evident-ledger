@@ -1,9 +1,28 @@
+use std::path::PathBuf;
 use std::process::Command;
 
+fn setup_isolated_home() -> PathBuf {
+    let home = PathBuf::from(format!("/tmp/evident_test_home_{}", uuid_simple()));
+    let evident_dir = home.join(".evident");
+    std::fs::create_dir_all(&evident_dir).expect("failed to create isolated test home");
+
+    let fixture_key = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures/server_identity.pub");
+    std::fs::copy(
+        &fixture_key,
+        evident_dir.join("server_identity.pub"),
+    )
+    .expect("tests/fixtures/server_identity.pub missing");
+
+    home
+}
+
 fn run_verifier(proof_path: &str) -> (String, i32) {
+    let home = setup_isolated_home();
     let output = Command::new("cargo")
         .args(["run", "--bin", "evident-verify", "--", proof_path])
         .current_dir(env!("CARGO_MANIFEST_DIR"))
+        .env("HOME", &home)
         .output()
         .expect("failed to run verifier");
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
@@ -15,7 +34,7 @@ fn run_verifier(proof_path: &str) -> (String, i32) {
 
 fn load_proof() -> serde_json::Value {
     let content = std::fs::read_to_string("tests/fixtures/proof.json")
-        .expect("tests/fixtures/proof.json missing — run: curl -s http://localhost:3000/verify/proof/11111111-1111-1111-1111-111111111111 > tests/fixtures/proof.json");
+        .expect("tests/fixtures/proof.json missing — run: curl -s http://localhost:3000/verify/proof/169ec981-a564-49ce-8425-20a90b97adc6 > tests/fixtures/proof.json");
     serde_json::from_str(&content).expect("invalid JSON")
 }
 
