@@ -219,9 +219,17 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     let event_log = evident_dir().join("events.jsonl");
     freeze::append_event_log(&event_log, &event)?;
 
-    println!("anchored    event={}", commit.event_id);
-    println!("proof       {}", proof_path.display());
+print_commit_success(&commit.event_id, &proof_path);
     Ok(())
+}
+
+/// Печатает результат успешного commit. Вынесено в отдельную функцию, чтобы
+/// в будущем сюда можно было добавить тариф-специфичный вывод (Machine vs
+/// Qualified TSA, "Server backup enabled" для Vault, "Identity signature
+/// attached" для Identity) без раздувания cmd_commit.
+fn print_commit_success(event_id: &str, proof_path: &Path) {
+    println!("anchored    event={}", event_id);
+    println!("proof       {}", proof_path.display());
 }
 
 fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
