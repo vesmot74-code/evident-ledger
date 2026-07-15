@@ -479,3 +479,90 @@ Future improvements:
 * unified storage model
 * expanded automated test coverage
 * additional TSA providers
+
+---
+
+# 13. ACCOUNT CAPABILITY MODEL
+
+The system exposes account-level capabilities.
+
+CLI command:
+
+```bash
+evident account
+```
+
+Backend endpoint:
+
+```http
+GET /account/capabilities
+```
+
+Authentication:
+
+```http
+X-API-KEY
+```
+
+---
+
+# 14. TRUST LEVEL MODEL
+
+Evidence trust level depends on enabled capabilities.
+
+## Basic
+
+Available in FREE plan.
+
+Includes:
+
+- SHA-256 content hash
+- Merkle proof
+- cryptographic signature
+- Machine TSA timestamp
+
+## Enhanced
+
+Available in Legal plan.
+
+Includes:
+
+- Qualified TSA provider
+
+## Vault
+
+Available in Vault plan.
+
+Includes:
+
+- encrypted server backup
+
+## Identity
+
+Available in Identity plan.
+
+Includes:
+
+- user identity binding
+
+---
+
+# 15. COMMIT RESULT OUTPUT
+
+CLI displays trust level, active plan and available upgrades after successful commit.
+
+---
+
+# 16. API KEY AUTHENTICATION
+
+Server API requests use API key authentication through X-API-KEY header.
+
+---
+
+# 17. FUTURE PRODUCT LAYERS
+
+Vault Layer: planned
+
+Identity Layer: planned
+
+Billing Layer: planned
