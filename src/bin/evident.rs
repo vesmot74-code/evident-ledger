@@ -110,7 +110,9 @@ fn run() -> Result<(), CliError> {
     match args.next().as_deref() {
         Some("init") => cmd_init(),
         Some("help") | Some("--help") | Some("-h") => {
-            println!("usage: evident <init|new-chain|commit|verify|status|report generate>");
+            println!(
+                "usage: evident <init|new-chain|commit|verify|status|account|report generate>"
+            );
             Ok(())
         }
         Some("new-chain") => cmd_new_chain(),
@@ -159,8 +161,9 @@ fn run() -> Result<(), CliError> {
                 .ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
             cmd_verify(&proof_path)
         }
+        Some("account") => cmd_account(),
         _ => Err(CliError::Usage(
-            "usage: evident <init|new-chain|commit|verify|status|report generate>".into(),
+            "usage: evident <init|new-chain|commit|verify|status|account|report generate>".into(),
         )),
     }
 }
@@ -312,6 +315,77 @@ fn cmd_new_chain() -> Result<(), CliError> {
     let json: serde_json::Value = serde_json::from_str(&body)?;
     println!("chain created");
     println!("chain_id: {}", json["chain_id"].as_str().unwrap_or("?"));
+    Ok(())
+}
+
+fn cmd_account() -> Result<(), CliError> {
+    let client = reqwest::blocking::Client::new();
+    let api_key = std::env::var("EVIDENT_API_KEY").ok().or_else(|| {
+        fs::read_to_string(evident_dir().join("api_key"))
+            .ok()
+            .map(|s| s.trim().to_string())
+    });
+
+    let api_key = api_key.ok_or_else(|| {
+        CliError::Usage("No API key found. Set EVIDENT_API_KEY or create ~/.evident/api_key".into())
+    })?;
+
+    let capabilities: serde_json::Value = client
+        .get("http://127.0.0.1:3000/account/capabilities")
+        .header("X-API-KEY", &api_key)
+        .send()?
+        .json()?;
+
+    let usage: serde_json::Value = client
+        .get("http://127.0.0.1:3000/account/usage")
+        .header("X-API-KEY", &api_key)
+        .send()?
+        .json()?;
+
+    let plan = capabilities["plan_name"].as_str().unwrap_or("unknown");
+    let tsa_mode = capabilities["tsa_mode"].as_str().unwrap_or("unknown");
+    let server_backup = capabilities["server_backup"].as_bool().unwrap_or(false);
+    let identity_enabled = capabilities["identity_enabled"].as_bool().unwrap_or(false);
+
+    let server_commits = usage["server_commits"].as_i64().unwrap_or(0);
+    let commits_limit = usage["monthly_commits_limit"]
+        .as_i64()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "unlimited".to_string());
+    let tsa_requests = usage["tsa_requests"].as_i64().unwrap_or(0);
+    let tsa_limit = usage["monthly_tsa_limit"]
+        .as_i64()
+        .map(|n| n.to_string())
+        .unwrap_or_else(|| "unlimited".to_string());
+
+    println!("Evident Ledger Account\n");
+    println!("Plan: {}\n", plan.to_uppercase());
+    println!("Capabilities:");
+    println!("--------------------------------");
+    println!(
+        "TSA mode:        {}",
+        if tsa_mode == "machine" {
+            "Machine TSA"
+        } else {
+            "Qualified TSA"
+        }
+    );
+    println!("Monthly commits:  {} / {}", server_commits, commits_limit);
+    println!("TSA requests:     {} / {}", tsa_requests, tsa_limit);
+    println!(
+        "Server backup:    {}",
+        if server_backup { "enabled" } else { "disabled" }
+    );
+    println!(
+        "Identity:         {}",
+        if identity_enabled {
+            "enabled"
+        } else {
+            "disabled"
+        }
+    );
+    println!("--------------------------------");
+
     Ok(())
 }
 

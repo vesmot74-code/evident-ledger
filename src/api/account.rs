@@ -18,7 +18,9 @@ async fn usage_handler(
     let usage = get_usage(&state.db, auth.account_id)
         .await
         .map_err(|e| e.to_string())?;
-    Ok(Json(serde_json::to_value(usage).map_err(|e| e.to_string())?))
+    Ok(Json(
+        serde_json::to_value(usage).map_err(|e| e.to_string())?,
+    ))
 }
 
 async fn capabilities_handler(

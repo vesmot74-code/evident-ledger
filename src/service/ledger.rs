@@ -34,9 +34,10 @@ impl IntoResponse for LedgerError {
     fn into_response(self) -> Response {
         let (status, message) = match self {
             LedgerError::ChainNotFound => (StatusCode::NOT_FOUND, "Chain not found"),
-            LedgerError::ChainAccessDenied => {
-                (StatusCode::FORBIDDEN, "Chain belongs to a different account")
-            }
+            LedgerError::ChainAccessDenied => (
+                StatusCode::FORBIDDEN,
+                "Chain belongs to a different account",
+            ),
             LedgerError::ParentMismatch => {
                 (StatusCode::CONFLICT, "Parent hash mismatch — fork detected")
             }
@@ -167,11 +168,11 @@ pub async fn submit_event(
     .fetch_one(&mut *tx)
     .await?;
 
-// Capabilities читаются вне транзакции tx (это отдельный pool-запрос,
+    // Capabilities читаются вне транзакции tx (это отдельный pool-запрос,
     // без FOR UPDATE — тарифный план не меняется во время commit, только
     // usage-счётчики нуждаются в блокировке, что уже сделано выше).
-    let capabilities = crate::service::capabilities::get_account_capabilities(pool, account_id)
-        .await?;
+    let capabilities =
+        crate::service::capabilities::get_account_capabilities(pool, account_id).await?;
 
     if !capabilities.can_commit(usage.server_commits) {
         return Err(LedgerError::UsageLimitExceeded);
