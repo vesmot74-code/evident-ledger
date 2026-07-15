@@ -389,10 +389,7 @@ impl App {
     /// `valid` here means "locally self-consistent" (hash-chain sequence
     /// intact + file hash matches on disk), NOT a full signature check —
     /// that still needs the server's public key.
-    fn build_local_events(
-        proof: &client::ProofFile,
-        proofs_dir: &Path,
-    ) -> Vec<VerificationEvent> {
+    fn build_local_events(proof: &client::ProofFile, proofs_dir: &Path) -> Vec<VerificationEvent> {
         let mut sorted = proof.events.clone();
         sorted.sort_by_key(|e| e.sequence);
 
@@ -405,21 +402,17 @@ impl App {
             let chain_ok = leaf.parent_event_id == expected_parent;
             expected_parent = leaf.event_id.clone();
 
-            let (local_integrity_ok, file_name) = if let Some(copy_path) =
-                local_copies.get(&leaf.event_id)
-            {
-                let ok = Self::check_local_integrity(copy_path, &leaf.file_hash);
-                let name = copy_path
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
-                (ok, name)
-            } else {
-                (
-                    None,
-                    format!("event {:04} (not stored)", leaf.sequence),
-                )
-            };
+            let (local_integrity_ok, file_name) =
+                if let Some(copy_path) = local_copies.get(&leaf.event_id) {
+                    let ok = Self::check_local_integrity(copy_path, &leaf.file_hash);
+                    let name = copy_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_else(|| format!("event {:04}", leaf.sequence));
+                    (ok, name)
+                } else {
+                    (None, format!("event {:04} (not stored)", leaf.sequence))
+                };
 
             events.push(VerificationEvent {
                 sequence: leaf.sequence,
@@ -461,18 +454,17 @@ impl App {
             .ok_or_else(|| "Event not found in proof chain".to_string())?;
 
         let local_copies = Self::load_local_copies(&proofs_dir);
-        let (fresh_local_integrity_ok, file_name) = if let Some(copy_path) =
-            local_copies.get(&event.event_id)
-        {
-            let ok = Self::check_local_integrity(copy_path, &event_leaf.file_hash);
-            let name = copy_path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_else(|| event.file_name.clone());
-            (ok, name)
-        } else {
-            (None, event.file_name.clone())
-        };
+        let (fresh_local_integrity_ok, file_name) =
+            if let Some(copy_path) = local_copies.get(&event.event_id) {
+                let ok = Self::check_local_integrity(copy_path, &event_leaf.file_hash);
+                let name = copy_path
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| event.file_name.clone());
+                (ok, name)
+            } else {
+                (None, event.file_name.clone())
+            };
 
         let single_event_summary = EventSummary {
             event_id: event_leaf.event_id.clone(),
@@ -1034,8 +1026,7 @@ impl App {
         match Self::load_local_proof(&proofs_dir) {
             Some(local_proof) => {
                 self.state.head_event_id = Some(local_proof.head_event_id.clone());
-                self.verification_events =
-                    Self::build_local_events(&local_proof, &proofs_dir);
+                self.verification_events = Self::build_local_events(&local_proof, &proofs_dir);
                 self.last_proof = Some(local_proof);
 
                 let local_chain_ok = self.verification_events.iter().all(|e| e.valid);
@@ -1444,6 +1435,8 @@ impl eframe::App for App {
         }
 
         // --- worker response handling ---
+
+        // --- worker response handling ---
         while let Ok(resp) = self.rx_resp.try_recv() {
             match resp {
                 WorkerResponse::HashComputed(result) => match result {
@@ -1580,8 +1573,11 @@ impl eframe::App for App {
             ui.painter().rect_filled(ui.max_rect(), 0.0, COLOR_BG);
             ui.add_space(8.0);
 
-            // === Language toggle (visible on every screen) ===
+        // === Language toggle (visible on every screen) ===
             ui.horizontal(|ui| {
+                if self.screen == Screen::VerifyResult {
+                    ui.heading("Evident Ledger");
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if ui.selectable_label(self.lang == Lang::Ru, "RU").clicked() {
                         self.lang = Lang::Ru;
@@ -1594,7 +1590,7 @@ impl eframe::App for App {
             });
             ui.add_space(4.0);
 
-if self.screen == Screen::FileSelection {
+            if self.screen == Screen::FileSelection {
                 ui.heading("Evident Ledger");
                 ui.add_space(8.0);
 
@@ -1724,7 +1720,10 @@ if self.screen == Screen::FileSelection {
                         ui.label(self.tr("⏳ Вычисление SHA-256...", "⏳ Computing SHA-256..."));
                     } else {
                         if ui
-                            .button(self.tr("🔢 Посчитать хэш", "🔢 Compute Hash"))
+                            .add_sized(
+                                [220.0, 32.0],
+                                egui::Button::new(self.tr("🔢 Посчитать хэш", "🔢 Compute Hash")),
+                            )
                             .clicked()
                         {
                             self.loading_hash = true;
@@ -1756,7 +1755,13 @@ if self.screen == Screen::FileSelection {
                     ui.add_space(12.0);
 
                     ui.horizontal(|ui| {
-                        if ui.button(self.tr("📋 Копировать", "📋 Copy")).clicked() {
+                        if ui
+                            .add_sized(
+                                [220.0, 32.0],
+                                egui::Button::new(self.tr("📋 Копировать", "📋 Copy")),
+                            )
+                            .clicked()
+                        {
                             ui.ctx().copy_text(self.selected_file_hash.clone());
 
                             self.status =
@@ -1764,7 +1769,10 @@ if self.screen == Screen::FileSelection {
                         }
 
                         if ui
-                            .button(self.tr("✅ Зафиксировать", "✅ Commit"))
+                            .add_sized(
+                                [220.0, 32.0],
+                                egui::Button::new(self.tr("✅ Зафиксировать", "✅ Commit")),
+                            )
                             .clicked()
                         {
                             self.screen = Screen::SelectProject;
@@ -1776,7 +1784,13 @@ if self.screen == Screen::FileSelection {
 
                 ui.add_space(12.0);
 
-                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
+                if ui
+                    .add_sized(
+                        [220.0, 32.0],
+                        egui::Button::new(self.tr("⬅ Назад", "⬅ Back")),
+                    )
+                    .clicked()
+                {
                     self.screen = Screen::FileSelection;
 
                     self.file_path.clear();
@@ -1813,27 +1827,38 @@ if self.screen == Screen::FileSelection {
                 } else {
                     let projects = self.projects.clone();
                     let half_width = ui.available_width() * 0.5;
-                    for project in projects {
-                        let resp = ui.add_sized(
-                            [half_width, 32.0],
-                            egui::Button::new(&project),
-                        );
-                        if resp.clicked() {
-                            self.selected_project = project.clone();
-                            self.verify_project(ui.ctx());
-                        }
-                    }
+                    egui::ScrollArea::vertical()
+                        .id_salt("verify_project_list")
+                        .max_height(400.0)
+                        .auto_shrink([false, true])
+                        .show(ui, |ui| {
+                            for project in projects {
+                                let resp = ui.add_sized(
+                                    [half_width, 32.0],
+                                    egui::Button::new(&project),
+                                );
+                                if resp.clicked() {
+                                    self.selected_project = project.clone();
+                                    self.verify_project(ui.ctx());
+                                }
+                            }
+                        });
                 }
 
                 ui.add_space(12.0);
-                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
+                if ui
+                    .add_sized(
+                        [220.0, 32.0],
+                        egui::Button::new(self.tr("⬅ Назад", "⬅ Back")),
+                    )
+                    .clicked()
+                {
                     self.screen = Screen::FileSelection;
                 }
                 return;
             }
 
             if self.screen == Screen::VerifyResult {
-                ui.heading("Evident Ledger");
                 ui.label(
                     egui::RichText::new(self.tr(
                         "Панель проверки доказательств",
@@ -1846,7 +1871,7 @@ if self.screen == Screen::FileSelection {
                 egui::Frame::group(ui.style())
                     .fill(COLOR_SURFACE)
                     .stroke(egui::Stroke::new(1.0, COLOR_BORDER))
-                    .inner_margin(egui::Margin::same(14))
+                    .inner_margin(egui::Margin::same(10))
                     .show(ui, |ui| {
                         ui.horizontal(|ui| {
                             ui.label(egui::RichText::new(self.tr("Проект", "Project")).weak());
@@ -1857,7 +1882,7 @@ if self.screen == Screen::FileSelection {
                                 .size(16.0)
                                 .strong(),
                         );
-                        ui.add_space(10.0);
+                        ui.add_space(6.0);
 
                    let (status_color, status_text) = match self.verify_status {
                             VerifyStatus::Valid => {
@@ -1875,12 +1900,12 @@ if self.screen == Screen::FileSelection {
                         };
                         ui.colored_label(
                             status_color,
-                            egui::RichText::new(status_text).size(20.0).strong(),
+                            egui::RichText::new(status_text).size(15.0).strong(),
                         );
 
-                        ui.add_space(10.0);
+                        ui.add_space(6.0);
                         ui.separator();
-                        ui.add_space(8.0);
+                        ui.add_space(5.0);
 
                         ui.columns(2, |cols| {
                             let events_count = if let Some(proof) = self.last_proof.as_ref() {
@@ -1943,9 +1968,9 @@ if self.screen == Screen::FileSelection {
                         self.state.head_event_id.as_deref(),
                     ) {
                         Ok(()) => {
-                            egui::ScrollArea::vertical()
+                             egui::ScrollArea::vertical()
                               .id_salt("verify_event_list")
-                             .max_height(120.0)
+                             .max_height(160.0)
                               .auto_shrink([false, true])
                               .show(ui, |ui| {
                                 for event in self.verification_events.clone() {
@@ -2066,14 +2091,30 @@ if self.screen == Screen::FileSelection {
                     }
                 }
 
-              ui.add_space(12.0);
-                if ui
-                    .button(self.tr("🔄 Обновить проверку", "🔄 Re-check"))
-                    .clicked()
-                {
-                    self.verify_project(ui.ctx());
-                }
-                ui.small(self.tr(
+                ui.add_space(12.0);
+                ui.horizontal(|ui| {
+                    if ui
+                      .add_sized(
+                            [220.0, 32.0],
+                            egui::Button::new(self.tr("🔄 Обновить проверку", "🔄 Re-check")),
+                        )
+                        .clicked()
+                    {
+                        self.verify_project(ui.ctx());
+                        let already_specific =
+                            self.status.starts_with("❌") || self.status.starts_with("⚠️");
+                        if !already_specific {
+                            self.status = self
+                                .tr("✅ Проверка завершена", "✅ Re-check complete")
+                                .to_string();
+                        }
+                    }
+                    if !self.status.is_empty() {
+                        ui.add_space(8.0);
+                        ui.label(&self.status);
+                    }
+                });
+                ui.label(self.tr(
                     "Если вы изменили файл на диске, нажмите здесь, чтобы проверить его заново.",
                     "If you changed the file on disk, click here to re-check it.",
                 ));
@@ -2081,7 +2122,10 @@ if self.screen == Screen::FileSelection {
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
                     if ui
-                        .button(self.tr("📄 Скачать заключение (PDF)", "📄 Download Report (PDF)"))
+.add_sized(
+    [220.0, 32.0],
+    egui::Button::new(self.tr("📄 Скачать заключение (PDF)", "📄 Download Report (PDF)")),
+)
                         .clicked()
                     {
                         let fresh_proof = match &self.last_proof {
@@ -2153,24 +2197,30 @@ let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStat
                                         "❌ Нет данных для заключения — сначала выполните проверку",
                                         "❌ No data for a report — run verification first",
                                     )
-                                    .to_string();
+                              .to_string();
                             }
-                        }
-                    }
-                    let include_originals_label = self.tr(
-                        "Включить оригиналы файлов в архив",
-                        "Include original files in the archive",
-                    );
-                    ui.checkbox(&mut self.include_originals_in_zip, include_originals_label);
-                    ui.small(self.tr(
+                         }
+                     }
+                 });
+
+                 ui.allocate_ui(egui::vec2(600.0, 0.0), |ui| {
+                    ui.label(self.tr(
                         "Система не хранит файлы. Если включено, файлы будут добавлены в архив \
                          с вашего устройства только в момент экспорта.",
                         "The system does not store files. If enabled, files will be added to \
                          the archive from your device only at export time.",
                     ));
+                });
 
-                    if ui
-                        .button(self.tr("📦 Скачать проект (ZIP)", "📦 Download Project (ZIP)"))
+                ui.add_space(6.0);
+                ui.horizontal(|ui| {
+                   if ui
+                        .add_sized(
+                            [220.0, 32.0],
+                            egui::Button::new(
+                                self.tr("📦 Скачать проект (ZIP)", "📦 Download Project (ZIP)"),
+                            ),
+                        )
                         .clicked()
                     {
                         match &self.last_proof {
@@ -2203,23 +2253,37 @@ let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStat
                                 }
                             }
 
-                            None => {
+                             None => {
                                 self.status = "❌ Run verification first".to_string();
                             }
                         }
                     }
+
+                    ui.add_space(20.0);
+                    let include_originals_label = self.tr(
+                        "Включить файлы в архив",
+                        "Include files in the archive",
+                    );
+                    let dark_text = egui::Color32::from_rgb(15, 23, 42);
+                    ui.add(egui::Checkbox::new(
+                        &mut self.include_originals_in_zip,
+                        egui::RichText::new(include_originals_label).color(dark_text),
+                    ));
                 });
 
                 ui.add_space(8.0);
-                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
+
+                if ui
+                    .add_sized(
+                        [220.0, 32.0],
+                        egui::Button::new(self.tr("⬅ Назад", "⬅ Back")),
+                    )
+                    .clicked()
+                {
                     self.screen = Screen::FileSelection;
                     self.verification_complete = false;
                 }
 
-                if !self.status.is_empty() {
-                    ui.add_space(8.0);
-                    ui.label(&self.status);
-                }
                 return;
             }
 
@@ -2279,7 +2343,10 @@ ui.add_space(12.0);
 
                 if self.project_mode == ProjectMode::New {
                     ui.label(self.tr("Название проекта:", "Project name:"));
-                    ui.text_edit_singleline(&mut self.project_name);
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.project_name)
+                            .text_color(egui::Color32::from_rgb(15, 23, 42)),
+                    );
                     ui.add_space(8.0);
                     let projects_dir = match self.projects_dir() {
                         Ok(dir) => dir,
@@ -2303,21 +2370,27 @@ ui.add_space(12.0);
                  } else {
                         ui.label(self.tr("Выберите проект:", "Select a project:"));
                         let half_width = ui.available_width() * 0.5;
-                        for project in &self.projects {
-                            let is_selected = self.selected_project == *project;
-                            let button_text = if is_selected {
-                                format!("✅ {}", project)
-                            } else {
-                                project.clone()
-                            };
-                            let resp = ui.add_sized(
-                                [half_width, 32.0],
-                                egui::Button::new(button_text),
-                            );
-                            if resp.clicked() {
-                                self.selected_project = project.clone();
-                            }
-                        }
+                        egui::ScrollArea::vertical()
+                            .id_salt("select_existing_project_list")
+                            .max_height(400.0)
+                            .auto_shrink([false, true])
+                            .show(ui, |ui| {
+                                for project in &self.projects {
+                                    let is_selected = self.selected_project == *project;
+                                    let button_text = if is_selected {
+                                        format!("✅ {}", project)
+                                    } else {
+                                        project.clone()
+                                    };
+                                    let resp = ui.add_sized(
+                                        [half_width, 32.0],
+                                        egui::Button::new(button_text),
+                                    );
+                                    if resp.clicked() {
+                                        self.selected_project = project.clone();
+                                    }
+                                }
+                            });
                         if !self.selected_project.is_empty() {
                             ui.colored_label(
                                 COLOR_VALID,
@@ -2356,18 +2429,26 @@ ui.add_space(12.0);
                 if self.loading_commit {
                     ui.spinner();
                     ui.label(self.tr("Отправка...", "Sending..."));
-                } else if ui
-                    .add_enabled(
-                        can_commit,
-                        egui::Button::new(self.tr("✅ Зафиксировать", "✅ Commit")),
-                    )
-                    .clicked()
-                {
-                    self.do_commit(ui.ctx());
+                } else {
+                    let commit_clicked = ui
+                        .add_enabled_ui(can_commit, |ui| {
+                            ui.add_sized(
+                                [220.0, 32.0],
+                                egui::Button::new(self.tr("✅ Зафиксировать", "✅ Commit")),
+                            )
+                        })
+                        .inner
+                        .clicked();
+                    if commit_clicked {
+                        self.do_commit(ui.ctx());
+                    }
                 }
 
                 if ui
-                    .button(self.tr("⬅ Назад к файлу", "⬅ Back to File"))
+                    .add_sized(
+                        [220.0, 32.0],
+                        egui::Button::new(self.tr("⬅ Назад к файлу", "⬅ Back to File")),
+                    )
                     .clicked()
                 {
                     self.screen = Screen::FileSelection;
@@ -2682,8 +2763,8 @@ fn main() -> Result<(), eframe::Error> {
     }
 
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([750.0, 650.0])
+         viewport: egui::ViewportBuilder::default()
+            .with_inner_size([750.0, 820.0])
             .with_min_inner_size([500.0, 400.0]),
         ..Default::default()
     };
