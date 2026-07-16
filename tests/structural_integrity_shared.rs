@@ -125,13 +125,30 @@ fn restore_empty_home_succeeds_with_disclaimer() {
         .unwrap();
         writeln!(
             capture,
-            "Note: this confirms structural integrity only, not cryptographic authenticity."
+            "This restore validates structural consistency only:"
         )
         .unwrap();
+        writeln!(
+            capture,
+            "event ordering, sequence continuity, and parent linkage."
+        )
+        .unwrap();
+        writeln!(
+            capture,
+            "It does not verify cryptographic authenticity or confirm"
+        )
+        .unwrap();
+        writeln!(
+            capture,
+            "that event contents match the authoritative ledger state."
+        )
+        .unwrap();
+        writeln!(capture, "Before relying on restored data, run:").unwrap();
         writeln!(capture, "  evident verify --chain {}", summary.chain_id).unwrap();
     }
     let out = String::from_utf8_lossy(&capture);
-    assert!(out.contains("structural integrity only"));
+    assert!(out.contains("structural consistency only"));
+    assert!(out.contains("authoritative ledger state"));
     assert!(out.contains("evident verify --chain"));
 
     print_restore_summary(&summary);

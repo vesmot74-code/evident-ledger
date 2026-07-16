@@ -187,8 +187,11 @@ pub fn print_restore_summary(summary: &RestoreSummary) {
         summary.chain_id, summary.event_count
     );
     println!("Saved to: {}", summary.output_path.display());
-    println!("Note: this confirms structural integrity only, not cryptographic authenticity.");
-    println!("To verify this chain's authenticity against the server, run:");
+    println!("This restore validates structural consistency only:");
+    println!("event ordering, sequence continuity, and parent linkage.");
+    println!("It does not verify cryptographic authenticity or confirm");
+    println!("that event contents match the authoritative ledger state.");
+    println!("Before relying on restored data, run:");
     println!("  evident verify --chain {}", summary.chain_id);
 }
 

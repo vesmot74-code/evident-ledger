@@ -126,4 +126,16 @@ mod tests {
         let err = validate_structural_integrity(&snapshot).unwrap_err();
         assert_eq!(err, STRUCTURAL_INTEGRITY_ERROR);
     }
+
+    // Structural validation checks chain shape (linkage/sequence), not
+    // event content authenticity. Content tampering is only caught by
+    // evident verify against the authoritative ledger. This test locks in
+    // that boundary so future changes to validate_structural_integrity are
+    // deliberate, not accidental.
+    #[test]
+    fn tampered_file_hash_passes_structural_check() {
+        let mut snapshot = sample_snapshot();
+        snapshot.events[0].file_hash = "ff".repeat(32);
+        assert!(validate_structural_integrity(&snapshot).is_ok());
+    }
 }
