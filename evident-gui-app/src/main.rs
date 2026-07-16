@@ -7,8 +7,8 @@ use evident_ledger::service::backup_restore::{
 };
 use evident_ledger::service::backup_snapshot::parse_snapshot;
 use evident_report::{
-    generate_report, EventSummary, FileStatus, ProofData, TsaData as ReportTsaData,
-    VerificationContext,
+    generate_registration_snapshot, generate_report, EventSummary, FileStatus, ProofData,
+    TsaData as ReportTsaData, VerificationContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -729,7 +729,7 @@ impl App {
         Ok(pdf_path)
     }
 
-    fn build_registration_snapshot(proof: &client::ProofFile) -> (ProofData, VerificationContext) {
+    fn build_registration_proof_data(proof: &client::ProofFile) -> ProofData {
         let event_summaries: Vec<EventSummary> = proof
             .events
             .iter()
@@ -759,7 +759,7 @@ impl App {
             .and_then(|t| t.timestamp)
             .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
 
-        let proof_data = ProofData {
+        ProofData {
             chain_id: proof.chain_id.clone(),
             head_event_id: proof.head_event_id.clone(),
             events: event_summaries,
@@ -768,17 +768,7 @@ impl App {
             public_key: proof.proof.public_key.clone(),
             tsa: tsa_complete,
             created_at,
-        };
-
-        let verification = VerificationContext {
-            is_valid: true,
-            verified_at: Utc::now(),
-            first_failure_sequence: None,
-            first_failure_error: None,
-            files: Vec::new(),
-        };
-
-        (proof_data, verification)
+        }
     }
 
     fn export_chain_zip(
@@ -1487,6 +1477,11 @@ impl App {
         let file_name = self.file_name.clone();
 
         self.rt.spawn_blocking(move || {
+            eprintln!(
+                "COMMIT DEBUG (GUI worker): server_url={} chain_uuid={}",
+                server_url(),
+                chain_uuid
+            );
             let client = EvidentClient::new(server_url());
             match client.submit_event(chain_uuid, &file_bytes) {
                 Ok((commit, proof_path, file_hash)) => {
@@ -3495,14 +3490,8 @@ ui.add_space(12.0);
                                     let pdf_path = proofs_dir
                                         .join(format!("{}_attestation.pdf", self.event_id));
 
-                                    let (proof_data, verification) =
-                                        Self::build_registration_snapshot(proof);
-                                    match generate_report(
-                                        &proof_data.chain_id.clone(),
-                                        &proof_data,
-                                        &verification,
-                                        &pdf_path,
-                                    ) {
+                                    let proof_data = Self::build_registration_proof_data(proof);
+                                    match generate_registration_snapshot(&proof_data, &pdf_path) {
                                         Ok(()) => {
                                             let _ = Command::new("open").arg(&pdf_path).output();
                                         }
