@@ -4,6 +4,10 @@ Deterministic verifiable event ledger with cryptographic proofs and offline veri
 
 **Status:** This describes the actual implementation as of July 2026, not the idealized architecture.
 
+Version: 1.0-draft
+Status: Active Development
+Last Updated: 2026-07-16
+
 ---
 
 ## 1. SYSTEM MODEL
@@ -141,9 +145,24 @@ Response:
 }
 ```
 
+**Scope note:** `valid` reflects chain integrity only — Merkle root,
+signature, and event-link consistency. It does NOT indicate anything
+about a local file. This endpoint has no knowledge of user-controlled
+local copies (see §2 Storage Model). A response of `valid: true` MUST
+NOT be interpreted or displayed as "file verified." Clients combining
+this result with local file status MUST keep them as two independent
+fields, per §4.2.
+
+The API MUST NOT expose a combined validity state that merges backend
+verification and local file verification results.
+
 ---
 
 ## 4.2 Local File Verification
+
+This check is independent of backend verification (§4.1) and MUST
+be surfaced as a separate field, never merged into a single `valid`
+value.
 
 The GUI optionally verifies user-controlled local copies.
 
@@ -637,6 +656,24 @@ Includes:
 # 15. COMMIT RESULT OUTPUT
 
 CLI displays trust level, active plan and available upgrades after successful commit.
+
+`trust_level` values are defined exclusively in §14 (Trust Level
+Model). Any system output field named `trust_level` (API, CLI, GUI)
+MUST use one of:
+
+BASIC
+ENHANCED
+VAULT
+IDENTITY
+
+No other values are valid. This section is the single source of truth
+for this enum.
+
+Note: §14 uses title-case section headers (Basic, Enhanced, Vault,
+Identity) as prose labels for plan tiers — these are not the enum
+values. The enum values are exactly the four upper-case strings above.
+Do not rename or "harmonize" the casing in §14 — the two are
+intentionally different (prose label vs. field value).
 
 ---
 
