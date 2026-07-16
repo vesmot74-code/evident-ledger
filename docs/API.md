@@ -68,6 +68,8 @@ HTTP 403 FORBIDDEN
 
 `403 FORBIDDEN` is used instead of `404` for cross-account access to `event_id`, accepting the minor information-disclosure trade-off (existence of `event_id` is revealed) in favor of debuggability. Revisit if enumeration abuse becomes a concern.
 
+> **TODO (docs drift):** v1 implementation currently returns `404 NOT_FOUND` (`not_found`) for foreign/missing `event_id` on proof/verify (non-leak policy); reconcile §1 with §6/§7 before v1 contract freeze.
+
 ---
 
 ## 2. ERROR FORMAT
@@ -279,12 +281,24 @@ HTTP **200 OK** (the event exists — do not use `404`):
 
 ## 7. GET /v1/verify/{event_id}
 
-Verifies:
+Verifies cryptographic proof and chain structure for a **single event**, optionally
+comparing a submitted file hash to the event's stored hash.
 
-- Merkle root
-- Signature
-- Signer identity
-- Chain-link consistency
+Verification uses the **same historical snapshot semantics as [§6 GET /proof](#6-get-v1proofevent_id)**:
+
+- Merkle root and signature are computed from the prefix `sequence <=` this event's
+  `sequence`, not from the current chain head.
+- `chain_head` in the signature message is **this event's** `event_id`.
+- Later events appended to the chain MUST NOT change verification results for
+  earlier events.
+
+Implementations MUST reuse the prefix definition in §6; verify MUST NOT reintroduce
+full-chain Merkle recomputation for historical `event_id` values.
+
+### Ownership
+
+Same rule as §6: the server verifies `event_id` belongs to the authenticated
+`account_id` **before** loading proof material or checking `proof_status`.
 
 ### File verification input
 
@@ -294,15 +308,25 @@ Use query parameter (hash only — no file upload in v1):
 GET /v1/verify/{event_id}?file_hash=<hex>
 ```
 
-| Condition              | Result                          |
-| ---------------------- | ------------------------------- |
-| `file_hash` provided   | `file.status` calculated        |
-| `file_hash` omitted    | `file.status` = `NOT_PERFORMED` |
+| Condition              | Result                                      |
+| ---------------------- | ------------------------------------------- |
+| `file_hash` provided   | `file.status` calculated (`VALID` / `TAMPERED`) |
+| `file_hash` omitted    | `file.status` = `NOT_PERFORMED` (not an error) |
 
-### Response
+Omitting `file_hash` is expected behavior: chain verification still runs when
+proof is anchored; file comparison is simply skipped.
+
+### Response shape (anchored proof)
+
+The response exposes **two independent objects** — `chain` and `file`. There is
+**no** top-level combined `valid` field.
 
 ```json
 {
+  "event_id": "",
+  "chain_id": "",
+  "sequence": 0,
+  "proof_status": "anchored",
   "chain": {
     "valid": true,
     "merkle_valid": true,
@@ -311,18 +335,52 @@ GET /v1/verify/{event_id}?file_hash=<hex>
   },
   "file": {
     "status": "NOT_PERFORMED"
-  }
+  },
+  "tsa": null,
+  "request_id": ""
 }
 ```
+
+With `?file_hash=<hex>` when hash matches:
+
+```json
+{
+  "event_id": "",
+  "chain_id": "",
+  "sequence": 0,
+  "proof_status": "anchored",
+  "chain": {
+    "valid": true,
+    "merkle_valid": true,
+    "signature_valid": true,
+    "errors": []
+  },
+  "file": {
+    "status": "VALID"
+  },
+  "tsa": null,
+  "request_id": ""
+}
+```
+
+### TSA
+
+`tsa` follows the same rule as §6: `null` when no TSA token exists for the
+**prefix Merkle root** used in verification. The API MUST NOT fabricate TSA
+information.
+
+When present, `tsa` uses the same object shape as §6 (`timestamp`, `serial`,
+`token_bytes`).
 
 ### Chain vs file verification
 
 Chain verification and file verification are independent.
 
-The API MUST NOT expose a combined validity state.
+The API MUST NOT expose a combined validity state at the top level.
 
 - `chain.valid` MUST NOT imply file verification.
-- `file.status` MUST NOT affect chain validity.
+- `file.status` MUST NOT affect `chain.valid`.
+- A response with `chain.valid=true` and `file.status=NOT_PERFORMED` is valid.
 
 See SYSTEM_CONTRACT §4.1 and §4.2.
 
@@ -331,16 +389,35 @@ See SYSTEM_CONTRACT §4.1 and §4.2.
 | Value         | Meaning                           |
 | ------------- | --------------------------------- |
 | NOT_PERFORMED | No file comparison executed       |
-| VALID         | Submitted hash matches proof hash |
+| VALID         | Submitted hash matches event hash |
 | TAMPERED      | Submitted hash differs            |
+
+No other `file.status` values are valid.
 
 ### Pending / failed proof behavior
 
-| `proof_status` | Response                         |
-| -------------- | -------------------------------- |
-| anchored       | Normal verification              |
-| pending        | HTTP 409 `PROOF_NOT_READY`       |
-| failed         | HTTP 422 `PROOF_GENERATION_FAILED` |
+Applied **after** ownership check, **before** returning a verification body:
+
+| `proof_status` | HTTP | `error.code`              |
+| -------------- | ---- | ------------------------- |
+| anchored       | 200  | — (normal verification)   |
+| pending        | 409  | `PROOF_NOT_READY`         |
+| failed         | 422  | `PROOF_GENERATION_FAILED` |
+
+When proof is not ready, the server MUST NOT return `chain.valid=true` or any
+verification body implying success.
+
+Example (`proof_status: pending`):
+
+```json
+{
+  "error": {
+    "code": "PROOF_NOT_READY",
+    "message": "Proof material is not yet available for this event",
+    "request_id": ""
+  }
+}
+```
 
 `/verify` MUST NOT return `chain.valid=true` when `proof_status != anchored`.
 
