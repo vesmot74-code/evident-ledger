@@ -172,7 +172,7 @@ of the request body (object keys sorted lexicographically,
 no spaces or newlines).
 ```
 
-**Note on canonicalization:** The codebase contains `freeze::canonical_json` (serde struct serialization for proof events). That function does **not** implement lexicographic key sorting for arbitrary JSON objects. Before implementation, choose and document the canonicalization approach (see [Open questions](#open-questions)).
+**Canonicalization:** `request_hash` uses a dedicated canonical JSON serializer + SHA-256; see [Canonical request hashing for Idempotency-Key](#canonical-request-hashing-for-idempotency-key) (Resolved).
 
 #### Deliverables
 
@@ -550,7 +550,7 @@ Before starting backend implementation, confirm:
 - [x] Verify separates chain and file status
 - [x] pending/failed proof behavior defined
 - [x] Idempotency-Key defined (optional, scoped per account_id)
-- [ ] request_hash canonicalization defined or logged as open question
+- [x] request_hash canonicalization defined (dedicated serializer + SHA-256, Resolved)
 - [x] Idempotency tests planned
 - [x] Ownership-vs-proof_status precedence test planned
 - [x] account/capabilities follows error contract
