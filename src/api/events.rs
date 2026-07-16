@@ -17,6 +17,7 @@ async fn handler(
     auth: AuthedAccount,
     Json(req): Json<SubmitEventRequest>,
 ) -> Result<Json<serde_json::Value>, LedgerError> {
-    let res = submit_event(&state.db, state.signer.as_ref(), auth.account_id, req).await?;
-    Ok(Json(res))
+    Ok(Json(
+        submit_event(&state.db, state.signer.as_ref(), auth.account_id, req).await?,
+    ))
 }

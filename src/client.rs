@@ -120,6 +120,13 @@ pub struct BackupListItem {
     pub event_count: i64,
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct DevChangePlanResponse {
+    pub success: bool,
+    pub old_plan: String,
+    pub new_plan: String,
+}
+
 impl EvidentClient {
     /// Создаёт клиента и пытается загрузить API-ключ автоматически:
     /// 1) переменная окружения EVIDENT_API_KEY,
@@ -291,6 +298,29 @@ impl EvidentClient {
         }
         let json: serde_json::Value = resp.json()?;
         Ok(json)
+    }
+
+    pub fn dev_change_plan(
+        &self,
+        account_id: Uuid,
+        plan: &str,
+    ) -> Result<DevChangePlanResponse, ClientError> {
+        let resp = self
+            .authed(
+                self.client
+                    .post(format!("{}/account/dev/change-plan", self.base_url)),
+            )
+            .json(&serde_json::json!({
+                "account_id": account_id,
+                "plan": plan,
+            }))
+            .send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(Self::map_http_error(status, &body));
+        }
+        Ok(resp.json()?)
     }
 
     pub fn backup_create(&self, chain_id: Uuid) -> Result<BackupCreateResponse, ClientError> {

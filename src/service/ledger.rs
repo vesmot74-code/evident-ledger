@@ -108,9 +108,7 @@ pub async fn submit_event(
 
     // проверка владения цепочкой
     match chain.account_id {
-        Some(owner) if owner != account_id => {
-            return Err(LedgerError::ChainAccessDenied);
-        }
+        Some(owner) if owner != account_id => return Err(LedgerError::ChainAccessDenied),
         None => {
             sqlx::query!(
                 "UPDATE chains SET account_id = $1 WHERE chain_id = $2",

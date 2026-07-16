@@ -207,6 +207,10 @@ struct App {
     // === Account panel ===
     account_data: Option<serde_json::Value>,
     loading_account: bool,
+    dev_selected_plan: String,
+    loading_dev_change_plan: bool,
+    dev_change_plan_error: Option<String>,
+    dev_change_plan_message: Option<String>,
 
     // === Backup panel ===
     backup_list_data: Option<Vec<client::BackupListItem>>,
@@ -265,6 +269,10 @@ impl Default for App {
             include_originals_in_zip: false,
             account_data: None,
             loading_account: false,
+            dev_selected_plan: "free".to_string(),
+            loading_dev_change_plan: false,
+            dev_change_plan_error: None,
+            dev_change_plan_message: None,
             backup_list_data: None,
             loading_backup_list: false,
             backup_list_error: None,
@@ -349,6 +357,7 @@ enum WorkerResponse {
     VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
     AccountFetchDone(Result<serde_json::Value, String>),
+    DevChangePlanDone(Result<client::DevChangePlanResponse, String>),
     BackupListDone(Result<Vec<client::BackupListItem>, String>),
     BackupCreateDone(Result<client::BackupCreateResponse, String>),
     BackupDownloadDone(Result<(Uuid, Vec<u8>), String>),
@@ -1460,6 +1469,24 @@ impl App {
         });
     }
 
+    fn start_dev_change_plan(&mut self, ctx: &egui::Context, account_id: Uuid, plan: String) {
+        self.loading_dev_change_plan = true;
+        self.dev_change_plan_error = None;
+        self.dev_change_plan_message = None;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let lang = self.lang;
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new(server_url());
+            let result = client
+                .dev_change_plan(account_id, &plan)
+                .map_err(|e| friendly_error(&e, lang));
+            let _ = tx.send(WorkerResponse::DevChangePlanDone(result));
+            ctx.request_repaint();
+        });
+    }
+
     fn start_backup_list_fetch(&mut self, ctx: &egui::Context) {
         self.loading_backup_list = true;
         self.backup_list_error = None;
@@ -1816,6 +1843,25 @@ impl eframe::App for App {
                         }
                     }
                 }
+                WorkerResponse::DevChangePlanDone(res) => {
+                    self.loading_dev_change_plan = false;
+                    match res {
+                        Ok(response) => {
+                            self.dev_change_plan_error = None;
+                            self.dev_change_plan_message = Some(format!(
+                                "{}: {} → {}",
+                                self.tr("План изменён", "Plan changed"),
+                                response.old_plan,
+                                response.new_plan
+                            ));
+                            self.start_account_fetch(ui.ctx());
+                        }
+                        Err(e) => {
+                            self.dev_change_plan_message = None;
+                            self.dev_change_plan_error = Some(e);
+                        }
+                    }
+                }
                 WorkerResponse::BackupListDone(res) => {
                     self.loading_backup_list = false;
                     match res {
@@ -2063,6 +2109,65 @@ impl eframe::App for App {
                         self.tr("Идентификация", "Identity"),
                         if identity_enabled { "ON" } else { "OFF" }
                     ));
+
+                    let dev_tools = caps
+                        .get("dev_tools_available")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    if dev_tools {
+                        ui.add_space(12.0);
+                        ui.separator();
+                        ui.add_space(8.0);
+                        ui.heading(self.tr("Инструменты разработки", "Development tools"));
+                        ui.label(format!(
+                            "{}: {}",
+                            self.tr("Текущий план", "Current plan"),
+                            plan.to_uppercase()
+                        ));
+                        ui.label(self.tr("Сменить план:", "Change plan:"));
+                        ui.horizontal(|ui| {
+                            for plan_name in ["free", "legal", "vault", "identity"] {
+                                let selected = self.dev_selected_plan == plan_name;
+                                if ui
+                                    .selectable_label(
+                                        selected,
+                                        plan_name.to_uppercase(),
+                                    )
+                                    .clicked()
+                                {
+                                    self.dev_selected_plan = plan_name.to_string();
+                                }
+                            }
+                        });
+                        let apply_label = self.tr("Применить", "Apply");
+                        let apply_clicked = if self.loading_dev_change_plan {
+                            ui.add_enabled(false, egui::Button::new(apply_label)).clicked()
+                        } else {
+                            ui.button(apply_label).clicked()
+                        };
+                        if apply_clicked {
+                            if let Some(account_id) = caps
+                                .get("account_id")
+                                .and_then(|v| v.as_str())
+                                .and_then(|s| Uuid::parse_str(s).ok())
+                            {
+                                let ctx = ui.ctx().clone();
+                                let plan_choice = self.dev_selected_plan.clone();
+                                self.start_dev_change_plan(&ctx, account_id, plan_choice);
+                            } else {
+                                self.dev_change_plan_error = Some(self.tr(
+                                    "Не удалось определить account_id",
+                                    "Could not determine account_id",
+                                ).to_string());
+                            }
+                        }
+                        if let Some(msg) = &self.dev_change_plan_message {
+                            ui.colored_label(egui::Color32::from_rgb(0, 140, 0), msg);
+                        }
+                        if let Some(err) = &self.dev_change_plan_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+                    }
                 } else {
                     ui.label(self.tr(
                         "Не удалось загрузить данные аккаунта",

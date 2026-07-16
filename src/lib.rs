@@ -2,6 +2,7 @@ pub mod api;
 pub mod audit;
 pub mod auth;
 pub mod client;
+pub mod config;
 pub mod db;
 pub mod freeze;
 pub mod hash_attestation;

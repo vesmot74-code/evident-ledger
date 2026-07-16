@@ -83,3 +83,87 @@ pub async fn get_usage(pool: &PgPool, account_id: Uuid) -> Result<UsageResponse,
         monthly_tsa_limit: row.monthly_tsa_limit,
     })
 }
+
+#[derive(Debug)]
+pub enum DevChangePlanError {
+    PlanNotFound,
+    AccountNotFound,
+    Database(sqlx::Error),
+}
+
+impl From<sqlx::Error> for DevChangePlanError {
+    fn from(err: sqlx::Error) -> Self {
+        DevChangePlanError::Database(err)
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct DevChangePlanResult {
+    pub success: bool,
+    pub old_plan: String,
+    pub new_plan: String,
+}
+
+const DEV_PLAN_NAMES: &[&str] = &["free", "legal", "vault", "identity"];
+
+pub fn is_valid_dev_plan_name(plan: &str) -> bool {
+    DEV_PLAN_NAMES.contains(&plan)
+}
+
+/// Updates only `accounts.tariff_plan_id` for the given account.
+pub async fn change_dev_plan(
+    pool: &PgPool,
+    account_id: Uuid,
+    plan: &str,
+) -> Result<DevChangePlanResult, DevChangePlanError> {
+    if !is_valid_dev_plan_name(plan) {
+        return Err(DevChangePlanError::PlanNotFound);
+    }
+
+    let old_plan = sqlx::query_scalar::<_, String>(
+        r#"
+        SELECT tp.name
+        FROM accounts a
+        JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id
+        WHERE a.account_id = $1
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DevChangePlanError::AccountNotFound)?;
+
+    let new_plan_id = sqlx::query_scalar::<_, Uuid>(
+        r#"
+        SELECT plan_id
+        FROM tariff_plans
+        WHERE name = $1
+        "#,
+    )
+    .bind(plan)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(DevChangePlanError::PlanNotFound)?;
+
+    let updated = sqlx::query(
+        r#"
+        UPDATE accounts
+        SET tariff_plan_id = $1
+        WHERE account_id = $2
+        "#,
+    )
+    .bind(new_plan_id)
+    .bind(account_id)
+    .execute(pool)
+    .await?;
+
+    if updated.rows_affected() == 0 {
+        return Err(DevChangePlanError::AccountNotFound);
+    }
+
+    Ok(DevChangePlanResult {
+        success: true,
+        old_plan,
+        new_plan: plan.to_string(),
+    })
+}

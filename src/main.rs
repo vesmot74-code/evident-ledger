@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 mod api;
 mod auth;
+mod config;
 mod db;
 mod hash_attestation;
 mod hash_attestation_pdf;
@@ -39,10 +40,18 @@ async fn main() {
 
     let pool = db::create_pool().await;
     let signer = Arc::new(signing::ServerSigner::load_or_create("signing_key.bin"));
+    let config = config::AppConfig::from_env();
 
     println!("Public key: {}", signer.public_key_hex());
+    if config.dev_mode {
+        println!("Dev mode: enabled (tariff switcher available)");
+    }
 
-    let state = state::AppState { db: pool, signer };
+    let state = state::AppState {
+        db: pool,
+        signer,
+        config,
+    };
 
     let app = Router::new()
         .route(
