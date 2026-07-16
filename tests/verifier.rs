@@ -88,3 +88,18 @@ fn missing_event_exits_2() {
     assert_eq!(code, 2);
     assert!(output.contains("leaves_count"));
 }
+
+#[test]
+fn tampered_event_hash_causes_merkle_root_mismatch() {
+    let mut proof = load_proof();
+    let original_signature = proof["proof"]["signature"].clone();
+    let events = proof["events"].as_array_mut().unwrap();
+    let index = events.len() / 2;
+    events[index]["file_hash"] = serde_json::json!("0".repeat(64));
+    assert_eq!(proof["proof"]["signature"], original_signature);
+    let path = write_temp(&proof);
+    let (output, code) = run_verifier(&path);
+    assert_eq!(code, 2);
+    assert!(output.contains("merkle root mismatch"));
+    assert!(!output.contains("signature invalid"));
+}
