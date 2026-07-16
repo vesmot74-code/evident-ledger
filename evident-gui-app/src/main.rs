@@ -195,6 +195,11 @@ struct App {
     // === Account panel ===
     account_data: Option<serde_json::Value>,
     loading_account: bool,
+
+    // === Backup panel ===
+    backup_list_data: Option<Vec<client::BackupListItem>>,
+    loading_backup_list: bool,
+    backup_list_error: Option<String>,
 }
 
 impl Default for App {
@@ -238,6 +243,9 @@ impl Default for App {
             include_originals_in_zip: false,
             account_data: None,
             loading_account: false,
+            backup_list_data: None,
+            loading_backup_list: false,
+            backup_list_error: None,
         }
     }
 }
@@ -280,6 +288,7 @@ enum Screen {
     VerifyProject,
     VerifyResult,
     Account,
+    Backup,
 }
 
 #[derive(Debug)]
@@ -308,6 +317,7 @@ enum WorkerResponse {
     VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
     AccountFetchDone(Result<serde_json::Value, String>),
+    BackupListDone(Result<Vec<client::BackupListItem>, String>),
 }
 
 impl App {
@@ -1413,6 +1423,21 @@ impl App {
             ctx.request_repaint();
         });
     }
+
+    fn start_backup_list_fetch(&mut self, ctx: &egui::Context) {
+        self.loading_backup_list = true;
+        self.backup_list_error = None;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let lang = self.lang;
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new(server_url());
+            let result = client.backup_list().map_err(|e| friendly_error(&e, lang));
+            let _ = tx.send(WorkerResponse::BackupListDone(result));
+            ctx.request_repaint();
+        });
+    }
 }
 
 impl eframe::App for App {
@@ -1517,6 +1542,19 @@ impl eframe::App for App {
                                 ),
                                 e
                             );
+                        }
+                    }
+                }
+                WorkerResponse::BackupListDone(res) => {
+                    self.loading_backup_list = false;
+                    match res {
+                        Ok(items) => {
+                            self.backup_list_data = Some(items);
+                            self.backup_list_error = None;
+                        }
+                        Err(e) => {
+                            self.backup_list_data = None;
+                            self.backup_list_error = Some(e);
                         }
                     }
                 }
@@ -1630,6 +1668,13 @@ impl eframe::App for App {
                         self.lang = Lang::En;
                     }
                     ui.add_space(8.0);
+                    if ui.button(self.tr("💾 Резервное копирование", "💾 Backup")).clicked() {
+                        let ctx = ui.ctx().clone();
+                        self.screen = Screen::Backup;
+                        if self.account_data.is_none() {
+                            self.start_account_fetch(&ctx);
+                        }
+                    }
                     if ui.button(self.tr("⚙ Аккаунт", "⚙ Account")).clicked() {
                         let ctx = ui.ctx().clone();
                         self.screen = Screen::Account;
@@ -1694,6 +1739,89 @@ impl eframe::App for App {
                     if ui.button(self.tr("Обновить", "Refresh")).clicked() {
                         let ctx = ui.ctx().clone();
                         self.start_account_fetch(&ctx);
+                    }
+                }
+
+                ui.add_space(16.0);
+                if ui.button(self.tr("⬅ Назад", "⬅ Back")).clicked() {
+                    self.screen = Screen::FileSelection;
+                }
+            }
+
+            if self.screen == Screen::Backup {
+                ui.heading(self.tr("Резервное копирование", "Backup"));
+                ui.add_space(8.0);
+
+                if self.loading_account {
+                    ui.label(self.tr("Загрузка...", "Loading..."));
+                } else if self.account_data.is_none() {
+                    ui.label(self.tr(
+                        "Не удалось загрузить данные аккаунта",
+                        "Failed to load account data",
+                    ));
+                    if ui.button(self.tr("Обновить", "Refresh")).clicked() {
+                        let ctx = ui.ctx().clone();
+                        self.start_account_fetch(&ctx);
+                    }
+                } else {
+                    let caps = self.account_data.clone().unwrap();
+                    let plan = caps
+                        .get("plan_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let server_backup = caps
+                        .get("server_backup")
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+
+                    if !server_backup {
+                        ui.label(format!(
+                            "{} ({})",
+                            self.tr(
+                                "Резервное копирование на сервере недоступно на вашем плане",
+                                "Server Backup: unavailable on your plan",
+                            ),
+                            plan.to_uppercase(),
+                        ));
+                        ui.label(self.tr("Требуется обновление плана", "Upgrade required"));
+                    } else {
+                        if self.backup_list_data.is_none()
+                            && self.backup_list_error.is_none()
+                            && !self.loading_backup_list
+                        {
+                            self.start_backup_list_fetch(&ui.ctx().clone());
+                        }
+
+                        if self.loading_backup_list {
+                            ui.label(self.tr("Загрузка резервных копий...", "Loading backups..."));
+                        } else if let Some(err) = &self.backup_list_error {
+                            ui.label(self.tr(
+                                "Не удалось загрузить резервные копии",
+                                "Failed to load backups",
+                            ));
+                            ui.label(err);
+                            if ui.button(self.tr("Обновить", "Refresh")).clicked() {
+                                let ctx = ui.ctx().clone();
+                                self.start_backup_list_fetch(&ctx);
+                            }
+                        } else if let Some(backups) = &self.backup_list_data {
+                            if backups.is_empty() {
+                                ui.label(self.tr(
+                                    "Резервных копий пока нет",
+                                    "No backups yet",
+                                ));
+                            } else {
+                                for item in backups {
+                                    ui.label(format!(
+                                        "{} | {} | {} | {}",
+                                        item.backup_id,
+                                        item.chain_id,
+                                        item.event_count,
+                                        item.created_at,
+                                    ));
+                                }
+                            }
+                        }
                     }
                 }
 
