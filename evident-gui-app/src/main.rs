@@ -2,6 +2,7 @@ use chrono::{TimeZone, Utc};
 use eframe::egui;
 use evident_ledger::audit::{AuditEvent, AuditStore, ChainAnchorProof};
 use evident_ledger::client::{self, EvidentClient};
+use evident_ledger::service::backup_restore::backups_dir;
 use evident_report::{
     generate_report, EventSummary, FileStatus, ProofData, TsaData as ReportTsaData,
     VerificationContext,
@@ -200,6 +201,11 @@ struct App {
     backup_list_data: Option<Vec<client::BackupListItem>>,
     loading_backup_list: bool,
     backup_list_error: Option<String>,
+    loading_backup_create: bool,
+    backup_create_error: Option<String>,
+    loading_backup_download: Option<String>,
+    backup_download_error: Option<String>,
+    backup_download_message: Option<String>,
 }
 
 impl Default for App {
@@ -246,6 +252,11 @@ impl Default for App {
             backup_list_data: None,
             loading_backup_list: false,
             backup_list_error: None,
+            loading_backup_create: false,
+            backup_create_error: None,
+            loading_backup_download: None,
+            backup_download_error: None,
+            backup_download_message: None,
         }
     }
 }
@@ -318,6 +329,8 @@ enum WorkerResponse {
     CommitDone(Result<CommitSuccess, CommitFailure>),
     AccountFetchDone(Result<serde_json::Value, String>),
     BackupListDone(Result<Vec<client::BackupListItem>, String>),
+    BackupCreateDone(Result<client::BackupCreateResponse, String>),
+    BackupDownloadDone(Result<(Uuid, Vec<u8>), String>),
 }
 
 impl App {
@@ -1438,6 +1451,78 @@ impl App {
             ctx.request_repaint();
         });
     }
+
+    /// Resolves chain_id from `selected_project` → `project.json`, same sequence as commit/verify.
+    fn resolve_selected_project_chain_id(&self) -> Result<Uuid, String> {
+        let invalid_chain_msg = self.tr(
+            "Не найдена действительная цепочка для выбранного проекта. Сначала откройте или создайте проект.",
+            "No valid chain found for the selected project. Open or create a project first.",
+        );
+
+        if self.selected_project.is_empty() {
+            return Err(invalid_chain_msg.to_string());
+        }
+
+        let projects_dir = self.projects_dir().map_err(|_| invalid_chain_msg.to_string())?;
+        let project_path = projects_dir.join(&self.selected_project);
+        let project_file = project_path.join("project.json");
+        let project_json = match fs::read_to_string(&project_file) {
+            Ok(contents) => contents,
+            Err(_) => return Err(invalid_chain_msg.to_string()),
+        };
+        let project: Project = match serde_json::from_str(&project_json) {
+            Ok(project) => project,
+            Err(_) => return Err(invalid_chain_msg.to_string()),
+        };
+        Uuid::parse_str(&project.chain_id).map_err(|_| invalid_chain_msg.to_string())
+    }
+
+    fn write_backup_download_file(backup_id: Uuid, bytes: &[u8]) -> Result<PathBuf, String> {
+        let evident_dir = dirs::home_dir()
+            .ok_or_else(|| "HOME directory not found".to_string())?
+            .join(".evident");
+        let target_dir = backups_dir(&evident_dir);
+        fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+        let path = target_dir.join(format!("{backup_id}.json"));
+        fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+
+    fn start_backup_create(&mut self, ctx: &egui::Context, chain_id: Uuid) {
+        self.loading_backup_create = true;
+        self.backup_create_error = None;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let lang = self.lang;
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new(server_url());
+            let result = client
+                .backup_create(chain_id)
+                .map_err(|e| friendly_error(&e, lang));
+            let _ = tx.send(WorkerResponse::BackupCreateDone(result));
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_backup_download(&mut self, ctx: &egui::Context, backup_id: Uuid) {
+        self.loading_backup_download = Some(backup_id.to_string());
+        self.backup_download_error = None;
+        self.backup_download_message = None;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let lang = self.lang;
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new(server_url());
+            let result = client
+                .backup_download(backup_id)
+                .map_err(|e| friendly_error(&e, lang))
+                .map(|bytes| (backup_id, bytes));
+            let _ = tx.send(WorkerResponse::BackupDownloadDone(result));
+            ctx.request_repaint();
+        });
+    }
 }
 
 impl eframe::App for App {
@@ -1555,6 +1640,44 @@ impl eframe::App for App {
                         Err(e) => {
                             self.backup_list_data = None;
                             self.backup_list_error = Some(e);
+                        }
+                    }
+                }
+                WorkerResponse::BackupCreateDone(res) => {
+                    self.loading_backup_create = false;
+                    match res {
+                        Ok(_) => {
+                            self.backup_create_error = None;
+                            self.backup_list_data = None;
+                            self.backup_list_error = None;
+                        }
+                        Err(e) => {
+                            self.backup_create_error = Some(e);
+                        }
+                    }
+                }
+                WorkerResponse::BackupDownloadDone(res) => {
+                    self.loading_backup_download = None;
+                    match res {
+                        Ok((backup_id, bytes)) => {
+                            match Self::write_backup_download_file(backup_id, &bytes) {
+                                Ok(path) => {
+                                    self.backup_download_error = None;
+                                    self.backup_download_message = Some(format!(
+                                        "{} {}",
+                                        self.tr("Сохранено:", "Downloaded to:"),
+                                        path.display()
+                                    ));
+                                }
+                                Err(e) => {
+                                    self.backup_download_error = Some(e);
+                                    self.backup_download_message = None;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            self.backup_download_error = Some(e);
+                            self.backup_download_message = None;
                         }
                     }
                 }
@@ -1792,6 +1915,35 @@ impl eframe::App for App {
                             self.start_backup_list_fetch(&ui.ctx().clone());
                         }
 
+                        let create_label = if self.loading_backup_create {
+                            self.tr("Создание...", "Creating...")
+                        } else {
+                            self.tr("Создать резервную копию", "Create Backup")
+                        };
+                        if ui
+                            .add_enabled(!self.loading_backup_create, egui::Button::new(create_label))
+                            .clicked()
+                        {
+                            match self.resolve_selected_project_chain_id() {
+                                Ok(chain_id) => {
+                                    self.start_backup_create(&ui.ctx().clone(), chain_id);
+                                }
+                                Err(e) => {
+                                    self.backup_create_error = Some(e);
+                                }
+                            }
+                        }
+                        if let Some(err) = &self.backup_create_error {
+                            ui.label(err);
+                        }
+
+                        if let Some(msg) = &self.backup_download_message {
+                            ui.label(msg);
+                        }
+                        if let Some(err) = &self.backup_download_error {
+                            ui.label(err);
+                        }
+
                         if self.loading_backup_list {
                             ui.label(self.tr("Загрузка резервных копий...", "Loading backups..."));
                         } else if let Some(err) = &self.backup_list_error {
@@ -1811,14 +1963,43 @@ impl eframe::App for App {
                                     "No backups yet",
                                 ));
                             } else {
-                                for item in backups {
-                                    ui.label(format!(
-                                        "{} | {} | {} | {}",
-                                        item.backup_id,
-                                        item.chain_id,
-                                        item.event_count,
-                                        item.created_at,
-                                    ));
+                                for item in backups.clone() {
+                                    ui.horizontal(|ui| {
+                                        ui.label(format!(
+                                            "{} | {} | {} | {}",
+                                            item.backup_id,
+                                            item.chain_id,
+                                            item.event_count,
+                                            item.created_at,
+                                        ));
+                                        let downloading = self
+                                            .loading_backup_download
+                                            .as_deref()
+                                            == Some(item.backup_id.as_str());
+                                        let download_label = if downloading {
+                                            self.tr("Загрузка...", "Downloading...")
+                                        } else {
+                                            self.tr("Скачать", "Download")
+                                        };
+                                        if ui
+                                            .add_enabled(!downloading, egui::Button::new(download_label))
+                                            .clicked()
+                                        {
+                                            if let Ok(backup_id) =
+                                                Uuid::parse_str(&item.backup_id)
+                                            {
+                                                self.start_backup_download(
+                                                    &ui.ctx().clone(),
+                                                    backup_id,
+                                                );
+                                            } else {
+                                                self.backup_download_error = Some(self.tr(
+                                                    "Некорректный идентификатор резервной копии",
+                                                    "Invalid backup id",
+                                                ).to_string());
+                                            }
+                                        }
+                                    });
                                 }
                             }
                         }
