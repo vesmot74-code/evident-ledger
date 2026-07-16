@@ -270,8 +270,7 @@ pub async fn insert_event_in_tx(
         parent_event_id,
         req.file_hash,
         req.idempotency_key,
-        // TODO(Stage 3): persist server signature here; currently proof signs ephemerally
-        // in ProofContext::load / finalize_event_submission and is not stored per event.
+        // Signature persisted by POST /v1/events (proof_material::persist_event_signature).
         "",
         sequence
     )

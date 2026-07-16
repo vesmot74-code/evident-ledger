@@ -12,6 +12,7 @@ struct EventAccessRow {
     file_hash: String,
     sequence: i64,
     created_at: DateTime<Utc>,
+    signature: String,
     account_id: Option<Uuid>,
 }
 
@@ -24,6 +25,7 @@ pub struct Event {
     pub file_hash: String,
     pub sequence: i64,
     pub created_at: DateTime<Utc>,
+    pub signature: String,
 }
 
 /// Ensures `event_id` exists and belongs to `account_id`.
@@ -44,6 +46,7 @@ pub async fn verify_event_access(
             e.file_hash,
             e.sequence,
             e.created_at,
+            e.signature,
             c.account_id
         FROM events e
         INNER JOIN chains c ON c.chain_id = e.chain_id
@@ -75,6 +78,7 @@ pub async fn verify_event_access(
         file_hash: row.file_hash,
         sequence: row.sequence,
         created_at: row.created_at,
+        signature: row.signature,
     })
 }
 

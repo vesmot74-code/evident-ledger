@@ -15,7 +15,7 @@
 //! 1. validate request
 //! 2. create immutable event (inside transaction)
 //! 3. derive proof snapshot for that event (`sequence` prefix + sign)
-//! 4. store idempotency record + commit transaction
+//! 4. persist signature on the event row + idempotency record; commit transaction
 //! 5. return response (TSA stamp runs after commit, optional)
 
 use chrono::{DateTime, Utc};
@@ -122,6 +122,76 @@ pub fn build_proof_snapshot(
     }
 }
 
+/// Builds a read-path snapshot using the persisted commit-time signature (no re-sign).
+pub fn build_proof_snapshot_read(
+    chain_id: Uuid,
+    target_event_id: Uuid,
+    prefix_events: &[EventRow],
+    persisted_signature: &str,
+    public_key: &str,
+) -> ProofSnapshot {
+    let merkle_root = MerkleTree::recompute_root_from_events(prefix_events);
+    let merkle_root_present = !prefix_events.is_empty() && !merkle_root.is_empty();
+
+    let chain_head = target_event_id.to_string();
+    let signature = persisted_signature.to_string();
+    let signature_present = !signature.is_empty();
+    let signature_valid = signature_present
+        && verify_root(
+            &chain_id.to_string(),
+            &merkle_root,
+            &chain_head,
+            &signature,
+            public_key,
+        );
+
+    let failure_signal = false; // Stage 4 §3: failure_signal sources
+
+    let context = ProofContext {
+        merkle_root_present,
+        signature_present,
+        signature_valid,
+        failure_signal,
+    };
+
+    ProofSnapshot {
+        merkle_root,
+        signature,
+        public_key: public_key.to_string(),
+        context,
+    }
+}
+
+pub async fn proof_snapshot_at_event(
+    conn: &mut PgConnection,
+    signer: &ServerSigner,
+    chain_id: Uuid,
+    target_event_id: Uuid,
+    target_sequence: i64,
+) -> Result<ProofSnapshot, sqlx::Error> {
+    let prefix = load_event_prefix(conn, chain_id, target_sequence).await?;
+    Ok(build_proof_snapshot(
+        signer,
+        chain_id,
+        target_event_id,
+        &prefix,
+    ))
+}
+
+/// Writes the commit-time server signature for an event (inside the open transaction).
+pub async fn persist_event_signature(
+    conn: &mut PgConnection,
+    event_id: Uuid,
+    signature: &str,
+) -> Result<(), sqlx::Error> {
+    sqlx::query("UPDATE events SET signature = $1 WHERE event_id = $2")
+        .bind(signature)
+        .bind(event_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(())
+}
+
 pub async fn proof_context_at_event(
     conn: &mut PgConnection,
     signer: &ServerSigner,
@@ -214,7 +284,14 @@ pub async fn build_proof_response(
         .await
         .map_err(|_| ApiError::Internal)?;
 
-    let snapshot = build_proof_snapshot(signer, event.chain_id, event.event_id, &prefix);
+    let public_key = signer.public_key_hex();
+    let snapshot = build_proof_snapshot_read(
+        event.chain_id,
+        event.event_id,
+        &prefix,
+        &event.signature,
+        &public_key,
+    );
     let status = derive_proof_status(&snapshot.context);
 
     match status {
@@ -288,6 +365,7 @@ mod tests {
             file_hash: "cc".repeat(32),
             sequence: 1,
             created_at: Utc::now(),
+            signature: String::new(),
         };
         let body = pending_proof_response(&event, Uuid::new_v4());
         assert_eq!(body["proof_status"], "pending");
@@ -314,5 +392,28 @@ mod tests {
         assert_eq!(snap1.merkle_root, snap1_recomputed.merkle_root);
         assert_eq!(snap1.signature, snap1_recomputed.signature);
         assert_ne!(snap1.merkle_root, snap2_head.merkle_root);
+    }
+
+    #[test]
+    fn persisted_signature_matches_commit_time_recompute() {
+        let signer = ServerSigner::load_or_create("target/test_persisted_sig_signing.key");
+        let chain_id = Uuid::new_v4();
+        let e1 = Uuid::new_v4();
+        let parent = Uuid::nil();
+        let hash = "dd".repeat(32);
+        let prefix = vec![row(e1, parent, 1, &hash)];
+
+        let at_commit = build_proof_snapshot(&signer, chain_id, e1, &prefix);
+        let from_persisted = build_proof_snapshot_read(
+            chain_id,
+            e1,
+            &prefix,
+            &at_commit.signature,
+            &signer.public_key_hex(),
+        );
+
+        assert_eq!(at_commit.merkle_root, from_persisted.merkle_root);
+        assert_eq!(at_commit.signature, from_persisted.signature);
+        assert_eq!(from_persisted.context.signature_valid, true);
     }
 }

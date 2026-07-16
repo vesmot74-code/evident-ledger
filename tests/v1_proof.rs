@@ -119,14 +119,28 @@ fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
-        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        sqlx::query_scalar::<_, Uuid>(
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db connect");
+        if let Ok(existing) = sqlx::query_scalar::<_, Uuid>(
             "SELECT account_id FROM accounts WHERE account_id != $1 LIMIT 1",
         )
         .bind(caller_account_id)
-        .fetch_one(&pool)
+        .fetch_optional(&pool)
         .await
-        .expect("foreign account")
+        {
+            if let Some(id) = existing {
+                return id;
+            }
+        }
+        let foreign_id = Uuid::new_v4();
+        sqlx::query(
+            "INSERT INTO accounts (account_id, email, tariff_plan_id) VALUES ($1, $2, (SELECT plan_id FROM tariff_plans WHERE name = 'free'))",
+        )
+        .bind(foreign_id)
+        .bind(format!("foreign-proof-{foreign_id}@test.local"))
+        .execute(&pool)
+        .await
+        .expect("seed foreign account");
+        foreign_id
     })
 }
 
@@ -208,6 +222,51 @@ fn v1_proof_historical_snapshot_stable_after_chain_grows() {
     let snap1_later: Value = proof_event_1_again.json().expect("json");
     assert_eq!(snap1_later["merkle_root"].as_str(), Some(root1.as_str()));
     assert_eq!(snap1_later["signature"].as_str(), Some(sig1.as_str()));
+
+    cleanup_chain(chain_id);
+}
+
+fn signature_from_db(event_id: Uuid) -> String {
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query_scalar("SELECT signature FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("signature row")
+    })
+}
+
+#[test]
+fn v1_get_proof_reads_persisted_signature_not_resign() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("persisted-sig"),
+        &format!("proof-persist-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let persisted = signature_from_db(event_id);
+    assert!(
+        !persisted.is_empty(),
+        "POST /v1/events must persist signature before commit"
+    );
+
+    let proof = get_proof(&client, &api_key, event_id);
+    assert_eq!(proof.status(), 200);
+    let body: Value = proof.json().expect("json");
+    assert_eq!(body["signature"].as_str(), Some(persisted.as_str()));
 
     cleanup_chain(chain_id);
 }

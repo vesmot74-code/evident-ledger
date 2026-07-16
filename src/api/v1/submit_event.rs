@@ -15,7 +15,8 @@ use super::idempotency::{
     canonical_json_sha256, find_active_in_tx, insert_in_tx, IdempotencyRecord,
     IDEMPOTENCY_TTL_HOURS,
 };
-use super::proof_status::{derive_proof_status, ProofContext, ProofStatus};
+use super::proof_material::{persist_event_signature, proof_snapshot_at_event};
+use super::proof_status::{derive_proof_status, ProofStatus};
 use super::validation::{is_valid_event_type, is_valid_file_hash};
 
 #[derive(Debug, Deserialize)]
@@ -81,10 +82,17 @@ async fn proof_context_for_event(
     chain_id: Uuid,
     event_id: Uuid,
     sequence: i64,
-) -> Result<ProofContext, ApiError> {
-    ProofContext::load(conn, signer, chain_id, event_id, sequence)
+) -> Result<(ProofStatus, String), ApiError> {
+    let snapshot = proof_snapshot_at_event(conn, signer, chain_id, event_id, sequence)
         .await
-        .map_err(|_| ApiError::Internal)
+        .map_err(|_| ApiError::Internal)?;
+    persist_event_signature(conn, event_id, &snapshot.signature)
+        .await
+        .map_err(|_| ApiError::Internal)?;
+    Ok((
+        derive_proof_status(&snapshot.context),
+        snapshot.signature,
+    ))
 }
 
 fn map_ledger_error(err: LedgerError) -> ApiError {
@@ -150,9 +158,8 @@ pub async fn submit_v1_event(
             .await
             .map_err(map_ledger_error)?;
 
-    let proof_context =
+    let (proof_status, _signature) =
         proof_context_for_event(&mut *tx, signer, body.chain_id, event_id, sequence).await?;
-    let proof_status = derive_proof_status(&proof_context);
     let response_json = build_v1_response(
         event_id,
         body.chain_id,
