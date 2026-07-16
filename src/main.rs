@@ -9,6 +9,7 @@ mod hash_attestation;
 mod hash_attestation_pdf;
 mod merkle;
 mod models;
+mod proof_format;
 mod sac;
 mod sac_pdf;
 mod service;

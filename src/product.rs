@@ -30,6 +30,7 @@ struct CommitResponse {
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 struct ProofFile {
+    leaf_version: String,
     chain_id: String,
     head_event_id: String,
     proof: ProofPayload,
@@ -43,6 +44,10 @@ struct ProofPayload {
     signature: String,
     public_key: String,
     leaves_count: usize,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(rename = "type", default)]
+    proof_type: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -116,10 +121,18 @@ pub fn fixate_file(
         .join(commit.chain_id.clone())
         .join(format!("{}.json", commit.event_id));
     fs::create_dir_all(proof_path.parent().context("invalid proof path")?)?;
+    let mut proof_payload = commit.proof.clone();
+    if proof_payload.version.is_none() {
+        proof_payload.version = Some(crate::proof_format::PROOF_VERSION.to_string());
+    }
+    if proof_payload.proof_type.is_none() {
+        proof_payload.proof_type = Some(crate::proof_format::PROOF_TYPE.to_string());
+    }
     let proof = ProofFile {
+        leaf_version: crate::proof_format::LEAF_VERSION.to_string(),
         chain_id: commit.chain_id.clone(),
         head_event_id: commit.head_event_id.clone(),
-        proof: commit.proof.clone(),
+        proof: proof_payload,
         events: commit.events.clone(),
     };
     fs::write(&proof_path, serde_json::to_string_pretty(&proof)?)?;

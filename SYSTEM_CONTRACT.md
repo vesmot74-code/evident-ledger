@@ -273,6 +273,37 @@ recomputed_merkle_root != signed_merkle_root
 
 This guarantees that event identity and chain structure are cryptographically bound together.
 
+## Version fields (required)
+
+Every supported proof artifact MUST declare:
+
+```text
+proof.version: "proof_v1"
+proof.type:    "merkle-root-v1"
+leaf_version:  "leaf_v1"
+```
+
+### Two versioning axes
+
+- `proof.type` — top-level proof mechanism type (for example `merkle-root-v1`). A change to proof structure or proof envelope requires bumping `proof.version` and/or `proof.type`.
+- `leaf_version` — Merkle leaf canonicalization version. Current sole supported value `leaf_v1` maps to the formula above (`sequence + event_id + parent_event_id + file_hash`). A change to the leaf formula requires bumping only `leaf_version`.
+
+`proof.type` and `leaf_version` are independent versioning axes.
+
+Proofs without `proof.version` and `leaf_version` are **unversioned legacy** and MUST be rejected by offline verification with:
+
+```text
+unversioned legacy proof format — unsupported, please regenerate
+```
+
+Proofs with a missing or unsupported `proof.version` or `leaf_version` MUST be rejected with:
+
+```text
+unsupported proof format
+```
+
+Any future change to the leaf formula MUST bump `leaf_version` (for example `leaf_v2`). Backward-compatible verify for prior leaf versions is not required.
+
 Verified tampering scenarios:
 
 ```text

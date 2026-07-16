@@ -159,6 +159,7 @@ pub async fn export_proof(
         .collect();
 
     Ok(json!({
+        "leaf_version": crate::proof_format::LEAF_VERSION,
         "chain_id": chain_id,
         "head_event_id": chain_head,
         "events": leaves,

@@ -2,11 +2,16 @@ use serde::Deserialize;
 use std::process;
 
 use evident_ledger::db::EventRow;
+use evident_ledger::proof_format::{
+    is_supported, is_versioned, LEGACY_EXIT_CODE, LEGACY_UNVERSIONED_MESSAGE,
+    UNSUPPORTED_PROOF_FORMAT_MESSAGE,
+};
 use evident_ledger::service::verification::check_event_structure;
 use evident_ledger::signing::verify_root;
 
 #[derive(Deserialize)]
 struct ProofFile {
+    leaf_version: Option<String>,
     chain_id: String,
     head_event_id: String,
     proof: Proof,
@@ -15,6 +20,7 @@ struct ProofFile {
 
 #[derive(Deserialize)]
 struct Proof {
+    version: Option<String>,
     root: String,
     chain_head: String,
     signature: String,
@@ -45,6 +51,20 @@ fn events_to_rows(events: &[EventLeaf]) -> Option<Vec<EventRow>> {
     Some(rows)
 }
 
+fn reject_unversioned(proof_version: Option<&str>, leaf_version: Option<&str>) {
+    if is_versioned(proof_version, leaf_version) && is_supported(proof_version, leaf_version) {
+        return;
+    }
+
+    let message = if proof_version.is_none() && leaf_version.is_none() {
+        LEGACY_UNVERSIONED_MESSAGE
+    } else {
+        UNSUPPORTED_PROOF_FORMAT_MESSAGE
+    };
+    eprintln!("{message}");
+    process::exit(LEGACY_EXIT_CODE);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
@@ -54,6 +74,11 @@ fn main() {
 
     let content = std::fs::read_to_string(&args[1]).expect("Cannot read file");
     let proof_file: ProofFile = serde_json::from_str(&content).expect("Invalid JSON");
+
+    reject_unversioned(
+        proof_file.proof.version.as_deref(),
+        proof_file.leaf_version.as_deref(),
+    );
 
     let mut ok = true;
 

@@ -18,6 +18,10 @@ pub struct ProofPayload {
     pub signature: String,
     pub public_key: String,
     pub leaves_count: usize,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(rename = "type", default)]
+    pub proof_type: Option<String>,
 }
 
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -43,6 +47,7 @@ pub struct CommitResponse {
 
 #[derive(Serialize, Deserialize, Clone)]
 pub struct ProofFile {
+    pub leaf_version: String,
     pub chain_id: String,
     pub head_event_id: String,
     pub proof: ProofPayload,
@@ -223,10 +228,18 @@ impl EvidentClient {
         let proof_dir = Self::evident_dir().join("proofs").join(&commit.chain_id);
         fs::create_dir_all(&proof_dir)?;
         let proof_path = proof_dir.join(format!("{}.json", commit.event_id));
+        let mut proof = commit.proof.clone();
+        if proof.version.is_none() {
+            proof.version = Some(crate::proof_format::PROOF_VERSION.to_string());
+        }
+        if proof.proof_type.is_none() {
+            proof.proof_type = Some(crate::proof_format::PROOF_TYPE.to_string());
+        }
         let proof_file = ProofFile {
+            leaf_version: crate::proof_format::LEAF_VERSION.to_string(),
             chain_id: commit.chain_id.clone(),
             head_event_id: commit.head_event_id.clone(),
-            proof: commit.proof.clone(),
+            proof,
             events: commit.events.clone(),
             tsa: commit.tsa.clone(),
         };

@@ -105,6 +105,30 @@ fn tampered_event_hash_causes_merkle_root_mismatch() {
 }
 
 #[test]
+fn unversioned_legacy_proof_rejected_with_clear_message() {
+    let mut proof = load_proof();
+    let obj = proof.as_object_mut().unwrap();
+    obj.remove("leaf_version");
+    proof["proof"].as_object_mut().unwrap().remove("version");
+    let path = write_temp(&proof);
+    let (output, code) = run_verifier(&path);
+    assert_eq!(code, 4);
+    assert!(output.contains("unversioned legacy proof format — unsupported, please regenerate"));
+    assert!(!output.contains("merkle root mismatch"));
+}
+
+#[test]
+fn missing_proof_version_rejected_as_unsupported_format() {
+    let mut proof = load_proof();
+    proof["proof"].as_object_mut().unwrap().remove("version");
+    let path = write_temp(&proof);
+    let (output, code) = run_verifier(&path);
+    assert_eq!(code, 4);
+    assert!(output.contains("unsupported proof format"));
+    assert!(!output.contains("merkle root mismatch"));
+}
+
+#[test]
 fn tampered_event_id_causes_merkle_root_mismatch() {
     let mut proof = load_proof();
     let original_signature = proof["proof"]["signature"].clone();

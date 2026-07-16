@@ -308,12 +308,15 @@ pub async fn submit_event(
         .collect();
 
     Ok(json!({
+        "leaf_version": crate::proof_format::LEAF_VERSION,
         "event_id": event_id,
         "chain_id": req.chain_id,
         "head_event_id": event_id,
         "sequence": sequence,
         "cached": false,
         "proof": {
+            "version": crate::proof_format::PROOF_VERSION,
+            "type": crate::proof_format::PROOF_TYPE,
             "root": root,
             "chain_head": chain_head,
             "signature": signature,
