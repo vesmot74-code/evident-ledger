@@ -50,25 +50,25 @@ See SYSTEM_CONTRACT §13 and §16.
 For:
 
 ```http
-GET /v1/proof/{event_id}
-GET /v1/verify/{event_id}
+POST /v1/events
+GET  /v1/proof/{event_id}
+GET  /v1/verify/{event_id}
 ```
 
-the server MUST verify:
+the server MUST verify that the authenticated `account_id` owns the target resource
+(`chain_id` on submit; `event_id` on proof and verify).
 
-```text
-event_id belongs to account_id from X-API-KEY
-```
-
-If access is denied:
+If access is denied (foreign or missing resource):
 
 ```http
-HTTP 403 FORBIDDEN
+HTTP 404 NOT_FOUND
 ```
 
-`403 FORBIDDEN` is used instead of `404` for cross-account access to `event_id`, accepting the minor information-disclosure trade-off (existence of `event_id` is revealed) in favor of debuggability. Revisit if enumeration abuse becomes a concern.
+(error code `not_found`)
 
-> **TODO (docs drift):** v1 implementation currently returns `404 NOT_FOUND` (`not_found`) for foreign/missing `event_id` on proof/verify (non-leak policy); reconcile §1 with §6/§7 before v1 contract freeze.
+**Non-leak policy:** the API MUST NOT distinguish "resource exists but belongs to
+another account" from "resource does not exist". Both cases return the same
+`404 NOT_FOUND` response.
 
 ---
 
@@ -79,25 +79,27 @@ All errors use a single format:
 ```json
 {
   "error": {
-    "code": "EVENT_NOT_FOUND",
-    "message": "Event does not exist",
+    "code": "not_found",
+    "message": "Resource not found",
     "request_id": "uuid"
   }
 }
 ```
 
-| HTTP | code            | Meaning                                 |
-| ---- | --------------- | --------------------------------------- |
-| 400  | INVALID_REQUEST | Invalid JSON or missing required fields |
-| 401  | UNAUTHORIZED    | Missing or invalid API key              |
-| 403  | FORBIDDEN       | Valid key but no access                 |
-| 404  | NOT_FOUND       | Resource does not exist                 |
-| 409  | CONFLICT        | Idempotency conflict                    |
-| 422  | UNPROCESSABLE   | Semantic validation error               |
-| 429  | RATE_LIMITED    | Rate limit exceeded                     |
-| 500  | INTERNAL_ERROR  | Internal server error                   |
+Wire-format `error.code` values are **lowercase snake_case** strings.
 
-Additional domain-specific codes (e.g. `PROOF_NOT_READY`, `PROOF_GENERATION_FAILED`) are returned with the HTTP status defined in the relevant endpoint section.
+| HTTP | code              | Meaning                                 |
+| ---- | ----------------- | --------------------------------------- |
+| 400  | `invalid_request` | Invalid JSON or missing required fields |
+| 401  | `unauthorized`    | Missing or invalid API key              |
+| 403  | `forbidden`       | Valid key but no access (reserved; v1 ownership uses `not_found`) |
+| 404  | `not_found`       | Resource does not exist                 |
+| 409  | `conflict`        | Idempotency conflict                    |
+| 422  | `unprocessable`   | Semantic validation error (reserved)    |
+| 429  | `rate_limited`    | Rate limit exceeded (reserved)          |
+| 500  | `internal_error`  | Internal server error                   |
+
+Additional domain-specific codes (e.g. `proof_not_ready`, `proof_generation_failed`) are returned with the HTTP status defined in the relevant endpoint section.
 
 ---
 
@@ -129,7 +131,7 @@ Submit a new event to the ledger.
 {
   "chain_id": "...",
   "file_hash": "...",
-  "event_type": "commit"
+  "event_type": "submission"
 }
 ```
 
@@ -139,14 +141,15 @@ Submit a new event to the ledger.
 Idempotency-Key: <uuid>
 ```
 
-`Idempotency-Key` is **OPTIONAL**. If omitted, no deduplication is performed and a new event is always created.
+`Idempotency-Key` is **required**. If the header is missing or empty, the server
+returns HTTP **400** with `error.code = "invalid_request"`.
 
 ### Idempotency rules
 
 | Condition                                              | Behavior                                      |
 | ------------------------------------------------------ | --------------------------------------------- |
 | Same `Idempotency-Key` + same request body within 24h  | Return original response; do not create event |
-| Same `Idempotency-Key` + different request body        | HTTP 409, code `CONFLICT`                     |
+| Same `Idempotency-Key` + different request body        | HTTP 409, code `conflict`                     |
 
 `Idempotency-Key` is scoped per `account_id`. The same key used by different accounts does not collide.
 
@@ -158,9 +161,25 @@ Idempotency-Key: <uuid>
   "chain_id": "...",
   "sequence": 5,
   "proof_status": "anchored",
-  "trust_level": "BASIC"
+  "trust_level": "BASIC",
+  "request_id": "..."
 }
 ```
+
+### `event_type` enum
+
+This section is the **source of truth** for `event_type` (by analogy with
+`trust_level` in SYSTEM_CONTRACT §14 and §15).
+
+Valid values — no others are accepted:
+
+```text
+submission
+amendment
+cancellation
+```
+
+Invalid or missing `event_type` → HTTP **400** with `error.code = "invalid_request"`.
 
 ### `proof_status` enum
 
@@ -401,8 +420,8 @@ Applied **after** ownership check, **before** returning a verification body:
 | `proof_status` | HTTP | `error.code`              |
 | -------------- | ---- | ------------------------- |
 | anchored       | 200  | — (normal verification)   |
-| pending        | 409  | `PROOF_NOT_READY`         |
-| failed         | 422  | `PROOF_GENERATION_FAILED` |
+| pending        | 409  | `proof_not_ready`         |
+| failed         | 422  | `proof_generation_failed` |
 
 When proof is not ready, the server MUST NOT return `chain.valid=true` or any
 verification body implying success.
@@ -412,7 +431,7 @@ Example (`proof_status: pending`):
 ```json
 {
   "error": {
-    "code": "PROOF_NOT_READY",
+    "code": "proof_not_ready",
     "message": "Proof material is not yet available for this event",
     "request_id": ""
   }
