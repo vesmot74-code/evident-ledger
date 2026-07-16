@@ -103,3 +103,20 @@ fn tampered_event_hash_causes_merkle_root_mismatch() {
     assert!(output.contains("merkle root mismatch"));
     assert!(!output.contains("signature invalid"));
 }
+
+#[test]
+fn tampered_event_id_causes_merkle_root_mismatch() {
+    let mut proof = load_proof();
+    let original_signature = proof["proof"]["signature"].clone();
+    let events = proof["events"].as_array_mut().unwrap();
+    // Tamper head leaf only: parent chain and signed head fields stay unchanged,
+    // but merkle recompute must include the new event_id.
+    let index = events.len() - 1;
+    events[index]["event_id"] = serde_json::json!("11111111-1111-1111-1111-111111111111");
+    assert_eq!(proof["proof"]["signature"], original_signature);
+    let path = write_temp(&proof);
+    let (output, code) = run_verifier(&path);
+    assert_eq!(code, 2);
+    assert!(output.contains("merkle root mismatch"));
+    assert!(!output.contains("signature invalid"));
+}

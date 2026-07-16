@@ -230,6 +230,62 @@ Original: MISSING or MISMATCH
 
 ---
 
+# 4.4 Merkle Leaf Canonicalization
+
+Merkle proof integrity is based on canonical leaf construction.
+
+Each Merkle leaf includes the complete event identity context:
+
+```text
+SHA256(
+    sequence ||
+    event_id ||
+    parent_event_id ||
+    file_hash
+)
+```
+
+The leaf calculation includes:
+
+* event sequence number
+* event UUID
+* parent event UUID
+* committed file SHA-256 hash
+
+This prevents undetected modification of event identity fields.
+
+Any change to:
+
+```text
+sequence
+event_id
+parent_event_id
+file_hash
+```
+
+changes the Merkle leaf and results in Merkle root mismatch during verification.
+
+Offline verification rejects proofs where:
+
+```text
+recomputed_merkle_root != signed_merkle_root
+```
+
+This guarantees that event identity and chain structure are cryptographically bound together.
+
+Verified tampering scenarios:
+
+```text
+modified event_id        → FAIL
+modified file_hash       → FAIL
+modified parent_event_id → FAIL
+modified signature       → FAIL
+```
+
+Valid proofs continue to verify successfully after regeneration with the updated canonical Merkle model.
+
+---
+
 # 5. AUDIT MODEL
 
 GUI audit storage:

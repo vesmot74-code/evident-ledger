@@ -1408,8 +1408,7 @@ impl App {
         let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
-            let result =
-                client::fetch_capabilities(&client).map_err(|e| friendly_error(&e, lang));
+            let result = client::fetch_capabilities(&client).map_err(|e| friendly_error(&e, lang));
             let _ = tx.send(WorkerResponse::AccountFetchDone(result));
             ctx.request_repaint();
         });
@@ -1512,7 +1511,10 @@ impl eframe::App for App {
                             self.account_data = None;
                             self.status = format!(
                                 "{}: {}",
-                                self.tr("⚠️ Не удалось загрузить аккаунт", "⚠️ Failed to load account"),
+                                self.tr(
+                                    "⚠️ Не удалось загрузить аккаунт",
+                                    "⚠️ Failed to load account"
+                                ),
                                 e
                             );
                         }

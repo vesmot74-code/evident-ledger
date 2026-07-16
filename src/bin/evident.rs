@@ -548,13 +548,12 @@ fn sha256_hex(bytes: &[u8]) -> String {
 
 fn cmd_new_chain() -> Result<(), CliError> {
     let client = reqwest::blocking::Client::new();
-    let mut req = client.post("http://127.0.0.1:3000/chains");
-    if let Ok(key) = std::env::var("EVIDENT_API_KEY") {
-        let key = key.trim().to_string();
-        if !key.is_empty() {
-            req = req.header("X-API-KEY", key);
-        }
-    }
+
+    let api_key = load_api_key()?;
+
+    let req = client
+        .post("http://127.0.0.1:3000/chains")
+        .header("X-API-KEY", &api_key);
     let response = req.send()?;
     let status = response.status();
     let body = response.text()?;
