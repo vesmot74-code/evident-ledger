@@ -2,7 +2,10 @@ use chrono::{TimeZone, Utc};
 use eframe::egui;
 use evident_ledger::audit::{AuditEvent, AuditStore, ChainAnchorProof};
 use evident_ledger::client::{self, EvidentClient};
-use evident_ledger::service::backup_restore::backups_dir;
+use evident_ledger::service::backup_restore::{
+    backups_dir, restore_snapshot_bytes, scan_local_chain_state, RestoreSummary,
+};
+use evident_ledger::service::backup_snapshot::parse_snapshot;
 use evident_report::{
     generate_report, EventSummary, FileStatus, ProofData, TsaData as ReportTsaData,
     VerificationContext,
@@ -117,6 +120,14 @@ const COLOR_BG: egui::Color32 = egui::Color32::from_rgb(245, 247, 251);
 const COLOR_BORDER: egui::Color32 = egui::Color32::from_rgb(203, 213, 225);
 
 // ============================================================================
+// BACKUP RESTORE
+// ============================================================================
+struct PendingRestore {
+    backup_id: Uuid,
+    bytes: Vec<u8>,
+}
+
+// ============================================================================
 // APP
 // ============================================================================
 fn file_hash_from_bytes(bytes: &[u8]) -> String {
@@ -206,6 +217,11 @@ struct App {
     loading_backup_download: Option<String>,
     backup_download_error: Option<String>,
     backup_download_message: Option<String>,
+    loading_backup_restore_download: Option<String>,
+    loading_backup_restore: Option<String>,
+    pending_restore: Option<PendingRestore>,
+    backup_restore_error: Option<String>,
+    backup_restore_message: Option<String>,
 }
 
 impl Default for App {
@@ -257,6 +273,11 @@ impl Default for App {
             loading_backup_download: None,
             backup_download_error: None,
             backup_download_message: None,
+            loading_backup_restore_download: None,
+            loading_backup_restore: None,
+            pending_restore: None,
+            backup_restore_error: None,
+            backup_restore_message: None,
         }
     }
 }
@@ -331,6 +352,8 @@ enum WorkerResponse {
     BackupListDone(Result<Vec<client::BackupListItem>, String>),
     BackupCreateDone(Result<client::BackupCreateResponse, String>),
     BackupDownloadDone(Result<(Uuid, Vec<u8>), String>),
+    BackupRestoreDownloadDone(Result<(Uuid, Vec<u8>), String>),
+    BackupRestoreDone(Result<RestoreSummary, String>),
 }
 
 impl App {
@@ -1478,14 +1501,177 @@ impl App {
     }
 
     fn write_backup_download_file(backup_id: Uuid, bytes: &[u8]) -> Result<PathBuf, String> {
-        let evident_dir = dirs::home_dir()
-            .ok_or_else(|| "HOME directory not found".to_string())?
-            .join(".evident");
+        let evident_dir = Self::evident_dir_path()?;
         let target_dir = backups_dir(&evident_dir);
         fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
         let path = target_dir.join(format!("{backup_id}.json"));
         fs::write(&path, bytes).map_err(|e| e.to_string())?;
         Ok(path)
+    }
+
+    fn evident_dir_path() -> Result<PathBuf, String> {
+        Ok(dirs::home_dir()
+            .ok_or_else(|| "HOME directory not found".to_string())?
+            .join(".evident"))
+    }
+
+    fn restore_disclaimer_lines(&self) -> [&'static str; 5] {
+        [
+            self.tr(
+                "Восстановление проверяет только структурную согласованность:",
+                "This restore validates structural consistency only:",
+            ),
+            self.tr(
+                "порядок событий, непрерывность sequence и связь parent.",
+                "event ordering, sequence continuity, and parent linkage.",
+            ),
+            self.tr(
+                "Криптографическая подлинность не проверяется и соответствие",
+                "It does not verify cryptographic authenticity or confirm",
+            ),
+            self.tr(
+                "содержимого событий авторитетному состоянию реестра не подтверждается.",
+                "that event contents match the authoritative ledger state.",
+            ),
+            self.tr(
+                "Перед использованием восстановленных данных проверьте цепочку на экране Verify.",
+                "Before relying on restored data, verify this chain using the Verify screen.",
+            ),
+        ]
+    }
+
+    fn format_restore_success(&self, summary: &RestoreSummary) -> String {
+        let mut lines = vec![format!(
+            "{} {}, {} {}.",
+            self.tr("Восстановлено: цепочка", "Restored: chain"),
+            summary.chain_id,
+            summary.event_count,
+            self.tr("событий", "events"),
+        )];
+        lines.push(format!(
+            "{} {}",
+            self.tr("Сохранено:", "Saved to:"),
+            summary.output_path.display()
+        ));
+        for line in self.restore_disclaimer_lines() {
+            lines.push(line.to_string());
+        }
+        lines.join("\n")
+    }
+
+    fn decide_restore_after_download(
+        &mut self,
+        ctx: &egui::Context,
+        backup_id: Uuid,
+        bytes: Vec<u8>,
+    ) {
+        let snapshot = match parse_snapshot(&bytes) {
+            Ok(snapshot) => snapshot,
+            Err(e) => {
+                self.backup_restore_error = Some(e);
+                return;
+            }
+        };
+        let backup_summary = match snapshot.head_summary() {
+            Some(summary) => summary,
+            None => {
+                self.backup_restore_error = Some(
+                    self.tr(
+                        "Некорректный снимок резервной копии",
+                        "Invalid backup snapshot",
+                    )
+                    .to_string(),
+                );
+                return;
+            }
+        };
+        let evident_dir = match Self::evident_dir_path() {
+            Ok(path) => path,
+            Err(e) => {
+                self.backup_restore_error = Some(e);
+                return;
+            }
+        };
+
+        // Step 1: direct read of the on-disk backup file GUI may have written via Download.
+        let backup_on_disk = backups_dir(&evident_dir).join(format!("{backup_id}.json"));
+        if backup_on_disk.exists() {
+            if let Ok(disk_bytes) = fs::read(&backup_on_disk) {
+                if let Ok(disk_snapshot) = parse_snapshot(&disk_bytes) {
+                    if let Some(disk_summary) = disk_snapshot.head_summary() {
+                        let _ = disk_summary.event_count == backup_summary.event_count
+                            && disk_summary.head_event_id == backup_summary.head_event_id;
+                    }
+                }
+            }
+        }
+
+        // Step 2: source-aware scan — proofs/ divergence is independent of self-echo.
+        let self_echo_source = format!("backups/{backup_id}.json");
+        match scan_local_chain_state(&evident_dir, snapshot.chain_id) {
+            None => self.start_backup_restore_execute(ctx, backup_id, bytes),
+            Some(local) if local.source == self_echo_source => {
+                self.start_backup_restore_execute(ctx, backup_id, bytes);
+            }
+            Some(local) => {
+                if local.event_count == backup_summary.event_count
+                    && local.head_event_id == backup_summary.head_event_id
+                {
+                    self.start_backup_restore_execute(ctx, backup_id, bytes);
+                } else {
+                    self.pending_restore = Some(PendingRestore { backup_id, bytes });
+                }
+            }
+        }
+    }
+
+    fn start_backup_restore_download(&mut self, ctx: &egui::Context, backup_id: Uuid) {
+        self.loading_backup_restore_download = Some(backup_id.to_string());
+        self.backup_restore_error = None;
+        self.backup_restore_message = None;
+        self.pending_restore = None;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let lang = self.lang;
+        self.rt.spawn_blocking(move || {
+            let client = EvidentClient::new(server_url());
+            let result = client
+                .backup_download(backup_id)
+                .map_err(|e| friendly_error(&e, lang))
+                .map(|bytes| (backup_id, bytes));
+            let _ = tx.send(WorkerResponse::BackupRestoreDownloadDone(result));
+            ctx.request_repaint();
+        });
+    }
+
+    fn start_backup_restore_execute(
+        &mut self,
+        ctx: &egui::Context,
+        backup_id: Uuid,
+        bytes: Vec<u8>,
+    ) {
+        self.loading_backup_restore = Some(backup_id.to_string());
+        self.pending_restore = None;
+        self.backup_restore_error = None;
+
+        let evident_dir = match Self::evident_dir_path() {
+            Ok(path) => path,
+            Err(e) => {
+                self.loading_backup_restore = None;
+                self.backup_restore_error = Some(e);
+                return;
+            }
+        };
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn_blocking(move || {
+            let result = restore_snapshot_bytes(&evident_dir, backup_id, &bytes, true, |_| true)
+                .map_err(|e| e.to_string());
+            let _ = tx.send(WorkerResponse::BackupRestoreDone(result));
+            ctx.request_repaint();
+        });
     }
 
     fn start_backup_create(&mut self, ctx: &egui::Context, chain_id: Uuid) {
@@ -1678,6 +1864,32 @@ impl eframe::App for App {
                         Err(e) => {
                             self.backup_download_error = Some(e);
                             self.backup_download_message = None;
+                        }
+                    }
+                }
+                WorkerResponse::BackupRestoreDownloadDone(res) => {
+                    self.loading_backup_restore_download = None;
+                    let ctx = ui.ctx().clone();
+                    match res {
+                        Ok((backup_id, bytes)) => {
+                            self.decide_restore_after_download(&ctx, backup_id, bytes);
+                        }
+                        Err(e) => {
+                            self.backup_restore_error = Some(e);
+                        }
+                    }
+                }
+                WorkerResponse::BackupRestoreDone(res) => {
+                    self.loading_backup_restore = None;
+                    match res {
+                        Ok(summary) => {
+                            self.backup_restore_error = None;
+                            self.backup_restore_message =
+                                Some(self.format_restore_success(&summary));
+                        }
+                        Err(e) => {
+                            self.backup_restore_error = Some(e);
+                            self.backup_restore_message = None;
                         }
                     }
                 }
@@ -1908,6 +2120,30 @@ impl eframe::App for App {
                         ));
                         ui.label(self.tr("Требуется обновление плана", "Upgrade required"));
                     } else {
+                        if self.pending_restore.is_some() {
+                            ui.label(self.tr(
+                                "Локальные данные для этой цепочки уже существуют.",
+                                "Local data already exists for this chain.",
+                            ));
+                            ui.label(self.tr(
+                                "Восстановление перезапишет локальное состояние резервной копии.",
+                                "Restoring will overwrite local backup state.",
+                            ));
+                            ui.horizontal(|ui| {
+                                if ui.button(self.tr("Отмена", "Cancel")).clicked() {
+                                    self.pending_restore = None;
+                                }
+                                if ui.button(self.tr("Восстановить", "Restore")).clicked() {
+                                    if let Some(pending) = self.pending_restore.take() {
+                                        self.start_backup_restore_execute(
+                                            &ui.ctx().clone(),
+                                            pending.backup_id,
+                                            pending.bytes,
+                                        );
+                                    }
+                                }
+                            });
+                        } else {
                         if self.backup_list_data.is_none()
                             && self.backup_list_error.is_none()
                             && !self.loading_backup_list
@@ -1942,6 +2178,15 @@ impl eframe::App for App {
                         }
                         if let Some(err) = &self.backup_download_error {
                             ui.label(err);
+                        }
+
+                        if let Some(err) = &self.backup_restore_error {
+                            ui.label(err);
+                        }
+                        if let Some(msg) = &self.backup_restore_message {
+                            for line in msg.lines() {
+                                ui.label(line);
+                            }
                         }
 
                         if self.loading_backup_list {
@@ -1981,8 +2226,25 @@ impl eframe::App for App {
                                         } else {
                                             self.tr("Скачать", "Download")
                                         };
+                                        let restoring_download = self
+                                            .loading_backup_restore_download
+                                            .as_deref()
+                                            == Some(item.backup_id.as_str());
+                                        let restoring = self
+                                            .loading_backup_restore
+                                            .as_deref()
+                                            == Some(item.backup_id.as_str());
+                                        let restore_label = if restoring_download || restoring {
+                                            self.tr("Восстановление...", "Restoring...")
+                                        } else {
+                                            self.tr("Восстановить", "Restore")
+                                        };
+                                        let row_busy = downloading
+                                            || restoring_download
+                                            || restoring
+                                            || self.pending_restore.is_some();
                                         if ui
-                                            .add_enabled(!downloading, egui::Button::new(download_label))
+                                            .add_enabled(!row_busy, egui::Button::new(download_label))
                                             .clicked()
                                         {
                                             if let Ok(backup_id) =
@@ -1999,9 +2261,28 @@ impl eframe::App for App {
                                                 ).to_string());
                                             }
                                         }
+                                        if ui
+                                            .add_enabled(!row_busy, egui::Button::new(restore_label))
+                                            .clicked()
+                                        {
+                                            if let Ok(backup_id) =
+                                                Uuid::parse_str(&item.backup_id)
+                                            {
+                                                self.start_backup_restore_download(
+                                                    &ui.ctx().clone(),
+                                                    backup_id,
+                                                );
+                                            } else {
+                                                self.backup_restore_error = Some(self.tr(
+                                                    "Некорректный идентификатор резервной копии",
+                                                    "Invalid backup id",
+                                                ).to_string());
+                                            }
+                                        }
                                     });
                                 }
                             }
+                        }
                         }
                     }
                 }
