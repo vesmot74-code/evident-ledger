@@ -6,6 +6,50 @@ use sqlx::PgPool;
 use std::sync::Arc;
 use uuid::Uuid;
 
+pub const STRUCTURAL_INTEGRITY_ERROR: &str =
+    "snapshot appears corrupted or incomplete — restore aborted";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StructuralFailure {
+    ParentChain { index: usize },
+    Sequence { index: usize },
+    EmptyMerkle,
+}
+
+/// Parent chain, monotonic sequence (starting at 1), and merkle recompute.
+/// Returns the recomputed merkle root on success.
+pub fn check_event_structure(events: &[EventRow]) -> Result<String, StructuralFailure> {
+    if events.is_empty() {
+        return Ok("empty".to_string());
+    }
+
+    for (i, event) in events.iter().enumerate() {
+        if i == 0 {
+            if event.parent_event_id != Uuid::nil() {
+                return Err(StructuralFailure::ParentChain { index: i });
+            }
+            if event.sequence != 1 {
+                return Err(StructuralFailure::Sequence { index: i });
+            }
+        } else {
+            let prev = &events[i - 1];
+            if event.sequence != prev.sequence + 1 {
+                return Err(StructuralFailure::Sequence { index: i });
+            }
+            if event.parent_event_id != prev.event_id {
+                return Err(StructuralFailure::ParentChain { index: i });
+            }
+        }
+    }
+
+    let merkle_root = MerkleTree::recompute_root_from_events(events);
+    if merkle_root.is_empty() {
+        return Err(StructuralFailure::EmptyMerkle);
+    }
+
+    Ok(merkle_root)
+}
+
 pub async fn verify_chain(
     pool: &PgPool,
     signer: &Arc<ServerSigner>,
@@ -37,25 +81,9 @@ pub async fn verify_chain(
     let mut valid = true;
     let mut errors = Vec::new();
 
-    for (i, event) in events.iter().enumerate() {
-        if i == 0 {
-            if event.parent_event_id != Uuid::nil() {
-                valid = false;
-                errors.push(format!(
-                    "First event {} has parent {} instead of nil",
-                    event.event_id, event.parent_event_id
-                ));
-            }
-        } else {
-            let prev = &events[i - 1];
-            if event.parent_event_id != prev.event_id {
-                valid = false;
-                errors.push(format!(
-                    "Event {} has parent {} but previous is {}",
-                    event.event_id, event.parent_event_id, prev.event_id
-                ));
-            }
-        }
+    if let Err(failure) = check_event_structure(&events) {
+        valid = false;
+        errors.push(format!("Structural check failed: {failure:?}"));
     }
 
     let merkle_root = MerkleTree::recompute_root_from_events(&events);
@@ -148,4 +176,67 @@ pub async fn export_proof(
             "token_bytes": t.token_bytes,
         })),
     }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+
+    fn sample_rows() -> Vec<EventRow> {
+        let e1 = Uuid::new_v4();
+        let e2 = Uuid::new_v4();
+        let now = Utc::now();
+        vec![
+            EventRow {
+                event_id: e1,
+                parent_event_id: Uuid::nil(),
+                file_hash: "aa".repeat(32),
+                created_at: now,
+                sequence: 1,
+            },
+            EventRow {
+                event_id: e2,
+                parent_event_id: e1,
+                file_hash: "bb".repeat(32),
+                created_at: now,
+                sequence: 2,
+            },
+        ]
+    }
+
+    #[test]
+    fn valid_events_pass() {
+        assert!(check_event_structure(&sample_rows()).is_ok());
+    }
+
+    #[test]
+    fn broken_parent_fails() {
+        let mut rows = sample_rows();
+        rows[1].parent_event_id = Uuid::new_v4();
+        assert!(matches!(
+            check_event_structure(&rows),
+            Err(StructuralFailure::ParentChain { index: 1 })
+        ));
+    }
+
+    #[test]
+    fn broken_sequence_fails() {
+        let mut rows = sample_rows();
+        rows[1].sequence = 99;
+        assert!(matches!(
+            check_event_structure(&rows),
+            Err(StructuralFailure::Sequence { index: 1 })
+        ));
+    }
+
+    #[test]
+    fn broken_merkle_via_file_hash_fails_mismatch_at_consumer() {
+        let rows = sample_rows();
+        let root = check_event_structure(&rows).unwrap();
+        let mut tampered = rows.clone();
+        tampered[1].file_hash = "cc".repeat(32);
+        let recomputed = check_event_structure(&tampered).unwrap();
+        assert_ne!(root, recomputed);
+    }
 }

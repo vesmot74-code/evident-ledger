@@ -6,13 +6,10 @@ fn setup_isolated_home() -> PathBuf {
     let evident_dir = home.join(".evident");
     std::fs::create_dir_all(&evident_dir).expect("failed to create isolated test home");
 
-    let fixture_key = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("tests/fixtures/server_identity.pub");
-    std::fs::copy(
-        &fixture_key,
-        evident_dir.join("server_identity.pub"),
-    )
-    .expect("tests/fixtures/server_identity.pub missing");
+    let fixture_key =
+        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/server_identity.pub");
+    std::fs::copy(&fixture_key, evident_dir.join("server_identity.pub"))
+        .expect("tests/fixtures/server_identity.pub missing");
 
     home
 }

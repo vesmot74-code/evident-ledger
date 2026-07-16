@@ -100,6 +100,21 @@ impl std::fmt::Display for ClientError {
     }
 }
 
+#[derive(Debug, Deserialize, Clone)]
+pub struct BackupCreateResponse {
+    pub backup_id: String,
+    pub status: String,
+    pub event_count: i64,
+}
+
+#[derive(Debug, Deserialize, Clone)]
+pub struct BackupListItem {
+    pub backup_id: String,
+    pub chain_id: String,
+    pub created_at: String,
+    pub event_count: i64,
+}
+
 impl EvidentClient {
     /// Создаёт клиента и пытается загрузить API-ключ автоматически:
     /// 1) переменная окружения EVIDENT_API_KEY,
@@ -251,14 +266,80 @@ impl EvidentClient {
     /// загружен, сервер вернёт 401, что будет отражено в ClientError::Server.
     pub fn fetch_capabilities(&self) -> Result<serde_json::Value, ClientError> {
         let resp = self
-            .authed(self.client.get(format!("{}/account/capabilities", self.base_url)))
+            .authed(
+                self.client
+                    .get(format!("{}/account/capabilities", self.base_url)),
+            )
             .send()?;
         if !resp.status().is_success() {
+            let status = resp.status();
             let body = resp.text().unwrap_or_default();
-            return Err(ClientError::Server(body));
+            return Err(Self::map_http_error(status, &body));
         }
         let json: serde_json::Value = resp.json()?;
         Ok(json)
+    }
+
+    pub fn backup_create(&self, chain_id: Uuid) -> Result<BackupCreateResponse, ClientError> {
+        let resp = self
+            .authed(self.client.post(format!("{}/backup/create", self.base_url)))
+            .json(&serde_json::json!({ "chain_id": chain_id }))
+            .send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(Self::map_http_error(status, &body));
+        }
+        Ok(resp.json()?)
+    }
+
+    pub fn backup_list(&self) -> Result<Vec<BackupListItem>, ClientError> {
+        let resp = self
+            .authed(self.client.get(format!("{}/backup/list", self.base_url)))
+            .send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(Self::map_http_error(status, &body));
+        }
+        Ok(resp.json()?)
+    }
+
+    pub fn backup_download(&self, backup_id: Uuid) -> Result<Vec<u8>, ClientError> {
+        let resp = self
+            .authed(
+                self.client
+                    .get(format!("{}/backup/{backup_id}/download", self.base_url)),
+            )
+            .send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(Self::map_http_error(status, &body));
+        }
+        Ok(resp.bytes()?.to_vec())
+    }
+
+    fn map_http_error(status: reqwest::StatusCode, body: &str) -> ClientError {
+        if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+            if json["error"].as_str() == Some("feature_not_available")
+                && json["feature"].as_str() == Some("server_backup")
+            {
+                let plan = json["plan"].as_str().unwrap_or("current");
+                return ClientError::Server(format!(
+                    "Server backup is not available on your plan ({plan}). Upgrade to Vault or Identity to use this feature."
+                ));
+            }
+            if json["error"].as_str() == Some("not_found") {
+                return ClientError::Server(
+                    "Backup not found (or not owned by this account).".into(),
+                );
+            }
+            if let Some(msg) = json["error"].as_str() {
+                return ClientError::Server(format!("server error {status}: {msg}"));
+            }
+        }
+        ClientError::Server(format!("server error {status}: {body}"))
     }
 }
 

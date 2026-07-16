@@ -393,26 +393,31 @@ mod tests {
             let chain_b = Uuid::new_v4();
             let backup_a = Uuid::new_v4();
             let backup_b = Uuid::new_v4();
-            let vault_plan_id: Uuid = sqlx::query_scalar("SELECT plan_id FROM tariff_plans WHERE name = 'vault'")
-                .fetch_one(pool)
-                .await
-                .expect("vault tariff plan");
+            let vault_plan_id: Uuid =
+                sqlx::query_scalar("SELECT plan_id FROM tariff_plans WHERE name = 'vault'")
+                    .fetch_one(pool)
+                    .await
+                    .expect("vault tariff plan");
 
-            sqlx::query("INSERT INTO accounts (account_id, email, tariff_plan_id) VALUES ($1, $2, $3)")
-                .bind(account_a)
-                .bind(format!("restore-test-a-{account_a}@test.local"))
-                .bind(vault_plan_id)
-                .execute(pool)
-                .await
-                .expect("insert account_a");
+            sqlx::query(
+                "INSERT INTO accounts (account_id, email, tariff_plan_id) VALUES ($1, $2, $3)",
+            )
+            .bind(account_a)
+            .bind(format!("restore-test-a-{account_a}@test.local"))
+            .bind(vault_plan_id)
+            .execute(pool)
+            .await
+            .expect("insert account_a");
 
-            sqlx::query("INSERT INTO accounts (account_id, email, tariff_plan_id) VALUES ($1, $2, $3)")
-                .bind(account_b)
-                .bind(format!("restore-test-b-{account_b}@test.local"))
-                .bind(vault_plan_id)
-                .execute(pool)
-                .await
-                .expect("insert account_b");
+            sqlx::query(
+                "INSERT INTO accounts (account_id, email, tariff_plan_id) VALUES ($1, $2, $3)",
+            )
+            .bind(account_b)
+            .bind(format!("restore-test-b-{account_b}@test.local"))
+            .bind(vault_plan_id)
+            .execute(pool)
+            .await
+            .expect("insert account_b");
 
             sqlx::query("INSERT INTO chains (chain_id, account_id) VALUES ($1, $2)")
                 .bind(chain_a)
@@ -500,10 +505,9 @@ mod tests {
         let fixture = OwnershipFixture::setup(&pool).await;
         let caps = capabilities_with_server_backup(true);
 
-        let backups =
-            list_backups(&pool, fixture.account_a, &caps)
-                .await
-                .expect("list backups for account_a");
+        let backups = list_backups(&pool, fixture.account_a, &caps)
+            .await
+            .expect("list backups for account_a");
 
         assert_eq!(backups.len(), 1);
         assert_eq!(backups[0].backup_id, fixture.backup_a);
@@ -523,10 +527,9 @@ mod tests {
             .unwrap_err();
         assert!(matches!(info_err, BackupError::NotFound));
 
-        let download_err =
-            read_backup_file(&pool, fixture.account_b, fixture.backup_a, &caps)
-                .await
-                .unwrap_err();
+        let download_err = read_backup_file(&pool, fixture.account_b, fixture.backup_a, &caps)
+            .await
+            .unwrap_err();
         assert!(matches!(download_err, BackupError::NotFound));
 
         fixture.teardown(&pool).await;

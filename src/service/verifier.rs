@@ -62,38 +62,12 @@ pub async fn verify_chain_hardened(
         })
         .collect();
 
-    // === ПРОВЕРКА 1: Связность parent ===
-    for (i, event) in events.iter().enumerate() {
-        if i == 0 {
-            if event.parent_event_id != Uuid::nil() {
-                report.valid = false;
-                report.errors.push(format!(
-                    "First event {} has parent {} instead of nil",
-                    event.event_id, event.parent_event_id
-                ));
-            }
-        } else {
-            let prev = &events[i - 1];
-            if event.parent_event_id != prev.event_id {
-                report.valid = false;
-                report.errors.push(format!(
-                    "Event {} has parent {} but previous is {}",
-                    event.event_id, event.parent_event_id, prev.event_id
-                ));
-            }
-        }
-    }
-
-    // === ПРОВЕРКА 2: Монотонность sequence ===
-    for i in 1..events.len() {
-        if events[i].sequence <= events[i - 1].sequence {
-            report.valid = false;
-            report.errors.push(format!(
-                "Sequence not monotonic: {} -> {}",
-                events[i - 1].sequence,
-                events[i].sequence
-            ));
-        }
+    // === ПРОВЕРКА 1–2: parent chain + sequence (shared checker) ===
+    if let Err(failure) = crate::service::verification::check_event_structure(&events) {
+        report.valid = false;
+        report
+            .errors
+            .push(format!("Structural check failed: {failure:?}"));
     }
 
     // === ПРОВЕРКА 3: Монотонность времени ===
@@ -108,7 +82,8 @@ pub async fn verify_chain_hardened(
     }
 
     // === ПРОВЕРКА 4: MERKLE ROOT RECOMPUTE ===
-    let recomputed_root = MerkleTree::recompute_root_from_events(&events);
+    let recomputed_root = crate::service::verification::check_event_structure(&events)
+        .unwrap_or_else(|_| MerkleTree::recompute_root_from_events(&events));
     report.merkle_recomputed = recomputed_root.clone();
 
     report.head_event_id = events.last().map(|e| e.event_id);

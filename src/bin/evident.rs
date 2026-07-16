@@ -5,7 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process;
 use std::process::Command as ProcessCommand;
 
+use evident_ledger::client::EvidentClient;
 use evident_ledger::freeze::{self, Event};
+use evident_ledger::service::backup_restore::{
+    print_restore_summary, prompt_confirm, restore_snapshot_bytes,
+};
 use evident_ledger::service::capabilities::{AccountCapabilities, TsaMode};
 use evident_ledger::service::entitlements::{allowed, Feature};
 use serde::{Deserialize, Serialize};
@@ -150,7 +154,7 @@ fn run() -> Result<(), CliError> {
         Some("init") => cmd_init(),
         Some("help") | Some("--help") | Some("-h") => {
             println!(
-                "usage: evident <init|new-chain|commit|verify|status|account|account info|key status|key info|report generate>"
+                "usage: evident <init|new-chain|commit|verify|status|backup|account|account info|key status|key info|report generate>"
             );
             Ok(())
         }
@@ -215,11 +219,134 @@ fn run() -> Result<(), CliError> {
                 _ => Err(CliError::Usage("usage: evident key <status|info>".into())),
             }
         }
+        Some("backup") => cmd_backup(&mut args),
         _ => Err(CliError::Usage(
-            "usage: evident <init|new-chain|commit|verify|status|account|account info|key status|key info|report generate>"
+            "usage: evident <init|new-chain|commit|verify|status|backup|account|account info|key status|key info|report generate>"
                 .into(),
         )),
     }
+}
+
+fn evident_client() -> Result<EvidentClient, CliError> {
+    let _ = load_api_key()?;
+    Ok(EvidentClient::new("http://127.0.0.1:3000"))
+}
+
+fn cmd_backup(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
+    match args.next().as_deref() {
+        Some("create") => cmd_backup_create(args),
+        Some("list") => cmd_backup_list(),
+        Some("download") => cmd_backup_download(args),
+        Some("restore") => cmd_backup_restore(args),
+        _ => Err(CliError::Usage(
+            "usage: evident backup <create|list|download|restore>".into(),
+        )),
+    }
+}
+
+fn cmd_backup_create(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
+    let mut chain_id = None;
+    while let Some(arg) = args.next() {
+        if arg == "--chain" {
+            chain_id = args.next();
+        }
+    }
+    let chain_id = chain_id
+        .ok_or_else(|| CliError::Usage("usage: evident backup create --chain <uuid>".into()))?;
+    let chain_uuid =
+        Uuid::parse_str(&chain_id).map_err(|_| CliError::Usage("invalid chain id".into()))?;
+
+    let client = evident_client()?;
+    let result = client
+        .backup_create(chain_uuid)
+        .map_err(|e| CliError::Server(e.to_string()))?;
+
+    println!("backup created");
+    println!("backup_id:   {}", result.backup_id);
+    println!("event_count: {}", result.event_count);
+    println!("status:      {}", result.status);
+    Ok(())
+}
+
+fn cmd_backup_list() -> Result<(), CliError> {
+    let client = evident_client()?;
+    let backups = client
+        .backup_list()
+        .map_err(|e| CliError::Server(e.to_string()))?;
+
+    if backups.is_empty() {
+        println!("No saved backups.");
+        return Ok(());
+    }
+
+    println!("backup_id                            | created_at                  | event_count");
+    println!("-------------------------------------|-----------------------------|------------");
+    for item in backups {
+        println!(
+            "{} | {} | {}",
+            item.backup_id, item.created_at, item.event_count
+        );
+    }
+    Ok(())
+}
+
+fn cmd_backup_download(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
+    let backup_id_str = args.next().ok_or_else(|| {
+        CliError::Usage("usage: evident backup download <backup_id> [--output <path>]".into())
+    })?;
+
+    let mut output = None;
+    let mut rest = args.collect::<Vec<_>>().into_iter();
+    while let Some(arg) = rest.next() {
+        if arg == "--output" {
+            output = rest.next();
+        }
+    }
+
+    let backup_id =
+        Uuid::parse_str(&backup_id_str).map_err(|_| CliError::Usage("invalid backup id".into()))?;
+
+    let client = evident_client()?;
+    let bytes = client
+        .backup_download(backup_id)
+        .map_err(|e| CliError::Server(e.to_string()))?;
+
+    let output_path = output
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from(format!("{backup_id}.json")));
+
+    fs::write(&output_path, &bytes)?;
+    println!("saved to {}", output_path.display());
+    Ok(())
+}
+
+fn cmd_backup_restore(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
+    let backup_id_str = args.next().ok_or_else(|| {
+        CliError::Usage("usage: evident backup restore <backup_id> [--force]".into())
+    })?;
+
+    let mut force = false;
+    for arg in args {
+        if arg == "--force" {
+            force = true;
+        }
+    }
+
+    let backup_id =
+        Uuid::parse_str(&backup_id_str).map_err(|_| CliError::Usage("invalid backup id".into()))?;
+
+    let client = evident_client()?;
+    let bytes = client
+        .backup_download(backup_id)
+        .map_err(|e| CliError::Server(e.to_string()))?;
+
+    let summary = restore_snapshot_bytes(&evident_dir(), backup_id, &bytes, force, |prompt| {
+        prompt_confirm(prompt).unwrap_or(false)
+    })
+    .map_err(|e| CliError::Server(e.to_string()))?;
+
+    print_restore_summary(&summary);
+    Ok(())
 }
 
 fn cmd_init() -> Result<(), CliError> {
@@ -549,11 +676,19 @@ fn cmd_account_info() -> Result<(), CliError> {
     );
     println!(
         "  Server backup:    {}",
-        if caps.server_backup { "enabled" } else { "disabled" }
+        if caps.server_backup {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
     println!(
         "  History recovery: {}",
-        if caps.history_recovery { "enabled" } else { "disabled" }
+        if caps.history_recovery {
+            "enabled"
+        } else {
+            "disabled"
+        }
     );
     println!(
         "  Identity:         {}",
