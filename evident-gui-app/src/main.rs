@@ -37,6 +37,32 @@ enum Lang {
     Ru,
 }
 
+/// User-facing message keyed for render-time localization (not stored translated).
+#[derive(Clone, Debug)]
+enum UiText {
+    InvalidProjectChain,
+    AccountIdMissing,
+    InvalidBackupId,
+    InvalidBackupSnapshot,
+    AccountLoadFailed(String),
+    Raw(String),
+}
+
+#[derive(Clone, Debug, Default)]
+enum VerifyDetailsState {
+    #[default]
+    Empty,
+    NoProjectSelected,
+    Verifying,
+    ProofValid,
+    ReadProjectFailed(String),
+    ParseProjectFailed(String),
+    InvalidChainId,
+    Warning(String),
+    VerifyFailed(String),
+    ServerErrors(String),
+}
+
 // ============================================================================
 // PROJECT MODEL
 // ============================================================================
@@ -176,7 +202,9 @@ struct App {
     event_id: String,
     proof_path: String,
     verify_status: VerifyStatus,
-    verify_details: String,
+    verify_details: VerifyDetailsState,
+    commit_error: Option<String>,
+    status_localized: Option<UiText>,
 
     // === Project verification ===
     verification_events: Vec<VerificationEvent>,
@@ -209,23 +237,23 @@ struct App {
     loading_account: bool,
     dev_selected_plan: String,
     loading_dev_change_plan: bool,
-    dev_change_plan_error: Option<String>,
-    dev_change_plan_message: Option<String>,
+    dev_change_plan_error: Option<UiText>,
+    dev_plan_change: Option<(String, String)>,
 
     // === Backup panel ===
     backup_list_data: Option<Vec<client::BackupListItem>>,
     loading_backup_list: bool,
     backup_list_error: Option<String>,
     loading_backup_create: bool,
-    backup_create_error: Option<String>,
+    backup_create_error: Option<UiText>,
     loading_backup_download: Option<String>,
-    backup_download_error: Option<String>,
-    backup_download_message: Option<String>,
+    backup_download_error: Option<UiText>,
+    backup_download_path: Option<String>,
     loading_backup_restore_download: Option<String>,
     loading_backup_restore: Option<String>,
     pending_restore: Option<PendingRestore>,
-    backup_restore_error: Option<String>,
-    backup_restore_message: Option<String>,
+    backup_restore_error: Option<UiText>,
+    backup_restore_summary: Option<RestoreSummary>,
 }
 
 impl Default for App {
@@ -249,7 +277,9 @@ impl Default for App {
             event_id: Default::default(),
             proof_path: Default::default(),
             verify_status: Default::default(),
-            verify_details: Default::default(),
+            verify_details: VerifyDetailsState::Empty,
+            commit_error: None,
+            status_localized: None,
             verification_events: Default::default(),
             verification_report: Default::default(),
             verification_complete: Default::default(),
@@ -272,7 +302,7 @@ impl Default for App {
             dev_selected_plan: "free".to_string(),
             loading_dev_change_plan: false,
             dev_change_plan_error: None,
-            dev_change_plan_message: None,
+            dev_plan_change: None,
             backup_list_data: None,
             loading_backup_list: false,
             backup_list_error: None,
@@ -280,12 +310,12 @@ impl Default for App {
             backup_create_error: None,
             loading_backup_download: None,
             backup_download_error: None,
-            backup_download_message: None,
+            backup_download_path: None,
             loading_backup_restore_download: None,
             loading_backup_restore: None,
             pending_restore: None,
             backup_restore_error: None,
-            backup_restore_message: None,
+            backup_restore_summary: None,
         }
     }
 }
@@ -373,6 +403,108 @@ impl App {
             Lang::Ru => ru,
             Lang::En => en,
         }
+    }
+
+    fn render_ui_text(&self, text: &UiText) -> String {
+        match text {
+            UiText::InvalidProjectChain => self
+                .tr(
+                    "Не найдена действительная цепочка для выбранного проекта. Сначала откройте или создайте проект.",
+                    "No valid chain found for the selected project. Open or create a project first.",
+                )
+                .to_string(),
+            UiText::AccountIdMissing => self
+                .tr(
+                    "Не удалось определить account_id",
+                    "Could not determine account_id",
+                )
+                .to_string(),
+            UiText::InvalidBackupId => self
+                .tr(
+                    "Некорректный идентификатор резервной копии",
+                    "Invalid backup id",
+                )
+                .to_string(),
+            UiText::InvalidBackupSnapshot => self
+                .tr(
+                    "Некорректный снимок резервной копии",
+                    "Invalid backup snapshot",
+                )
+                .to_string(),
+            UiText::AccountLoadFailed(detail) => format!(
+                "{}: {}",
+                self.tr(
+                    "⚠️ Не удалось загрузить аккаунт",
+                    "⚠️ Failed to load account"
+                ),
+                friendly_error(detail, self.lang)
+            ),
+            UiText::Raw(raw) => friendly_error(raw, self.lang),
+        }
+    }
+
+    fn render_dev_plan_changed(&self, old_plan: &str, new_plan: &str) -> String {
+        format!(
+            "{}: {} -> {}",
+            self.tr("План изменён", "Plan changed"),
+            old_plan,
+            new_plan
+        )
+    }
+
+    fn render_pass_through_error(&self, raw: &str) -> String {
+        friendly_error(&raw, self.lang)
+    }
+
+    fn render_verify_details(&self) -> String {
+        match &self.verify_details {
+            VerifyDetailsState::Empty => String::new(),
+            VerifyDetailsState::NoProjectSelected => {
+                self.tr("Проект не выбран", "No project selected").to_string()
+            }
+            VerifyDetailsState::Verifying => {
+                self.tr("⏳ Проверка...", "⏳ Verifying...").to_string()
+            }
+            VerifyDetailsState::ProofValid => self
+                .tr("✅ Доказательство действительно", "✅ Proof is valid")
+                .to_string(),
+            VerifyDetailsState::ReadProjectFailed(detail) => format!(
+                "⚠️ {}: {}",
+                self.tr("Не удалось прочитать проект", "Failed to read the project"),
+                detail
+            ),
+            VerifyDetailsState::ParseProjectFailed(detail) => format!(
+                "⚠️ {}: {}",
+                self.tr("Не удалось разобрать проект", "Failed to parse the project"),
+                detail
+            ),
+            VerifyDetailsState::InvalidChainId => self
+                .tr("⚠️ Неправильный chain_id", "⚠️ Invalid chain_id")
+                .to_string(),
+            VerifyDetailsState::Warning(detail) => format!("⚠️ {detail}"),
+            VerifyDetailsState::VerifyFailed(detail) => format!(
+                "{}: {}",
+                self.tr("⚠️ Ошибка проверки", "⚠️ Verification error"),
+                friendly_error(detail, self.lang)
+            ),
+            VerifyDetailsState::ServerErrors(errors) => errors.clone(),
+        }
+    }
+
+    fn render_status(&self) -> String {
+        if let Some(text) = &self.status_localized {
+            return self.render_ui_text(text);
+        }
+        self.status.clone()
+    }
+
+    fn set_localized_status(&mut self, text: UiText) {
+        self.status_localized = Some(text);
+        self.status.clear();
+    }
+
+    fn clear_localized_status(&mut self) {
+        self.status_localized = None;
     }
 
     /// Formats a byte size using the appropriate localized unit.
@@ -1349,7 +1481,6 @@ impl App {
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         let project_path_clone = project_path.clone();
         let proofs_dir_clone = proofs_dir.clone();
         let source_file_path = self.file_path.clone();
@@ -1373,7 +1504,7 @@ impl App {
                 Err(e) => {
                     let file_hash = file_hash_from_bytes(&file_bytes);
                     let _ = tx.send(WorkerResponse::CommitDone(Err(CommitFailure {
-                        error: friendly_error(&e, lang),
+                        error: e.to_string(),
                         project_path: project_path_clone,
                         chain_uuid,
                         file_hash,
@@ -1387,9 +1518,7 @@ impl App {
     fn do_verify(&mut self, ctx: &egui::Context) {
         if self.selected_project.is_empty() {
             self.verify_status = VerifyStatus::Invalid;
-            self.verify_details = self
-                .tr("Проект не выбран", "No project selected")
-                .to_string();
+            self.verify_details = VerifyDetailsState::NoProjectSelected;
             return;
         }
 
@@ -1397,7 +1526,7 @@ impl App {
             Ok(dir) => dir,
             Err(err) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!("⚠️ {err}");
+                self.verify_details = VerifyDetailsState::Warning(err);
                 return;
             }
         };
@@ -1407,11 +1536,7 @@ impl App {
             Ok(contents) => contents,
             Err(e) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!(
-                    "⚠️ {}: {}",
-                    self.tr("Не удалось прочитать проект", "Failed to read the project"),
-                    e
-                );
+                self.verify_details = VerifyDetailsState::ReadProjectFailed(e.to_string());
                 return;
             }
         };
@@ -1419,11 +1544,7 @@ impl App {
             Ok(project) => project,
             Err(e) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = format!(
-                    "⚠️ {}: {}",
-                    self.tr("Не удалось разобрать проект", "Failed to parse the project"),
-                    e
-                );
+                self.verify_details = VerifyDetailsState::ParseProjectFailed(e.to_string());
                 return;
             }
         };
@@ -1431,23 +1552,19 @@ impl App {
             Ok(id) => id,
             Err(_) => {
                 self.verify_status = VerifyStatus::Partial;
-                self.verify_details = self
-                    .tr("⚠️ Неправильный chain_id", "⚠️ Invalid chain_id")
-                    .to_string();
+                self.verify_details = VerifyDetailsState::InvalidChainId;
                 return;
             }
         };
 
         self.loading_verify_chain = true;
-        self.verify_details = self.tr("⏳ Проверка...", "⏳ Verifying...").to_string();
+        self.verify_details = VerifyDetailsState::Verifying;
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
-            let result =
-                client::verify_chain(&client, chain_id).map_err(|e| friendly_error(&e, lang));
+            let result = client::verify_chain(&client, chain_id).map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::VerifyChainDone(result));
             ctx.request_repaint();
         });
@@ -1460,10 +1577,9 @@ impl App {
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
-            let result = client::fetch_capabilities(&client).map_err(|e| friendly_error(&e, lang));
+            let result = client::fetch_capabilities(&client).map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::AccountFetchDone(result));
             ctx.request_repaint();
         });
@@ -1472,16 +1588,15 @@ impl App {
     fn start_dev_change_plan(&mut self, ctx: &egui::Context, account_id: Uuid, plan: String) {
         self.loading_dev_change_plan = true;
         self.dev_change_plan_error = None;
-        self.dev_change_plan_message = None;
+        self.dev_plan_change = None;
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
             let result = client
                 .dev_change_plan(account_id, &plan)
-                .map_err(|e| friendly_error(&e, lang));
+                .map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::DevChangePlanDone(result));
             ctx.request_repaint();
         });
@@ -1493,38 +1608,32 @@ impl App {
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
-            let result = client.backup_list().map_err(|e| friendly_error(&e, lang));
+            let result = client.backup_list().map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::BackupListDone(result));
             ctx.request_repaint();
         });
     }
 
     /// Resolves chain_id from `selected_project` → `project.json`, same sequence as commit/verify.
-    fn resolve_selected_project_chain_id(&self) -> Result<Uuid, String> {
-        let invalid_chain_msg = self.tr(
-            "Не найдена действительная цепочка для выбранного проекта. Сначала откройте или создайте проект.",
-            "No valid chain found for the selected project. Open or create a project first.",
-        );
-
+    fn resolve_selected_project_chain_id(&self) -> Result<Uuid, UiText> {
         if self.selected_project.is_empty() {
-            return Err(invalid_chain_msg.to_string());
+            return Err(UiText::InvalidProjectChain);
         }
 
-        let projects_dir = self.projects_dir().map_err(|_| invalid_chain_msg.to_string())?;
+        let projects_dir = self.projects_dir().map_err(|_| UiText::InvalidProjectChain)?;
         let project_path = projects_dir.join(&self.selected_project);
         let project_file = project_path.join("project.json");
         let project_json = match fs::read_to_string(&project_file) {
             Ok(contents) => contents,
-            Err(_) => return Err(invalid_chain_msg.to_string()),
+            Err(_) => return Err(UiText::InvalidProjectChain),
         };
         let project: Project = match serde_json::from_str(&project_json) {
             Ok(project) => project,
-            Err(_) => return Err(invalid_chain_msg.to_string()),
+            Err(_) => return Err(UiText::InvalidProjectChain),
         };
-        Uuid::parse_str(&project.chain_id).map_err(|_| invalid_chain_msg.to_string())
+        Uuid::parse_str(&project.chain_id).map_err(|_| UiText::InvalidProjectChain)
     }
 
     fn write_backup_download_file(backup_id: Uuid, bytes: &[u8]) -> Result<PathBuf, String> {
@@ -1595,27 +1704,21 @@ impl App {
         let snapshot = match parse_snapshot(&bytes) {
             Ok(snapshot) => snapshot,
             Err(e) => {
-                self.backup_restore_error = Some(e);
+                self.backup_restore_error = Some(UiText::Raw(e));
                 return;
             }
         };
         let backup_summary = match snapshot.head_summary() {
             Some(summary) => summary,
             None => {
-                self.backup_restore_error = Some(
-                    self.tr(
-                        "Некорректный снимок резервной копии",
-                        "Invalid backup snapshot",
-                    )
-                    .to_string(),
-                );
+                self.backup_restore_error = Some(UiText::InvalidBackupSnapshot);
                 return;
             }
         };
         let evident_dir = match Self::evident_dir_path() {
             Ok(path) => path,
             Err(e) => {
-                self.backup_restore_error = Some(e);
+                self.backup_restore_error = Some(UiText::Raw(e));
                 return;
             }
         };
@@ -1655,17 +1758,16 @@ impl App {
     fn start_backup_restore_download(&mut self, ctx: &egui::Context, backup_id: Uuid) {
         self.loading_backup_restore_download = Some(backup_id.to_string());
         self.backup_restore_error = None;
-        self.backup_restore_message = None;
+        self.backup_restore_summary = None;
         self.pending_restore = None;
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
             let result = client
                 .backup_download(backup_id)
-                .map_err(|e| friendly_error(&e, lang))
+                .map_err(|e| e.to_string())
                 .map(|bytes| (backup_id, bytes));
             let _ = tx.send(WorkerResponse::BackupRestoreDownloadDone(result));
             ctx.request_repaint();
@@ -1686,7 +1788,7 @@ impl App {
             Ok(path) => path,
             Err(e) => {
                 self.loading_backup_restore = None;
-                self.backup_restore_error = Some(e);
+                self.backup_restore_error = Some(UiText::Raw(e));
                 return;
             }
         };
@@ -1707,12 +1809,11 @@ impl App {
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
             let result = client
                 .backup_create(chain_id)
-                .map_err(|e| friendly_error(&e, lang));
+                .map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::BackupCreateDone(result));
             ctx.request_repaint();
         });
@@ -1721,16 +1822,15 @@ impl App {
     fn start_backup_download(&mut self, ctx: &egui::Context, backup_id: Uuid) {
         self.loading_backup_download = Some(backup_id.to_string());
         self.backup_download_error = None;
-        self.backup_download_message = None;
+        self.backup_download_path = None;
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
-        let lang = self.lang;
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
             let result = client
                 .backup_download(backup_id)
-                .map_err(|e| friendly_error(&e, lang))
+                .map_err(|e| e.to_string())
                 .map(|bytes| (backup_id, bytes));
             let _ = tx.send(WorkerResponse::BackupDownloadDone(result));
             ctx.request_repaint();
@@ -1806,21 +1906,16 @@ impl eframe::App for App {
                         Ok(result) => {
                             if result.valid {
                                 self.verify_status = VerifyStatus::Valid;
-                                self.verify_details = self
-                                    .tr("✅ Доказательство действительно", "✅ Proof is valid")
-                                    .to_string();
+                                self.verify_details = VerifyDetailsState::ProofValid;
                             } else {
                                 self.verify_status = VerifyStatus::Invalid;
-                                self.verify_details = result.errors.join("; ");
+                                self.verify_details =
+                                    VerifyDetailsState::ServerErrors(result.errors.join("; "));
                             }
                         }
                         Err(e) => {
                             self.verify_status = VerifyStatus::Partial;
-                            self.verify_details = format!(
-                                "{}: {}",
-                                self.tr("⚠️ Ошибка проверки", "⚠️ Verification error"),
-                                e
-                            );
+                            self.verify_details = VerifyDetailsState::VerifyFailed(e);
                         }
                     }
                 }
@@ -1829,17 +1924,11 @@ impl eframe::App for App {
                     match res {
                         Ok(json) => {
                             self.account_data = Some(json);
+                            self.clear_localized_status();
                         }
                         Err(e) => {
                             self.account_data = None;
-                            self.status = format!(
-                                "{}: {}",
-                                self.tr(
-                                    "⚠️ Не удалось загрузить аккаунт",
-                                    "⚠️ Failed to load account"
-                                ),
-                                e
-                            );
+                            self.set_localized_status(UiText::AccountLoadFailed(e));
                         }
                     }
                 }
@@ -1848,17 +1937,15 @@ impl eframe::App for App {
                     match res {
                         Ok(response) => {
                             self.dev_change_plan_error = None;
-                            self.dev_change_plan_message = Some(format!(
-                                "{}: {} → {}",
-                                self.tr("План изменён", "Plan changed"),
+                            self.dev_plan_change = Some((
                                 response.old_plan,
-                                response.new_plan
+                                response.new_plan,
                             ));
                             self.start_account_fetch(ui.ctx());
                         }
                         Err(e) => {
-                            self.dev_change_plan_message = None;
-                            self.dev_change_plan_error = Some(e);
+                            self.dev_plan_change = None;
+                            self.dev_change_plan_error = Some(UiText::Raw(e));
                         }
                     }
                 }
@@ -1884,7 +1971,7 @@ impl eframe::App for App {
                             self.backup_list_error = None;
                         }
                         Err(e) => {
-                            self.backup_create_error = Some(e);
+                            self.backup_create_error = Some(UiText::Raw(e));
                         }
                     }
                 }
@@ -1895,21 +1982,18 @@ impl eframe::App for App {
                             match Self::write_backup_download_file(backup_id, &bytes) {
                                 Ok(path) => {
                                     self.backup_download_error = None;
-                                    self.backup_download_message = Some(format!(
-                                        "{} {}",
-                                        self.tr("Сохранено:", "Downloaded to:"),
-                                        path.display()
-                                    ));
+                                    self.backup_download_path =
+                                        Some(path.display().to_string());
                                 }
                                 Err(e) => {
-                                    self.backup_download_error = Some(e);
-                                    self.backup_download_message = None;
+                                    self.backup_download_error = Some(UiText::Raw(e));
+                                    self.backup_download_path = None;
                                 }
                             }
                         }
                         Err(e) => {
-                            self.backup_download_error = Some(e);
-                            self.backup_download_message = None;
+                            self.backup_download_error = Some(UiText::Raw(e));
+                            self.backup_download_path = None;
                         }
                     }
                 }
@@ -1921,7 +2005,7 @@ impl eframe::App for App {
                             self.decide_restore_after_download(&ctx, backup_id, bytes);
                         }
                         Err(e) => {
-                            self.backup_restore_error = Some(e);
+                            self.backup_restore_error = Some(UiText::Raw(e));
                         }
                     }
                 }
@@ -1930,12 +2014,11 @@ impl eframe::App for App {
                     match res {
                         Ok(summary) => {
                             self.backup_restore_error = None;
-                            self.backup_restore_message =
-                                Some(self.format_restore_success(&summary));
+                            self.backup_restore_summary = Some(summary);
                         }
                         Err(e) => {
-                            self.backup_restore_error = Some(e);
-                            self.backup_restore_message = None;
+                            self.backup_restore_error = Some(UiText::Raw(e));
+                            self.backup_restore_summary = None;
                         }
                     }
                 }
@@ -2004,6 +2087,7 @@ impl eframe::App for App {
                             self.last_proof = client::fetch_proof(&report_client, chain_uuid).ok();
 
                             self.step = Step::Done;
+                            self.commit_error = None;
                             self.status = self
                                 .tr("✅ Фиксация завершена", "✅ Commit complete")
                                 .to_string();
@@ -2023,7 +2107,8 @@ impl eframe::App for App {
                                 ),
                             );
                             self.step = Step::Failed;
-                            self.status = format!("❌ {}", failure.error);
+                            self.commit_error = Some(failure.error);
+                            self.status.clear();
                         }
                     }
                 }
@@ -2155,17 +2240,17 @@ impl eframe::App for App {
                                 let plan_choice = self.dev_selected_plan.clone();
                                 self.start_dev_change_plan(&ctx, account_id, plan_choice);
                             } else {
-                                self.dev_change_plan_error = Some(self.tr(
-                                    "Не удалось определить account_id",
-                                    "Could not determine account_id",
-                                ).to_string());
+                                self.dev_change_plan_error = Some(UiText::AccountIdMissing);
                             }
                         }
-                        if let Some(msg) = &self.dev_change_plan_message {
-                            ui.colored_label(egui::Color32::from_rgb(0, 140, 0), msg);
+                        if let Some((old_plan, new_plan)) = &self.dev_plan_change {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(0, 140, 0),
+                                self.render_dev_plan_changed(old_plan, new_plan),
+                            );
                         }
                         if let Some(err) = &self.dev_change_plan_error {
-                            ui.colored_label(egui::Color32::RED, err);
+                            ui.colored_label(egui::Color32::RED, self.render_ui_text(err));
                         }
                     }
                 } else {
@@ -2173,6 +2258,9 @@ impl eframe::App for App {
                         "Не удалось загрузить данные аккаунта",
                         "Failed to load account data",
                     ));
+                    if let Some(text) = &self.status_localized {
+                        ui.colored_label(egui::Color32::RED, self.render_ui_text(text));
+                    }
                 }
 
                 if !self.loading_account {
@@ -2199,6 +2287,9 @@ impl eframe::App for App {
                         "Не удалось загрузить данные аккаунта",
                         "Failed to load account data",
                     ));
+                    if let Some(text) = &self.status_localized {
+                        ui.colored_label(egui::Color32::RED, self.render_ui_text(text));
+                    }
                     if ui.button(self.tr("Обновить", "Refresh")).clicked() {
                         let ctx = ui.ctx().clone();
                         self.start_account_fetch(&ctx);
@@ -2275,21 +2366,25 @@ impl eframe::App for App {
                             }
                         }
                         if let Some(err) = &self.backup_create_error {
-                            ui.label(err);
+                            ui.label(self.render_ui_text(err));
                         }
 
-                        if let Some(msg) = &self.backup_download_message {
-                            ui.label(msg);
+                        if let Some(path) = &self.backup_download_path {
+                            ui.label(format!(
+                                "{} {}",
+                                self.tr("Сохранено:", "Downloaded to:"),
+                                path
+                            ));
                         }
                         if let Some(err) = &self.backup_download_error {
-                            ui.label(err);
+                            ui.label(self.render_ui_text(err));
                         }
 
                         if let Some(err) = &self.backup_restore_error {
-                            ui.label(err);
+                            ui.label(self.render_ui_text(err));
                         }
-                        if let Some(msg) = &self.backup_restore_message {
-                            for line in msg.lines() {
+                        if let Some(summary) = &self.backup_restore_summary {
+                            for line in self.format_restore_success(summary).lines() {
                                 ui.label(line);
                             }
                         }
@@ -2301,7 +2396,7 @@ impl eframe::App for App {
                                 "Не удалось загрузить резервные копии",
                                 "Failed to load backups",
                             ));
-                            ui.label(err);
+                            ui.label(self.render_pass_through_error(err));
                             if ui.button(self.tr("Обновить", "Refresh")).clicked() {
                                 let ctx = ui.ctx().clone();
                                 self.start_backup_list_fetch(&ctx);
@@ -2360,10 +2455,8 @@ impl eframe::App for App {
                                                     backup_id,
                                                 );
                                             } else {
-                                                self.backup_download_error = Some(self.tr(
-                                                    "Некорректный идентификатор резервной копии",
-                                                    "Invalid backup id",
-                                                ).to_string());
+                                                self.backup_download_error =
+                                                    Some(UiText::InvalidBackupId);
                                             }
                                         }
                                         if ui
@@ -2378,10 +2471,8 @@ impl eframe::App for App {
                                                     backup_id,
                                                 );
                                             } else {
-                                                self.backup_restore_error = Some(self.tr(
-                                                    "Некорректный идентификатор резервной копии",
-                                                    "Invalid backup id",
-                                                ).to_string());
+                                                self.backup_restore_error =
+                                                    Some(UiText::InvalidBackupId);
                                             }
                                         }
                                     });
@@ -3314,7 +3405,14 @@ ui.add_space(12.0);
                 }
 
                 ui.add_space(8.0);
-                ui.label(&self.status);
+                let status_text = if let Some(err) = &self.commit_error {
+                    format!("❌ {}", self.render_pass_through_error(err))
+                } else {
+                    self.render_status()
+                };
+                if !status_text.is_empty() {
+                    ui.label(&status_text);
+                }
 
                 if self.step == Step::Done {
                     ui.add_space(12.0);
@@ -3482,18 +3580,18 @@ ui.add_space(12.0);
                 match self.verify_status {
                     VerifyStatus::Valid => {
                         ui.colored_label(COLOR_VALID, self.tr("✅ ДЕЙСТВИТЕЛЬНО", "✅ VALID"));
-                        ui.colored_label(COLOR_VALID, &self.verify_details);
+                        ui.colored_label(COLOR_VALID, self.render_verify_details());
                     }
                     VerifyStatus::Invalid => {
                         ui.colored_label(
                             COLOR_INVALID,
                             self.tr("❌ НЕДЕЙСТВИТЕЛЬНО", "❌ INVALID"),
                         );
-                        ui.colored_label(COLOR_INVALID, &self.verify_details);
+                        ui.colored_label(COLOR_INVALID, self.render_verify_details());
                     }
                     VerifyStatus::Partial => {
                         ui.colored_label(COLOR_PARTIAL, self.tr("⚠️ ЧАСТИЧНО", "⚠️ PARTIAL"));
-                        ui.colored_label(COLOR_PARTIAL, &self.verify_details);
+                        ui.colored_label(COLOR_PARTIAL, self.render_verify_details());
                     }
                     _ => {}
                 }
