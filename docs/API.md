@@ -223,7 +223,21 @@ sequence
 
 Returns the primary proof artifact for an event.
 
-### Response
+### Snapshot semantics
+
+Proof reflects the **chain state at the moment this event was committed**, not the
+current chain head:
+
+- **Merkle root** — computed from events with `sequence <=` this event's `sequence`
+  (prefix ending at the target event).
+- **Signature message** — `chain_id:merkle_root:chain_head` where `chain_head` is
+  **this event's** `event_id`, not the latest event in the chain.
+
+Later events appended to the chain do not change proof returned for earlier events.
+The server may recompute proof on read; Ed25519 signatures are deterministic for
+fixed inputs.
+
+### Response when proof is ready
 
 ```json
 {
@@ -239,7 +253,23 @@ Returns the primary proof artifact for an event.
   "signature": "",
   "public_key": "",
   "tsa": null,
-  "created_at": ""
+  "created_at": "",
+  "proof_status": "anchored",
+  "request_id": ""
+}
+```
+
+### Response when proof material is not yet available
+
+HTTP **200 OK** (the event exists — do not use `404`):
+
+```json
+{
+  "event_id": "",
+  "chain_id": "",
+  "sequence": 0,
+  "proof_status": "pending",
+  "request_id": ""
 }
 ```
 

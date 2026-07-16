@@ -72,7 +72,8 @@ async fn main() {
         .nest("/chains", api::chains::router(state.clone()))
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
-        .nest("/identity", api::identity::router(state.clone()));
+        .nest("/identity", api::identity::router(state.clone()))
+        .nest("/v1", api::v1::router(state.clone()));
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Evident Ledger running on http://{}", addr);

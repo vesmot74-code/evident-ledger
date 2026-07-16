@@ -62,6 +62,62 @@ impl IntoResponse for LedgerError {
     }
 }
 
+/// Ensures chain exists and `account_id` may append to it.
+pub async fn ensure_chain_access_in_tx(
+    conn: &mut sqlx::PgConnection,
+    account_id: Uuid,
+    chain_id: Uuid,
+) -> Result<(), LedgerError> {
+    #[derive(sqlx::FromRow)]
+    struct ChainRow {
+        account_id: Option<Uuid>,
+    }
+
+    let inserted = sqlx::query_as::<_, ChainRow>(
+        r#"
+        INSERT INTO chains (chain_id, head_event_id, account_id)
+        VALUES ($1, NULL, $2)
+        ON CONFLICT (chain_id) DO NOTHING
+        RETURNING account_id
+        "#,
+    )
+    .bind(chain_id)
+    .bind(account_id)
+    .fetch_optional(&mut *conn)
+    .await?;
+
+    let chain = match inserted {
+        Some(row) => row,
+        None => sqlx::query_as::<_, ChainRow>(
+            r#"
+            SELECT account_id
+            FROM chains
+            WHERE chain_id = $1
+            FOR UPDATE
+            "#,
+        )
+        .bind(chain_id)
+        .fetch_optional(&mut *conn)
+        .await?
+        .ok_or(LedgerError::ChainNotFound)?,
+    };
+
+    match chain.account_id {
+        Some(owner) if owner != account_id => Err(LedgerError::ChainAccessDenied),
+        None => {
+            sqlx::query(
+                "UPDATE chains SET account_id = $1 WHERE chain_id = $2",
+            )
+            .bind(account_id)
+            .bind(chain_id)
+            .execute(&mut *conn)
+            .await?;
+            Ok(())
+        }
+        _ => Ok(()),
+    }
+}
+
 pub async fn submit_event(
     pool: &PgPool,
     signer: &ServerSigner,
@@ -70,58 +126,9 @@ pub async fn submit_event(
 ) -> Result<Value, LedgerError> {
     let mut tx = pool.begin().await?;
 
-    #[derive(sqlx::FromRow)]
-    struct ChainRow {
-        chain_id: Uuid,
-        head_event_id: Option<Uuid>,
-        account_id: Option<Uuid>,
-    }
+    ensure_chain_access_in_tx(&mut *tx, account_id, req.chain_id).await?;
 
-    let chain = sqlx::query_as::<_, ChainRow>(
-        r#"
-        INSERT INTO chains (chain_id, head_event_id, account_id)
-        VALUES ($1, NULL, $2)
-        ON CONFLICT (chain_id) DO NOTHING
-        RETURNING chain_id, head_event_id, account_id
-        "#,
-    )
-    .bind(req.chain_id)
-    .bind(account_id)
-    .fetch_optional(&mut *tx)
-    .await?;
-
-    let chain = match chain {
-        Some(chain) => chain,
-        None => sqlx::query_as::<_, ChainRow>(
-            r#"
-                SELECT chain_id, head_event_id, account_id
-                FROM chains
-                WHERE chain_id = $1
-                FOR UPDATE
-                "#,
-        )
-        .bind(req.chain_id)
-        .fetch_optional(&mut *tx)
-        .await?
-        .ok_or(LedgerError::ChainNotFound)?,
-    };
-
-    // проверка владения цепочкой
-    match chain.account_id {
-        Some(owner) if owner != account_id => return Err(LedgerError::ChainAccessDenied),
-        None => {
-            sqlx::query!(
-                "UPDATE chains SET account_id = $1 WHERE chain_id = $2",
-                account_id,
-                req.chain_id
-            )
-            .execute(&mut *tx)
-            .await?;
-        }
-        _ => {}
-    }
-
-    // 2. CHECK idempotency
+    // legacy idempotency (chain_id + body key)
     if let Some(existing) = sqlx::query!(
         r#"
         SELECT event_id, file_hash
@@ -134,15 +141,35 @@ pub async fn submit_event(
     .fetch_optional(&mut *tx)
     .await?
     {
+        let head_event_id: Option<Uuid> = sqlx::query_scalar(
+            "SELECT head_event_id FROM chains WHERE chain_id = $1",
+        )
+        .bind(req.chain_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(LedgerError::DatabaseError)?;
+
         return Ok(json!({
             "event_id": existing.event_id,
             "chain_id": req.chain_id,
-            "head_event_id": chain.head_event_id,
+            "head_event_id": head_event_id,
             "cached": true
         }));
     }
 
-    // usage-лимиты: гарантируем существование строки за текущий месяц и блокируем её
+    let (event_id, sequence) = insert_event_in_tx(&mut *tx, pool, account_id, &req).await?;
+    tx.commit().await?;
+
+    finalize_event_submission(pool, signer, req.chain_id, event_id, sequence).await
+}
+
+/// Inserts a ledger event inside an open transaction (no commit).
+pub async fn insert_event_in_tx(
+    conn: &mut sqlx::PgConnection,
+    pool: &PgPool,
+    account_id: Uuid,
+    req: &SubmitEventRequest,
+) -> Result<(Uuid, i64), LedgerError> {
     sqlx::query!(
         r#"
         INSERT INTO usage_monthly (account_id, period_start)
@@ -151,7 +178,7 @@ pub async fn submit_event(
         "#,
         account_id
     )
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
 
     let usage = sqlx::query!(
@@ -163,7 +190,7 @@ pub async fn submit_event(
         "#,
         account_id
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
 
     // Capabilities читаются вне транзакции tx (это отдельный pool-запрос,
@@ -190,8 +217,21 @@ pub async fn submit_event(
         return Err(LedgerError::QualifiedTsaUnavailable);
     }
 
-    let parent_event_id = chain.head_event_id.unwrap_or(Uuid::nil());
+    let head_event_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT head_event_id FROM chains WHERE chain_id = $1",
+    )
+    .bind(req.chain_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(LedgerError::DatabaseError)?;
 
+    let parent_event_id = head_event_id.unwrap_or(Uuid::nil());
+
+    // Sequence is assigned inside the open transaction while the chain row is locked
+    // (FOR UPDATE in ensure_chain_access_in_tx), so concurrent commits on the same
+    // chain_id get strictly monotonic sequence numbers.
+    // TODO(Stage 3): add DB constraint UNIQUE (chain_id, sequence) as defense-in-depth
+    // for alternate write paths (bulk-import, admin tools) that bypass this tx lock.
     let sequence = sqlx::query_scalar!(
         r#"
         SELECT COALESCE(MAX(sequence), 0) + 1
@@ -200,7 +240,7 @@ pub async fn submit_event(
         "#,
         req.chain_id
     )
-    .fetch_one(&mut *tx)
+    .fetch_one(&mut *conn)
     .await?;
 
     let event_id = Uuid::new_v4();
@@ -223,10 +263,12 @@ pub async fn submit_event(
         parent_event_id,
         req.file_hash,
         req.idempotency_key,
+        // TODO(Stage 3): persist server signature here; currently proof signs ephemerally
+        // in ProofContext::load / finalize_event_submission and is not stored per event.
         "",
         sequence
     )
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
 
     // 5. update head
@@ -239,7 +281,7 @@ pub async fn submit_event(
         event_id,
         req.chain_id
     )
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
 
     // usage: резервируем commit и TSA-запрос заранее, атомарно, до сетевого вызова TSA
@@ -252,14 +294,21 @@ pub async fn submit_event(
         "#,
         account_id
     )
-    .execute(&mut *tx)
+    .execute(&mut *conn)
     .await?;
 
-    tx.commit().await?;
+    Ok((event_id, sequence.unwrap_or(1)))
+}
 
-    // Сначала делаем TSA stamp (синхронно) — квота уже зарезервирована выше
-    if let Some(root) = compute_chain_root(pool, req.chain_id).await {
-        crate::tsa_worker::stamp_chain(pool, req.chain_id, &root, event_id).await;
+async fn finalize_event_submission(
+    pool: &PgPool,
+    signer: &ServerSigner,
+    chain_id: Uuid,
+    event_id: Uuid,
+    sequence: i64,
+) -> Result<Value, LedgerError> {
+    if let Some(root) = compute_chain_root(pool, chain_id).await {
+        crate::tsa_worker::stamp_chain(pool, chain_id, &root, event_id).await;
     }
 
     // Потом получаем TSA из БД
@@ -269,7 +318,7 @@ pub async fn submit_event(
         FROM tsa_tokens
         WHERE chain_id = $1 AND event_id = $2
         "#,
-        req.chain_id,
+        chain_id,
         event_id
     )
     .fetch_optional(pool)
@@ -283,14 +332,14 @@ pub async fn submit_event(
         WHERE chain_id = $1
         ORDER BY sequence ASC
         "#,
-        req.chain_id
+        chain_id
     )
     .fetch_all(pool)
     .await?;
 
     let root = crate::merkle::MerkleTree::recompute_root_from_events(&events);
     let chain_head = event_id.to_string();
-    let signature = signer.sign_root(&req.chain_id.to_string(), &root, &chain_head);
+    let signature = signer.sign_root(&chain_id.to_string(), &root, &chain_head);
     let public_key = signer.public_key_hex();
 
     let event_payloads: Vec<Value> = events
@@ -308,7 +357,7 @@ pub async fn submit_event(
     Ok(json!({
         "leaf_version": crate::proof_format::LEAF_VERSION,
         "event_id": event_id,
-        "chain_id": req.chain_id,
+        "chain_id": chain_id,
         "head_event_id": event_id,
         "sequence": sequence,
         "cached": false,
@@ -336,7 +385,7 @@ pub fn spawn_tsa_stamp(pool: PgPool, chain_id: Uuid, merkle_root: String, head_e
     });
 }
 
-async fn compute_chain_root(pool: &PgPool, chain_id: Uuid) -> Option<String> {
+pub async fn compute_chain_root(pool: &PgPool, chain_id: Uuid) -> Option<String> {
     let events = sqlx::query_as!(
         crate::db::EventRow,
         r#"
