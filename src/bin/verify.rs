@@ -72,8 +72,20 @@ fn main() {
         process::exit(1);
     }
 
-    let content = std::fs::read_to_string(&args[1]).expect("Cannot read file");
-    let proof_file: ProofFile = serde_json::from_str(&content).expect("Invalid JSON");
+    let content = match std::fs::read_to_string(&args[1]) {
+        Ok(content) => content,
+        Err(e) => {
+            eprintln!("Cannot read proof file: {e}");
+            process::exit(1);
+        }
+    };
+    let proof_file: ProofFile = match serde_json::from_str(&content) {
+        Ok(proof_file) => proof_file,
+        Err(e) => {
+            eprintln!("Invalid proof JSON: {e}");
+            process::exit(1);
+        }
+    };
 
     reject_unversioned(
         proof_file.proof.version.as_deref(),

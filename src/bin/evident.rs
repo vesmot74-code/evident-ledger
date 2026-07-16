@@ -199,10 +199,26 @@ fn run() -> Result<(), CliError> {
             cmd_commit(&path, &chain_id)
         }
         Some("verify") => {
-            let proof_path = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident verify <proof.json>".into()))?;
-            cmd_verify(&proof_path)
+            let first = args.next().ok_or_else(|| {
+                CliError::Usage(
+                    "usage: evident verify <proof.json> | evident verify --chain <chain_id>"
+                        .into(),
+                )
+            })?;
+            if first == "--chain" {
+                let chain_id = args.next().ok_or_else(|| {
+                    CliError::Usage(
+                        "usage: evident verify <proof.json> | evident verify --chain <chain_id>"
+                            .into(),
+                    )
+                })?;
+                Uuid::parse_str(&chain_id)
+                    .map_err(|_| CliError::Usage("invalid chain id".into()))?;
+                let proof_path = find_latest_proof_artifact(&chain_id)?;
+                cmd_verify(&proof_path.to_string_lossy())
+            } else {
+                cmd_verify(&first)
+            }
         }
         Some("account") => match args.next().as_deref() {
             None => cmd_account(),
