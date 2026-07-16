@@ -13,6 +13,7 @@ pub enum LedgerError {
     ChainAccessDenied,
     ParentMismatch,
     DuplicateIdempotencyKey,
+    DuplicateChainSequence,
     UsageLimitExceeded,
     TsaLimitExceeded,
     QualifiedTsaUnavailable,
@@ -24,6 +25,9 @@ impl From<sqlx::Error> for LedgerError {
         if let sqlx::Error::Database(ref db_err) = err {
             if db_err.constraint() == Some("uniq_idempotency") {
                 return LedgerError::DuplicateIdempotencyKey;
+            }
+            if db_err.constraint() == Some("events_chain_sequence_unique") {
+                return LedgerError::DuplicateChainSequence;
             }
         }
         LedgerError::DatabaseError(err)
@@ -44,6 +48,10 @@ impl IntoResponse for LedgerError {
             LedgerError::DuplicateIdempotencyKey => {
                 (StatusCode::CONFLICT, "Duplicate idempotency key")
             }
+            LedgerError::DuplicateChainSequence => (
+                StatusCode::CONFLICT,
+                "Duplicate sequence for chain",
+            ),
             LedgerError::UsageLimitExceeded => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Monthly commit limit exceeded for your tariff plan",
@@ -229,9 +237,8 @@ pub async fn insert_event_in_tx(
 
     // Sequence is assigned inside the open transaction while the chain row is locked
     // (FOR UPDATE in ensure_chain_access_in_tx), so concurrent commits on the same
-    // chain_id get strictly monotonic sequence numbers.
-    // TODO(Stage 3): add DB constraint UNIQUE (chain_id, sequence) as defense-in-depth
-    // for alternate write paths (bulk-import, admin tools) that bypass this tx lock.
+    // chain_id get strictly monotonic sequence numbers. Defense-in-depth:
+    // events_chain_sequence_unique (see migrations/20260717104600_*).
     let sequence = sqlx::query_scalar!(
         r#"
         SELECT COALESCE(MAX(sequence), 0) + 1
@@ -406,4 +413,160 @@ pub async fn compute_chain_root(pool: &PgPool, chain_id: Uuid) -> Option<String>
     Some(crate::merkle::MerkleTree::recompute_root_from_events(
         &events,
     ))
+}
+
+#[cfg(test)]
+mod sequence_constraint_tests {
+    use super::*;
+    use sqlx::postgres::PgPoolOptions;
+    use uuid::Uuid;
+
+    async fn test_pool() -> PgPool {
+        dotenvy::dotenv().ok();
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL required for sequence constraint tests");
+        PgPoolOptions::new()
+            .max_connections(4)
+            .connect(&database_url)
+            .await
+            .expect("db connect")
+    }
+
+    async fn dev_account_id(pool: &PgPool) -> Uuid {
+        sqlx::query_scalar("SELECT account_id FROM accounts LIMIT 1")
+            .fetch_one(pool)
+            .await
+            .expect("dev account")
+    }
+
+    async fn insert_event_row(
+        pool: &PgPool,
+        chain_id: Uuid,
+        event_id: Uuid,
+        sequence: i64,
+        idempotency_key: &str,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            r#"
+            INSERT INTO events (
+                event_id, chain_id, parent_event_id, file_hash,
+                idempotency_key, signature, sequence
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(event_id)
+        .bind(chain_id)
+        .bind(Uuid::nil())
+        .bind("aa".repeat(32))
+        .bind(idempotency_key)
+        .bind("")
+        .bind(sequence)
+        .execute(pool)
+        .await
+        .map(|_| ())
+    }
+
+    #[tokio::test]
+    async fn duplicate_chain_sequence_maps_to_ledger_error() {
+        let pool = test_pool().await;
+        let account_id = dev_account_id(&pool).await;
+        let chain_id = Uuid::new_v4();
+
+        sqlx::query(
+            "INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, NULL, $2)",
+        )
+        .bind(chain_id)
+        .bind(account_id)
+        .execute(&pool)
+        .await
+        .expect("chain");
+
+        insert_event_row(
+            &pool,
+            chain_id,
+            Uuid::new_v4(),
+            1,
+            &format!("seq-test-1-{}", Uuid::new_v4()),
+        )
+        .await
+        .expect("first insert");
+
+        let err = insert_event_row(
+            &pool,
+            chain_id,
+            Uuid::new_v4(),
+            1,
+            &format!("seq-test-dup-{}", Uuid::new_v4()),
+        )
+        .await
+        .expect_err("duplicate sequence must fail");
+
+        assert!(
+            matches!(
+                LedgerError::from(err),
+                LedgerError::DuplicateChainSequence
+            ),
+            "unique violation must map to DuplicateChainSequence"
+        );
+
+        let _ = sqlx::query("DELETE FROM events WHERE chain_id = $1")
+            .bind(chain_id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM chains WHERE chain_id = $1")
+            .bind(chain_id)
+            .execute(&pool)
+            .await;
+    }
+
+    #[tokio::test]
+    async fn concurrent_duplicate_sequence_inserts_one_fails_with_mapped_error() {
+        let pool = test_pool().await;
+        let account_id = dev_account_id(&pool).await;
+        let chain_id = Uuid::new_v4();
+
+        sqlx::query(
+            "INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, NULL, $2)",
+        )
+        .bind(chain_id)
+        .bind(account_id)
+        .execute(&pool)
+        .await
+        .expect("chain");
+
+        let pool_a = pool.clone();
+        let pool_b = pool.clone();
+        let key_a = format!("seq-concurrent-a-{}", Uuid::new_v4());
+        let key_b = format!("seq-concurrent-b-{}", Uuid::new_v4());
+
+        let (left, right) = tokio::join!(
+            insert_event_row(&pool_a, chain_id, Uuid::new_v4(), 1, &key_a),
+            insert_event_row(&pool_b, chain_id, Uuid::new_v4(), 1, &key_b),
+        );
+
+        let outcomes = [left, right];
+        let oks = outcomes.iter().filter(|r| r.is_ok()).count();
+        let mapped = outcomes
+            .into_iter()
+            .filter_map(|r| r.err())
+            .map(LedgerError::from)
+            .collect::<Vec<_>>();
+
+        assert_eq!(oks, 1, "exactly one concurrent insert should succeed");
+        assert_eq!(mapped.len(), 1);
+        assert!(
+            matches!(mapped[0], LedgerError::DuplicateChainSequence),
+            "failed insert must map to DuplicateChainSequence"
+        );
+
+        let _ = sqlx::query("DELETE FROM events WHERE chain_id = $1")
+            .bind(chain_id)
+            .execute(&pool)
+            .await;
+        let _ = sqlx::query("DELETE FROM chains WHERE chain_id = $1")
+            .bind(chain_id)
+            .execute(&pool)
+            .await;
+    }
 }

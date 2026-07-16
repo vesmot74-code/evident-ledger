@@ -92,7 +92,8 @@ fn map_ledger_error(err: LedgerError) -> ApiError {
         LedgerError::ChainNotFound | LedgerError::ChainAccessDenied => ApiError::NotFound,
         LedgerError::UsageLimitExceeded | LedgerError::TsaLimitExceeded => ApiError::Internal,
         LedgerError::QualifiedTsaUnavailable => ApiError::Internal,
-        LedgerError::ParentMismatch | LedgerError::DuplicateIdempotencyKey => ApiError::Conflict,
+        LedgerError::ParentMismatch | LedgerError::DuplicateIdempotencyKey
+        | LedgerError::DuplicateChainSequence => ApiError::Conflict,
         LedgerError::DatabaseError(_) => ApiError::Internal,
     }
 }
@@ -193,5 +194,19 @@ pub async fn submit_v1_event(
 async fn post_commit_tsa(pool: &PgPool, chain_id: Uuid, event_id: Uuid) {
     if let Some(root) = crate::service::ledger::compute_chain_root(pool, chain_id).await {
         crate::tsa_worker::stamp_chain(pool, chain_id, &root, event_id).await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::service::ledger::LedgerError;
+
+    #[test]
+    fn duplicate_chain_sequence_maps_to_api_conflict() {
+        assert_eq!(
+            map_ledger_error(LedgerError::DuplicateChainSequence),
+            ApiError::Conflict
+        );
     }
 }
