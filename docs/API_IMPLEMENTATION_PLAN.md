@@ -559,20 +559,56 @@ Before starting backend implementation, confirm:
 
 ---
 
+## Canonical request hashing for Idempotency-Key
+
+Status: Resolved
+
+The Idempotency layer requires a deterministic request_hash calculation.
+
+The purpose of request_hash is to identify whether repeated
+POST /v1/events requests contain the same logical request body.
+
+The hash calculation MUST satisfy:
+
+- Same logical JSON request MUST produce the same request_hash.
+- JSON key ordering MUST NOT affect the hash result.
+- The algorithm MUST be deterministic across environments.
+- The implementation MUST NOT depend on undefined JSON serialization order.
+
+Decision:
+
+The Idempotency layer MUST use a dedicated canonical JSON serializer,
+designed specifically for request hashing, combined with SHA-256 to
+produce request_hash as a lowercase hex digest
+(consistent with the data format rules defined elsewhere in this document).
+
+The serializer MUST:
+
+- sort object keys deterministically (lexicographic order);
+- produce stable output across runs and environments;
+- preserve array element ordering as-is (no reordering of array items);
+- generate identical output for identical logical requests regardless
+  of input field order.
+
+```text
+request_hash = lowercase_hex(SHA-256(canonical_json(request_body)))
+```
+
+The existing `freeze::canonical_json` helper MUST NOT be reused for
+Idempotency hashing. It was designed for a different subsystem, its
+determinism guarantees are not part of the Idempotency contract, and
+it is not confirmed to sort object keys lexicographically.
+
+Reason:
+
+A dedicated serializer removes ambiguity and prevents incorrect
+duplicate-event creation caused by unstable or inconsistent request
+hashes. Reusing a helper built for another subsystem's needs would tie
+the Idempotency contract to guarantees that were never made for it.
+
+---
+
 ## Open questions
-
-### `request_hash` canonical JSON serialization
-
-Target: SHA-256 hex of canonical JSON with lexicographically sorted object keys, no whitespace.
-
-The codebase has `src/freeze.rs::canonical_json` (serde serialization of typed structs). It does **not** sort keys for arbitrary JSON request bodies.
-
-**Decision required before Stage 2 implementation:**
-
-- Which function/library performs lexicographic key sorting for idempotency?
-- Options to evaluate: dedicated canonical-JSON helper, existing crate, or explicit recursive sort + `serde_json::to_string`.
-
-Until decided, Stage 2 must not ship with an implicit default.
 
 ### Verification rate limiting
 
