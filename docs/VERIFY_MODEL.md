@@ -300,6 +300,115 @@ Public verification is an existence proof interface, not an audit history interf
 
 ---
 
+### Public Verification Security Boundary
+
+#### Public Lookup Source
+
+Public verification MUST query only the public proof registry.
+
+The public verification layer MUST NOT access:
+
+- events;
+- chains;
+- internal proof state;
+- account data;
+- private evidence metadata.
+
+The public proof registry is a materialized public projection.
+It is not the source of truth for evidence integrity.
+
+#### Existence Disclosure Rule
+
+Public verification exposes only whether a currently enabled public proof exists.
+
+The public API MUST NOT reveal:
+
+- submission history;
+- pending state;
+- failed state;
+- disabled public proofs;
+- internal lifecycle transitions.
+
+Public verification answers only:
+"Is there a currently valid public proof?"
+
+It does not answer:
+"Was this hash ever submitted?"
+
+#### Response Contract
+
+Found and not found responses MUST:
+
+- use the same HTTP status code;
+- use the same JSON schema;
+- differ only by public verification values.
+
+The public verification layer MUST NOT use HTTP status differences
+to indicate proof existence.
+
+Expected behavior:
+
+- `200 + verified=true`
+- `200 + verified=false`
+
+#### Forbidden Disclosure Fields
+
+Public verification responses MUST NOT contain:
+
+- event_id;
+- chain_id;
+- account_id;
+- internal proof_id;
+- sequence numbers;
+- merkle roots;
+- signatures;
+- internal timestamps;
+- storage paths;
+- database identifiers.
+
+Internal identifiers MUST NOT be exposed through:
+
+- JSON response body;
+- HTTP headers;
+- generated public URLs.
+
+#### Timing Disclosure
+
+Found and not found verification paths SHOULD minimize observable
+timing differences.
+
+The implementation MUST avoid unnecessary branching that exposes
+internal lookup state.
+
+If database-level constant-time lookup is not available,
+the residual timing risk MUST be documented.
+
+#### Rate Limit Policy
+
+Public verification is anonymous.
+No API key is required.
+
+Rate limiting is enforced using network-level controls.
+
+Minimum protection:
+
+- per-IP request limiting;
+- burst protection;
+- abuse monitoring.
+
+IP-based limiting alone is not considered a complete
+anti-enumeration solution.
+
+#### Hash Enumeration Threat
+
+Public verification MUST assume that attackers may attempt
+large-scale hash existence queries.
+
+The system MUST NOT expose additional metadata that increases
+the value of enumeration attempts.
+
+---
+
 ## 5. Reuse Rule for Future Public API
 
 > The future public layer **must not implement its own verification logic**.
