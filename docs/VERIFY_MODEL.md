@@ -233,7 +233,17 @@ Properties:
 - Public verification MUST NOT expose proof count or internal proof relationships.
 - The same file hash MUST resolve to the same canonical public proof while the selected proof remains enabled.
 
-The canonical proof is deterministic and independent from database ordering.
+#### Canonical Proof Immutability (first-materialized-wins)
+
+Once a canonical public proof is materialized for a `file_hash` (first successful row in `public_proofs` with `enabled = true`), that binding is **fixed** while `enabled = true`.
+
+- The `ORDER BY created_at ASC` rule applies **only** when selecting the first candidate at initial materialization — not on every request, and not after an active canonical row already exists for that hash.
+- A later internal proof for the same `file_hash` becoming `Anchored` does **not** replace the canonical public proof (first-materialized-wins).
+- `public_id` is assigned **once** at materialization — not recomputed per request. This preserves "same hash → same public proof while enabled" without re-evaluating canonical selection on each lookup.
+
+Re-materialization runs only when no active canonical row exists (never materialized, or previous canonical was disabled with `enabled = false`). Proofs explicitly disabled (`enabled = false` row for a given `proof_id`) are not auto-reactivated.
+
+The canonical proof is deterministic given materialization history; it is not re-derived from live database ordering on each call.
 
 #### Status Visibility Rule
 
