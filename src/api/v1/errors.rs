@@ -34,6 +34,8 @@ pub enum ApiError {
     NotFound,
     Conflict,
     InvalidRequest,
+    ProofNotReady,
+    ProofGenerationFailed,
     Internal,
     NotImplemented,
 }
@@ -46,6 +48,8 @@ impl ApiError {
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::Conflict => StatusCode::CONFLICT,
             ApiError::InvalidRequest => StatusCode::BAD_REQUEST,
+            ApiError::ProofNotReady => StatusCode::CONFLICT,
+            ApiError::ProofGenerationFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ApiError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         }
@@ -58,6 +62,8 @@ impl ApiError {
             ApiError::NotFound => "not_found",
             ApiError::Conflict => "conflict",
             ApiError::InvalidRequest => "invalid_request",
+            ApiError::ProofNotReady => "proof_not_ready",
+            ApiError::ProofGenerationFailed => "proof_generation_failed",
             ApiError::Internal => "internal_error",
             ApiError::NotImplemented => "not_implemented",
         }
@@ -70,6 +76,8 @@ impl ApiError {
             ApiError::NotFound => "Resource not found",
             ApiError::Conflict => "Request conflict",
             ApiError::InvalidRequest => "Invalid request",
+            ApiError::ProofNotReady => "Proof material is not yet available for this event",
+            ApiError::ProofGenerationFailed => "Proof generation failed for this event",
             ApiError::Internal => "Internal server error",
             ApiError::NotImplemented => "Not implemented",
         }
@@ -135,5 +143,45 @@ mod tests {
         assert_eq!(json["error"]["code"], "unauthorized");
         assert_eq!(json["error"]["request_id"], request_id.to_string());
         assert!(json["error"]["message"].is_string());
+    }
+
+    #[tokio::test]
+    async fn proof_not_ready_serializes_with_request_id() {
+        let request_id = Uuid::new_v4();
+        let response = REQUEST_ID
+            .scope(request_id, async {
+                ApiError::ProofNotReady.into_response()
+            })
+            .await;
+
+        assert_eq!(response.status(), StatusCode::CONFLICT);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let json: Value = serde_json::from_slice(&body).expect("json body");
+
+        assert_eq!(json["error"]["code"], "proof_not_ready");
+        assert_eq!(json["error"]["request_id"], request_id.to_string());
+    }
+
+    #[tokio::test]
+    async fn proof_generation_failed_serializes_with_request_id() {
+        let request_id = Uuid::new_v4();
+        let response = REQUEST_ID
+            .scope(request_id, async {
+                ApiError::ProofGenerationFailed.into_response()
+            })
+            .await;
+
+        assert_eq!(response.status(), StatusCode::UNPROCESSABLE_ENTITY);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("response body");
+        let json: Value = serde_json::from_slice(&body).expect("json body");
+
+        assert_eq!(json["error"]["code"], "proof_generation_failed");
+        assert_eq!(json["error"]["request_id"], request_id.to_string());
     }
 }
