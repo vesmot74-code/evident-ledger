@@ -11,6 +11,7 @@ pub mod merkle;
 pub mod models;
 pub mod product;
 pub mod proof_format;
+pub mod public_proof;
 pub mod sac;
 pub mod sac_pdf;
 pub mod service;

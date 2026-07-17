@@ -25,6 +25,7 @@ dotenvy = "0.15"
 sha2 = "0.10"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
+bs58 = "0.5"
 hex = "0.4"
 reqwest = { version = "0.12", features = ["blocking", "json"] }
 notary-tsa = { path = "vendor/notary-tsa" }
