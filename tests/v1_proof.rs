@@ -311,3 +311,192 @@ fn v1_proof_foreign_event_returns_404() {
 
     cleanup_chain(chain_id);
 }
+
+fn set_event_signature(event_id: Uuid, signature: &str) {
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query("UPDATE events SET signature = $1 WHERE event_id = $2")
+            .bind(signature)
+            .bind(event_id)
+            .execute(&pool)
+            .await
+            .expect("update signature");
+    });
+}
+
+fn tamper_event_file_hash(event_id: Uuid, new_hash: &str) {
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query("UPDATE events SET file_hash = $1 WHERE event_id = $2")
+            .bind(new_hash)
+            .bind(event_id)
+            .execute(&pool)
+            .await
+            .expect("tamper file_hash");
+    });
+}
+
+fn seed_owned_event_empty_signature(owner_account_id: Uuid) -> (Uuid, Uuid) {
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let chain_id = Uuid::new_v4();
+    let event_id = Uuid::new_v4();
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query(
+            "INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, $2, $3)",
+        )
+        .bind(chain_id)
+        .bind(event_id)
+        .bind(owner_account_id)
+        .execute(&pool)
+        .await
+        .expect("seed chain");
+        sqlx::query(
+            r#"
+            INSERT INTO events (
+                event_id, chain_id, parent_event_id, file_hash,
+                idempotency_key, signature, sequence
+            )
+            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            "#,
+        )
+        .bind(event_id)
+        .bind(chain_id)
+        .bind(Uuid::nil())
+        .bind(valid_hash("legacy-empty-signature"))
+        .bind(format!("legacy-empty-{event_id}"))
+        .bind("")
+        .bind(1_i64)
+        .execute(&pool)
+        .await
+        .expect("seed event");
+    });
+    (chain_id, event_id)
+}
+
+#[test]
+fn v1_post_event_happy_path_returns_anchored() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("post-anchored-regression"),
+        &format!("post-anchored-{}", Uuid::new_v4()),
+    );
+    assert_eq!(created["proof_status"], "anchored");
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_get_proof_valid_signature_returns_anchored() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("proof-anchored-regression"),
+        &format!("proof-anchored-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "anchored");
+    assert!(body.get("merkle_root").is_some());
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_get_proof_invalid_signature_returns_failed() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("proof-invalid-sig"),
+        &format!("proof-invalid-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    set_event_signature(event_id, &"aa".repeat(64));
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "failed");
+    assert!(body.get("merkle_root").is_none());
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_get_proof_legacy_empty_signature_returns_pending() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    let owner = account_id_for_api_key(&api_key);
+    ensure_machine_plan(owner);
+
+    let (chain_id, event_id) = seed_owned_event_empty_signature(owner);
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "pending");
+    assert!(body.get("merkle_root").is_none());
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_get_proof_tampered_prefix_returns_failed() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("proof-tampered"),
+        &format!("proof-tampered-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    tamper_event_file_hash(event_id, &valid_hash("tampered-hash"));
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "failed");
+
+    cleanup_chain(chain_id);
+}

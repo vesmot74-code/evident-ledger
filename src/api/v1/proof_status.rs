@@ -117,10 +117,10 @@ mod tests {
     }
 
     #[test]
-    fn merkle_with_invalid_signature_is_pending() {
+    fn failure_signal_priority_returns_failed() {
         assert_eq!(
-            derive_proof_status(&ctx(true, true, false, false)),
-            ProofStatus::Pending
+            derive_proof_status(&ctx(true, true, false, true)),
+            ProofStatus::Failed
         );
     }
 

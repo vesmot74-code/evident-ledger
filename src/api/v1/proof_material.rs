@@ -32,6 +32,29 @@ use super::event_access::Event;
 use super::errors::ApiError;
 use super::proof_status::{derive_proof_status, ProofContext, ProofStatus};
 
+/// Runtime failure conditions 1 and 2 (Stage 4 §3 PR1). TSA (condition 4) is PR2.
+pub(crate) fn detect_failure_signal(ctx: &ProofContext) -> bool {
+    (ctx.signature_present && !ctx.signature_valid)
+        || (!ctx.merkle_root_present && ctx.signature_present)
+}
+
+fn proof_context_from_parts(
+    merkle_root_present: bool,
+    signature_present: bool,
+    signature_valid: bool,
+) -> ProofContext {
+    let partial = ProofContext {
+        merkle_root_present,
+        signature_present,
+        signature_valid,
+        failure_signal: false,
+    };
+    ProofContext {
+        failure_signal: detect_failure_signal(&partial),
+        ..partial
+    }
+}
+
 #[derive(Debug, sqlx::FromRow)]
 struct EventChainRow {
     event_id: Uuid,
@@ -105,14 +128,16 @@ pub fn build_proof_snapshot(
             &public_key,
         );
 
-    let failure_signal = false; // Stage 3+: persisted failure sources
-
-    let context = ProofContext {
+    // Commit path: failure conditions are structurally impossible after
+    // atomic signing (merkle + signature always both present and valid
+    // by construction). Helper is applied here to keep the invariant
+    // aligned with the read path, not because commit-time failures are
+    // expected.
+    let context = proof_context_from_parts(
         merkle_root_present,
         signature_present,
         signature_valid,
-        failure_signal,
-    };
+    );
 
     ProofSnapshot {
         merkle_root,
@@ -145,14 +170,11 @@ pub fn build_proof_snapshot_read(
             public_key,
         );
 
-    let failure_signal = false; // Stage 4 §3: failure_signal sources
-
-    let context = ProofContext {
+    let context = proof_context_from_parts(
         merkle_root_present,
         signature_present,
         signature_valid,
-        failure_signal,
-    };
+    );
 
     ProofSnapshot {
         merkle_root,
@@ -354,7 +376,13 @@ mod tests {
         let chain_id = Uuid::new_v4();
         let event_id = Uuid::new_v4();
 
-        let snapshot = build_proof_snapshot(&signer, chain_id, event_id, &[]);
+        let snapshot = build_proof_snapshot_read(
+            chain_id,
+            event_id,
+            &[],
+            "",
+            &signer.public_key_hex(),
+        );
         assert_eq!(derive_proof_status(&snapshot.context), ProofStatus::Pending);
 
         let event = Event {
@@ -371,6 +399,85 @@ mod tests {
         assert_eq!(body["proof_status"], "pending");
         assert_eq!(body["event_id"], event_id.to_string());
         assert!(body.get("merkle_root").is_none());
+    }
+
+    #[test]
+    fn empty_prefix_non_empty_signature_is_failed() {
+        let signer = ServerSigner::load_or_create("target/test_empty_prefix_sig.key");
+        let chain_id = Uuid::new_v4();
+        let event_id = Uuid::new_v4();
+
+        let snapshot = build_proof_snapshot_read(
+            chain_id,
+            event_id,
+            &[],
+            "bb".repeat(64).as_str(),
+            &signer.public_key_hex(),
+        );
+        assert_eq!(derive_proof_status(&snapshot.context), ProofStatus::Failed);
+    }
+
+    #[test]
+    fn detect_failure_signal_invalid_signature() {
+        let ctx = ProofContext {
+            merkle_root_present: true,
+            signature_present: true,
+            signature_valid: false,
+            failure_signal: false,
+        };
+        assert!(detect_failure_signal(&ctx));
+    }
+
+    #[test]
+    fn detect_failure_signal_merkle_missing_with_signature() {
+        let ctx = ProofContext {
+            merkle_root_present: false,
+            signature_present: true,
+            signature_valid: true,
+            failure_signal: false,
+        };
+        assert!(detect_failure_signal(&ctx));
+    }
+
+    #[test]
+    fn detect_failure_signal_incomplete_material_is_not_failure() {
+        let ctx = ProofContext {
+            merkle_root_present: false,
+            signature_present: false,
+            signature_valid: false,
+            failure_signal: false,
+        };
+        assert!(!detect_failure_signal(&ctx));
+    }
+
+    #[test]
+    fn detect_failure_signal_valid_signature_is_not_failure() {
+        let ctx = ProofContext {
+            merkle_root_present: true,
+            signature_present: true,
+            signature_valid: true,
+            failure_signal: false,
+        };
+        assert!(!detect_failure_signal(&ctx));
+    }
+
+    #[test]
+    fn invalid_persisted_signature_read_path_is_failed() {
+        let signer = ServerSigner::load_or_create("target/test_invalid_persisted_sig.key");
+        let chain_id = Uuid::new_v4();
+        let e1 = Uuid::new_v4();
+        let parent = Uuid::nil();
+        let hash = "ee".repeat(32);
+        let prefix = vec![row(e1, parent, 1, &hash)];
+
+        let snapshot = build_proof_snapshot_read(
+            chain_id,
+            e1,
+            &prefix,
+            "aa".repeat(64).as_str(),
+            &signer.public_key_hex(),
+        );
+        assert_eq!(derive_proof_status(&snapshot.context), ProofStatus::Failed);
     }
 
     #[test]
