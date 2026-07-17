@@ -11,6 +11,7 @@ mod hash_attestation_pdf;
 mod merkle;
 mod models;
 mod proof_format;
+mod public_proof;
 mod sac;
 mod sac_pdf;
 mod service;
@@ -37,6 +38,7 @@ async fn serve_whitepaper_pdf() -> impl axum::response::IntoResponse {
 
 #[tokio::main]
 async fn main() {
+    tracing_subscriber::fmt::init();
     dotenvy::dotenv().ok();
 
     let pool = db::create_pool().await;

@@ -24,6 +24,16 @@ pub enum PublicProofError {
     Database(sqlx::Error),
 }
 
+impl std::fmt::Display for PublicProofError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Database(err) => write!(f, "{err}"),
+        }
+    }
+}
+
+impl std::error::Error for PublicProofError {}
+
 impl From<sqlx::Error> for PublicProofError {
     fn from(value: sqlx::Error) -> Self {
         Self::Database(value)

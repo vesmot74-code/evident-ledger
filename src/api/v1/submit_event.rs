@@ -148,7 +148,7 @@ pub async fn submit_v1_event(
 
     let ledger_req = SubmitEventRequest {
         chain_id: body.chain_id,
-        file_hash,
+        file_hash: file_hash.clone(),
         idempotency_key: idempotency_key.to_string(),
         parent_event_id: None,
     };
@@ -193,6 +193,13 @@ pub async fn submit_v1_event(
 
     tx.commit().await.map_err(|_| ApiError::Internal)?;
 
+    // Strategy (b): public materialization runs after the anchoring commit, in a separate
+    // transaction inside `on_proof_anchored`. Failures are non-fatal — the public layer is
+    // a derived projection and must not block core event submission when materialization fails.
+    if proof_status == ProofStatus::Anchored {
+        materialize_public_proof_after_anchor(pool, event_id, &file_hash).await;
+    }
+
     post_commit_tsa(pool, body.chain_id, event_id).await;
 
     Ok((StatusCode::OK, response_json))
@@ -201,6 +208,21 @@ pub async fn submit_v1_event(
 async fn post_commit_tsa(pool: &PgPool, chain_id: Uuid, event_id: Uuid) {
     if let Some(root) = crate::service::ledger::compute_chain_root(pool, chain_id).await {
         crate::tsa_worker::stamp_chain(pool, chain_id, &root, event_id).await;
+    }
+}
+
+async fn materialize_public_proof_after_anchor(
+    pool: &PgPool,
+    proof_id: Uuid,
+    file_hash: &str,
+) {
+    if let Err(err) = crate::public_proof::on_proof_anchored(pool, proof_id, file_hash).await {
+        tracing::error!(
+            proof_id = %proof_id,
+            file_hash = %file_hash,
+            error = %err,
+            "public proof materialization failed after anchor"
+        );
     }
 }
 
@@ -215,5 +237,15 @@ mod tests {
             map_ledger_error(LedgerError::DuplicateChainSequence),
             ApiError::Conflict
         );
+    }
+
+    #[tokio::test]
+    async fn materialization_failure_does_not_panic_or_propagate() {
+        use sqlx::postgres::PgPoolOptions;
+
+        let pool = PgPoolOptions::new()
+            .connect_lazy("postgres://127.0.0.1:1/nonexistent")
+            .expect("lazy pool");
+        materialize_public_proof_after_anchor(&pool, Uuid::new_v4(), &"a".repeat(64)).await;
     }
 }
