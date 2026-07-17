@@ -41,3 +41,4 @@ proofs/
 
 # Local backup snapshots
 data/backups/
+*.zip
