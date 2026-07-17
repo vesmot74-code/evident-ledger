@@ -103,7 +103,7 @@ fn cleanup_chain(chain_id: Uuid, file_hash: &str) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        let _ = sqlx::query("DELETE FROM public_proofs WHERE file_hash = $1")
+        let _ = sqlx::query("DELETE FROM public_proof_materialization WHERE file_hash = $1")
             .bind(file_hash)
             .execute(&pool)
             .await;
@@ -156,34 +156,33 @@ fn v1_submit_anchored_event_materializes_public_proof() {
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
 
-        let registry_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM public_proof_registry WHERE id = $1 AND file_hash = $2",
+        let materialization_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM public_proof_materialization WHERE internal_proof_id = $1 AND file_hash = $2",
         )
         .bind(event_id)
+        .bind(&file_hash)
+        .fetch_one(&pool)
+        .await
+        .expect("materialization count");
+        assert_eq!(materialization_count, 1);
+
+        let registry_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM public_proof_registry WHERE file_hash = $1 AND enabled = true",
+        )
         .bind(&file_hash)
         .fetch_one(&pool)
         .await
         .expect("registry count");
         assert_eq!(registry_count, 1);
 
-        let public_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM public_proofs WHERE proof_id = $1 AND file_hash = $2 AND enabled = true",
+        let public_proof_id: String = sqlx::query_scalar(
+            "SELECT public_proof_id FROM public_proof_registry WHERE file_hash = $1",
         )
-        .bind(event_id)
         .bind(&file_hash)
         .fetch_one(&pool)
         .await
-        .expect("public count");
-        assert_eq!(public_count, 1);
-
-        let public_id: String = sqlx::query_scalar(
-            "SELECT public_id FROM public_proofs WHERE proof_id = $1",
-        )
-        .bind(event_id)
-        .fetch_one(&pool)
-        .await
-        .expect("public_id");
-        assert!(public_id.starts_with("pv_"));
+        .expect("public_proof_id");
+        assert!(public_proof_id.starts_with("pv_"));
     });
 
     cleanup_chain(chain_id, &file_hash);
@@ -211,14 +210,14 @@ fn v1_submit_idempotent_replay_does_not_duplicate_public_proof() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        let public_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM public_proofs WHERE proof_id = $1",
+        let registry_count: i64 = sqlx::query_scalar(
+            "SELECT COUNT(*) FROM public_proof_registry WHERE file_hash = $1",
         )
-        .bind(event_id)
+        .bind(&file_hash)
         .fetch_one(&pool)
         .await
-        .expect("public count");
-        assert_eq!(public_count, 1);
+        .expect("registry count");
+        assert_eq!(registry_count, 1);
     });
 
     cleanup_chain(chain_id, &file_hash);

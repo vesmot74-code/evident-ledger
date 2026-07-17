@@ -1,4 +1,3 @@
-use axum::{routing::get, Router};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
@@ -9,8 +8,10 @@ mod db;
 mod hash_attestation;
 mod hash_attestation_pdf;
 mod merkle;
+mod middleware;
 mod models;
 mod proof_format;
+mod public_certificate_pdf;
 mod public_proof;
 mod sac;
 mod sac_pdf;
@@ -53,34 +54,50 @@ async fn main() {
     let state = state::AppState {
         db: pool,
         signer,
-        config,
+        config: config.clone(),
     };
 
-    let app = Router::new()
+    let rate_limits =
+        state::rate_limiter::PublicRateLimitState::from_config(config.trust_proxy_headers);
+    let public_routes = api::public_verify::public_router(state.clone(), rate_limits);
+
+    let app = axum::Router::new()
         .route(
             "/",
-            get(|| async { axum::response::Html(include_str!("../static/index.html")) }),
+            axum::routing::get(|| async {
+                axum::response::Html(include_str!("../static/index.html"))
+            }),
         )
         .route(
             "/verify-ui",
-            get(|| async { axum::response::Html(include_str!("../static/verify.html")) }),
+            axum::routing::get(|| async {
+                axum::response::Html(include_str!("../static/verify.html"))
+            }),
         )
         .route(
             "/whitepaper",
-            get(|| async { axum::response::Html(include_str!("../static/whitepaper.html")) }),
+            axum::routing::get(|| async {
+                axum::response::Html(include_str!("../static/whitepaper.html"))
+            }),
         )
-        .route("/whitepaper.pdf", get(serve_whitepaper_pdf))
+        .route("/whitepaper.pdf", axum::routing::get(serve_whitepaper_pdf))
         .nest("/account", api::account::router(state.clone()))
         .nest("/backup", api::backup::router(state.clone()))
         .nest("/chains", api::chains::router(state.clone()))
         .nest("/events", api::events::router(state.clone()))
         .nest("/verify", api::verify::router(state.clone()))
         .nest("/identity", api::identity::router(state.clone()))
-        .nest("/v1", api::v1::router(state.clone()));
+        .nest("/v1", api::v1::router(state.clone()))
+        .nest("/public", public_routes);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Evident Ledger running on http://{}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await
+    .unwrap();
 }

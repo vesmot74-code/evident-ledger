@@ -3,6 +3,7 @@ use std::env;
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub dev_mode: bool,
+    pub trust_proxy_headers: bool,
 }
 
 impl AppConfig {
@@ -14,6 +15,13 @@ impl AppConfig {
                 .map(|v| v.eq_ignore_ascii_case("development"))
                 .unwrap_or(false);
 
-        Self { dev_mode }
+        let trust_proxy_headers = env::var("TRUST_PROXY_HEADERS")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(false);
+
+        Self {
+            dev_mode,
+            trust_proxy_headers,
+        }
     }
 }

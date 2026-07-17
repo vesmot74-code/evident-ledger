@@ -84,3 +84,15 @@ Organizations deploying Evident Ledger should maintain appropriate:
 - Compliance processes.
 
 Cryptographic evidence is strongest when combined with proper operational security.
+
+---
+
+## Public Verification Rate Limiting
+
+Rate limiting is IP-based and per-instance (in-memory).
+It is a mitigating control against casual abuse and scraping,
+not a hard guarantee against distributed or botnet-based probing.
+
+Public endpoints (`GET /public/verify`, `GET /public/verify/:public_proof_id/certificate.pdf`)
+use separate fixed-window limits per client identity (hashed IP, optionally User-Agent).
+`TRUST_PROXY_HEADERS` defaults to `false`; forwarded headers are ignored unless explicitly enabled.

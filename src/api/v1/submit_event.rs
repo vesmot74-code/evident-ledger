@@ -8,6 +8,7 @@ use uuid::Uuid;
 use crate::models::event::SubmitEventRequest;
 use crate::service::capabilities::get_account_capabilities;
 use crate::service::ledger::{ensure_chain_access_in_tx, insert_event_in_tx, LedgerError};
+use crate::public_proof::tsa_class_from_plan;
 use crate::signing::ServerSigner;
 
 use super::errors::ApiError;
@@ -119,6 +120,7 @@ pub async fn submit_v1_event(
         .await
         .map_err(|_| ApiError::Internal)?;
     let trust_level = trust_level_from_plan(&capabilities.plan_name);
+    let tsa_class = tsa_class_from_plan(&capabilities.plan_name);
     let file_hash = normalized_file_hash(&body.file_hash);
 
     let request_hash = request_hash(&V1SubmitEventRequest {
@@ -197,7 +199,7 @@ pub async fn submit_v1_event(
     // transaction inside `on_proof_anchored`. Failures are non-fatal — the public layer is
     // a derived projection and must not block core event submission when materialization fails.
     if proof_status == ProofStatus::Anchored {
-        materialize_public_proof_after_anchor(pool, event_id, &file_hash).await;
+        materialize_public_proof_after_anchor(pool, event_id, &file_hash, tsa_class).await;
     }
 
     post_commit_tsa(pool, body.chain_id, event_id).await;
@@ -215,8 +217,9 @@ async fn materialize_public_proof_after_anchor(
     pool: &PgPool,
     proof_id: Uuid,
     file_hash: &str,
+    tsa_class: &str,
 ) {
-    if let Err(err) = crate::public_proof::on_proof_anchored(pool, proof_id, file_hash).await {
+    if let Err(err) = crate::public_proof::on_proof_anchored(pool, proof_id, file_hash, tsa_class).await {
         tracing::error!(
             proof_id = %proof_id,
             file_hash = %file_hash,
@@ -246,6 +249,6 @@ mod tests {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://127.0.0.1:1/nonexistent")
             .expect("lazy pool");
-        materialize_public_proof_after_anchor(&pool, Uuid::new_v4(), &"a".repeat(64)).await;
+        materialize_public_proof_after_anchor(&pool, Uuid::new_v4(), &"a".repeat(64), "basic").await;
     }
 }

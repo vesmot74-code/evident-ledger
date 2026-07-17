@@ -1,5 +1,3 @@
-use crate::hash_attestation::build_hash_attestation;
-use crate::hash_attestation_pdf::render_hash_attestation_pdf;
 use crate::sac::SacDocument;
 use crate::service::attestation::build_attestation;
 use crate::service::verification::{export_proof, verify_chain};
@@ -182,36 +180,18 @@ async fn handler_verify_hash(
 }
 
 async fn handler_hash_attestation_pdf(
-    State(state): State<AppState>,
-    Path(hash): Path<String>,
-) -> Result<impl IntoResponse, ApiError> {
-    let hash = hash.trim().to_lowercase();
-    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::BadRequest(
-            "invalid sha256 hash format".to_string(),
-        ));
-    }
-
-    let doc = build_hash_attestation(&state.db, &state.signer, &hash)
-        .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let pdf_bytes = render_hash_attestation_pdf(&doc);
-
-    Ok((
-        [
-            (
-                axum::http::header::CONTENT_TYPE,
-                "application/pdf".to_string(),
-            ),
-            (
-                axum::http::header::CONTENT_DISPOSITION,
-                format!(
-                    "attachment; filename=\"hash-attestation-{}.pdf\"",
-                    &hash[..16]
-                ),
-            ),
-        ],
-        pdf_bytes,
-    ))
+    _state: State<AppState>,
+    _path: Path<String>,
+) -> impl IntoResponse {
+    let request_id = uuid::Uuid::new_v4();
+    (
+        StatusCode::GONE,
+        Json(json!({
+            "error": {
+                "code": "endpoint_deprecated",
+                "message": "This endpoint is no longer available. Use /public/verify for existence checks.",
+                "request_id": request_id.to_string(),
+            }
+        })),
+    )
 }

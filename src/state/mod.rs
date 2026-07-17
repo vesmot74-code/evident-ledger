@@ -3,6 +3,8 @@ use crate::signing::ServerSigner;
 use sqlx::PgPool;
 use std::sync::Arc;
 
+pub mod rate_limiter;
+
 #[derive(Clone)]
 pub struct AppState {
     pub db: PgPool,

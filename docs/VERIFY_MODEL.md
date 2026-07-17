@@ -351,6 +351,48 @@ Expected behavior:
 - `200 + verified=true`
 - `200 + verified=false`
 
+#### Lookup Timing Rule
+
+Public verification MUST minimize observable timing differences
+between verified and not verified responses.
+
+Found and not found paths MUST use the same lookup flow.
+
+Implementation requirement — a single public registry lookup:
+
+```sql
+SELECT public_id
+FROM public_proofs
+WHERE file_hash = $1
+  AND enabled = true
+```
+
+MUST NOT:
+
+- perform existence lookup first and metadata lookup second;
+- return early on not-found before completing the public lookup flow;
+- access internal evidence tables for found cases only.
+
+The public lookup path must remain derived only from the public registry.
+
+#### Hash Validation
+
+Before public registry lookup:
+
+1. Validate SHA256 format.
+2. Validate expected length (64 characters).
+3. Validate hexadecimal encoding.
+4. Normalize hexadecimal characters to lowercase.
+5. Execute public registry lookup using normalized hash.
+
+Invalid hash → `400 Bad Request`, `{"error": "invalid_hash"}`.
+
+Invalid hashes MUST NOT execute database lookup.
+
+Write-side precondition: `file_hash` values written via `on_proof_anchored()`
+MUST be normalized to lowercase hex at write time so read-side normalization
+matches stored registry keys.
+
 #### Forbidden Disclosure Fields
 
 Public verification responses MUST NOT contain:
@@ -374,11 +416,13 @@ Internal identifiers MUST NOT be exposed through:
 
 #### Timing Disclosure
 
-Found and not found verification paths SHOULD minimize observable
+Found and not found verification paths MUST minimize observable
 timing differences.
 
 The implementation MUST avoid unnecessary branching that exposes
 internal lookup state.
+
+See **Lookup Timing Rule** under Response Contract above.
 
 If database-level constant-time lookup is not available,
 the residual timing risk MUST be documented.

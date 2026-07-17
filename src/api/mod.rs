@@ -3,5 +3,6 @@ pub mod backup;
 pub mod chains;
 pub mod events;
 pub mod identity;
+pub mod public_verify;
 pub mod v1;
 pub mod verify;
