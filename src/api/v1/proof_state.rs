@@ -18,6 +18,8 @@ pub struct ResolvedProofState {
     pub status: ProofStatus,
     pub tsa: Option<Value>,
     pub context: ProofContext,
+    /// Commit-time merkle root for prefix verification (Stage 5.3).
+    pub resolved_root: String,
 }
 
 /// Loads TSA state, merges failure signals, and derives API `proof_status`.
@@ -61,6 +63,7 @@ pub async fn resolve_proof_state(
         status,
         tsa,
         context,
+        resolved_root: snapshot.merkle_root.clone(),
     })
 }
 

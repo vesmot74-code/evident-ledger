@@ -1,5 +1,6 @@
 pub mod account;
 pub mod auth;
+pub mod chain_verification;
 pub mod errors;
 pub mod event_access;
 pub mod events;

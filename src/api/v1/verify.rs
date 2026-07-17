@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::state::AppState;
 
 use super::auth::V1Auth;
+use super::chain_verification::verify_chain_prefix;
 use super::errors::ApiError;
 use super::event_access::verify_event_access;
 use super::proof_material::{build_proof_snapshot_read, load_event_prefix};
@@ -50,12 +51,28 @@ async fn handler(
     match resolved.status {
         ProofStatus::Pending => Err(ApiError::ProofNotReady),
         ProofStatus::Failed => Err(ApiError::ProofGenerationFailed),
-        ProofStatus::Anchored => Ok(Json(json!({
-            "event_id": event.event_id,
-            "chain_id": event.chain_id,
-            "sequence": event.sequence,
-            "proof_status": ProofStatus::Anchored.as_str(),
-            "request_id": request_id,
-        }))),
+        ProofStatus::Anchored => {
+            let chain = verify_chain_prefix(
+                event.chain_id,
+                event.event_id,
+                &event.signature,
+                &public_key,
+                &prefix,
+                &resolved.resolved_root,
+            );
+            Ok(Json(json!({
+                "event_id": event.event_id,
+                "chain_id": event.chain_id,
+                "sequence": event.sequence,
+                "proof_status": ProofStatus::Anchored.as_str(),
+                "chain": {
+                    "valid": chain.valid,
+                    "merkle_valid": chain.merkle_valid,
+                    "signature_valid": chain.signature_valid,
+                    "errors": chain.errors,
+                },
+                "request_id": request_id,
+            })))
+        }
     }
 }

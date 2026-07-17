@@ -370,7 +370,7 @@ fn v1_verify_anchored_returns_minimal_body() {
     assert_eq!(body["chain_id"], expected_chain_id.to_string());
     assert_eq!(body["sequence"], expected_sequence);
     assert!(body["request_id"].as_str().is_some());
-    assert!(body.get("chain").is_none());
+    assert_eq!(body["chain"]["valid"], true);
     assert!(body.get("file").is_none());
     assert!(body.get("tsa").is_none());
 
