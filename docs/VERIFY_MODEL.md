@@ -197,15 +197,96 @@ Nothing the caller did not provide is exposed by default.
 
 ---
 
-### Future Public API — `/public/verify`
+### Future Public API — `/public/verify` *(superseded — see Public Verification Model below)*
 
 **Purpose:** Verify existence of a proof by file hash (no ownership).
 
 **Input (planned):** `file_hash`
 
-**Output (planned):** existence, chain count, timestamps, public proof metadata
-
 **Not in scope for Stage 5.5.** Design and implementation are Stage 6.
+
+---
+
+### Public Verification Model
+
+#### Canonical Proof Selection
+
+For a given file hash, the public verification layer exposes only one canonical proof.
+
+Canonical selection rule:
+
+```
+canonical proof =
+    proof
+    WHERE:
+        status = Anchored
+        AND enabled = true
+    ORDER BY:
+        created_at ASC
+    LIMIT 1
+```
+
+Properties:
+
+- Multiple internal proofs MAY exist for the same file hash.
+- Internal proof history remains unchanged.
+- Public verification MUST NOT expose proof count or internal proof relationships.
+- The same file hash MUST resolve to the same canonical public proof while the selected proof remains enabled.
+
+The canonical proof is deterministic and independent from database ordering.
+
+#### Status Visibility Rule
+
+Public verification exposes only externally verifiable existence.
+
+Visibility rules:
+
+```
+Anchored  → verified = true
+Pending   → verified = false (no disclosure)
+Failed    → verified = false (no disclosure)
+Missing   → verified = false
+```
+
+The public API MUST NOT distinguish between:
+
+- proof does not exist;
+- proof exists but is pending;
+- proof exists but failed;
+- proof existed but is no longer publicly enabled.
+
+Reason: internal lifecycle state is private metadata.
+
+Public verification answers only: "Is there a currently valid public proof for this hash?"
+
+It does not answer: "Was this hash previously submitted?"
+
+#### Public Proof Enablement
+
+`enabled` controls public visibility of a proof.
+
+```
+enabled = true  → eligible for canonical selection
+enabled = false → excluded from public verification
+```
+
+Disabling a public proof MUST NOT reveal historical existence.
+
+Public response after disabling:
+
+```json
+{
+  "verified": false
+}
+```
+
+No additional status MUST be returned.
+
+The `enabled` flag is an internal visibility control and is not a public revocation signal.
+
+---
+
+Public verification is an existence proof interface, not an audit history interface.
 
 ---
 
