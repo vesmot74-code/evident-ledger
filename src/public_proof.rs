@@ -47,11 +47,11 @@ pub async fn on_proof_anchored(
 ) -> Result<(), PublicProofError> {
     sqlx::query(
         r#"
-        INSERT INTO proofs (id, file_hash, status)
+        INSERT INTO public_proof_registry (id, file_hash, status)
         VALUES ($1, $2, 'Anchored')
         ON CONFLICT (id) DO UPDATE
         SET status = EXCLUDED.status, file_hash = EXCLUDED.file_hash
-        WHERE proofs.status <> 'Anchored'
+        WHERE public_proof_registry.status <> 'Anchored'
         "#,
     )
     .bind(proof_id)
@@ -112,7 +112,7 @@ async fn sync_canonical_public_proof_in_tx(
 
     if let Some(row) = active {
         let status: Option<String> =
-            sqlx::query_scalar("SELECT status FROM proofs WHERE id = $1")
+            sqlx::query_scalar("SELECT status FROM public_proof_registry WHERE id = $1")
                 .bind(row.proof_id)
                 .fetch_optional(&mut **tx)
                 .await?;
@@ -135,10 +135,10 @@ async fn sync_canonical_public_proof_in_tx(
         return Ok(());
     }
 
-    let candidate = sqlx::query_as::<_, ProofCandidate>(
+    let candidate = sqlx::query_as::<_, PublicProofRecord>(
         r#"
         SELECT id, created_at
-        FROM proofs
+        FROM public_proof_registry
         WHERE file_hash = $1 AND status = 'Anchored'
         ORDER BY created_at ASC
         LIMIT 1
@@ -194,7 +194,7 @@ async fn sync_canonical_public_proof_in_tx(
 }
 
 #[derive(Debug, sqlx::FromRow)]
-struct ProofCandidate {
+struct PublicProofRecord {
     id: Uuid,
     #[allow(dead_code)]
     created_at: DateTime<Utc>,
@@ -237,7 +237,7 @@ mod tests {
     ) {
         sqlx::query(
             r#"
-            INSERT INTO proofs (id, file_hash, status, created_at)
+            INSERT INTO public_proof_registry (id, file_hash, status, created_at)
             VALUES ($1, $2, 'Anchored', $3)
             "#,
         )
@@ -254,7 +254,7 @@ mod tests {
             .bind(file_hash)
             .execute(pool)
             .await;
-        let _ = sqlx::query("DELETE FROM proofs WHERE file_hash = $1")
+        let _ = sqlx::query("DELETE FROM public_proof_registry WHERE file_hash = $1")
             .bind(file_hash)
             .execute(pool)
             .await;
