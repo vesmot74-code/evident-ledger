@@ -17,7 +17,8 @@ fn evident_api_key() -> String {
         }
     }
     fs::read_to_string(
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".evident/api_key"),
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+            .join(".evident/api_key"),
     )
     .expect("EVIDENT_API_KEY or ~/.evident/api_key required")
     .trim()
@@ -63,13 +64,7 @@ fn valid_hash(label: &str) -> String {
     format!("{:x}", Sha256::digest(label.as_bytes()))
 }
 
-fn post_event(
-    client: &Client,
-    api_key: &str,
-    chain_id: Uuid,
-    file_hash: &str,
-    key: &str,
-) -> Value {
+fn post_event(client: &Client, api_key: &str, chain_id: Uuid, file_hash: &str, key: &str) -> Value {
     let resp = client
         .post(format!("{BASE}/v1/events"))
         .header("X-API-KEY", api_key)
@@ -99,8 +94,13 @@ fn cleanup_chain(chain_id: Uuid) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        let _ = sqlx::query("DELETE FROM idempotency_records WHERE response_json->>'chain_id' = $1")
-            .bind(chain_id.to_string())
+        let _ =
+            sqlx::query("DELETE FROM idempotency_records WHERE response_json->>'chain_id' = $1")
+                .bind(chain_id.to_string())
+                .execute(&pool)
+                .await;
+        let _ = sqlx::query("DELETE FROM tsa_tokens WHERE chain_id = $1")
+            .bind(chain_id)
             .execute(&pool)
             .await;
         let _ = sqlx::query("DELETE FROM events WHERE chain_id = $1")
@@ -153,15 +153,13 @@ fn seed_foreign_event(owner_account_id: Uuid) -> (Uuid, Uuid) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        sqlx::query(
-            "INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, $2, $3)",
-        )
-        .bind(chain_id)
-        .bind(event_id)
-        .bind(owner_account_id)
-        .execute(&pool)
-        .await
-        .expect("seed foreign chain");
+        sqlx::query("INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, $2, $3)")
+            .bind(chain_id)
+            .bind(event_id)
+            .bind(owner_account_id)
+            .execute(&pool)
+            .await
+            .expect("seed foreign chain");
         sqlx::query(
             r#"
             INSERT INTO events (
@@ -305,7 +303,11 @@ fn v1_proof_foreign_event_returns_404() {
     let (chain_id, event_id) = seed_foreign_event(foreign_owner);
 
     let resp = get_proof(&client, &api_key, event_id);
-    assert_eq!(resp.status(), 404, "foreign event must not leak proof material");
+    assert_eq!(
+        resp.status(),
+        404,
+        "foreign event must not leak proof material"
+    );
     let body: Value = resp.json().expect("json");
     assert_eq!(body["error"]["code"], "not_found");
 
@@ -350,15 +352,13 @@ fn seed_owned_event_empty_signature(owner_account_id: Uuid) -> (Uuid, Uuid) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        sqlx::query(
-            "INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, $2, $3)",
-        )
-        .bind(chain_id)
-        .bind(event_id)
-        .bind(owner_account_id)
-        .execute(&pool)
-        .await
-        .expect("seed chain");
+        sqlx::query("INSERT INTO chains (chain_id, head_event_id, account_id) VALUES ($1, $2, $3)")
+            .bind(chain_id)
+            .bind(event_id)
+            .bind(owner_account_id)
+            .execute(&pool)
+            .await
+            .expect("seed chain");
         sqlx::query(
             r#"
             INSERT INTO events (
@@ -497,6 +497,180 @@ fn v1_get_proof_tampered_prefix_returns_failed() {
     assert_eq!(resp.status(), 200);
     let body: Value = resp.json().expect("json");
     assert_eq!(body["proof_status"], "failed");
+
+    cleanup_chain(chain_id);
+}
+
+fn delete_tsa_tokens_for_chain(chain_id: Uuid) {
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query("DELETE FROM tsa_tokens WHERE chain_id = $1")
+            .bind(chain_id)
+            .execute(&pool)
+            .await
+            .expect("delete tsa tokens");
+    });
+}
+
+fn seed_valid_tsa_stub(chain_id: Uuid, event_id: Uuid, merkle_root: &str) {
+    use base64::Engine;
+    use evident_ledger::tsa::create_stub_attestation;
+
+    let att = create_stub_attestation(merkle_root, "stub");
+    let token_bytes = base64::engine::general_purpose::STANDARD
+        .decode(att.raw_token_b64.trim())
+        .expect("stub token bytes");
+
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query(
+            r#"
+            INSERT INTO tsa_tokens (chain_id, event_id, merkle_root, tsa_token, tsa_timestamp, tsa_serial)
+            VALUES ($1, $2, $3, $4, $5, $6)
+            ON CONFLICT (chain_id, merkle_root) DO UPDATE
+            SET tsa_token = EXCLUDED.tsa_token,
+                tsa_timestamp = EXCLUDED.tsa_timestamp,
+                tsa_serial = EXCLUDED.tsa_serial
+            "#,
+        )
+        .bind(chain_id)
+        .bind(event_id)
+        .bind(merkle_root)
+        .bind(token_bytes)
+        .bind(att.timestamp)
+        .bind("stub-serial")
+        .execute(&pool)
+        .await
+        .expect("seed tsa");
+    });
+}
+
+fn corrupt_tsa_token(chain_id: Uuid, merkle_root: &str) {
+    use base64::Engine;
+
+    let corrupted = base64::engine::general_purpose::STANDARD.encode(
+        br#"{"stub":true,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}"#,
+    );
+    let token_bytes = base64::engine::general_purpose::STANDARD
+        .decode(corrupted)
+        .expect("corrupted token bytes");
+
+    dotenvy::dotenv().ok();
+    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let rt = tokio::runtime::Runtime::new().expect("runtime");
+    rt.block_on(async {
+        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        sqlx::query(
+            "UPDATE tsa_tokens SET tsa_token = $1 WHERE chain_id = $2 AND merkle_root = $3",
+        )
+        .bind(token_bytes)
+        .bind(chain_id)
+        .bind(merkle_root)
+        .execute(&pool)
+        .await
+        .expect("corrupt tsa token");
+    });
+}
+
+#[test]
+fn v1_get_proof_no_tsa_row_returns_anchored() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("proof-no-tsa"),
+        &format!("proof-no-tsa-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    delete_tsa_tokens_for_chain(chain_id);
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "anchored");
+    assert!(body.get("tsa").unwrap().is_null());
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_get_proof_valid_tsa_returns_anchored() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("proof-valid-tsa"),
+        &format!("proof-valid-tsa-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "anchored");
+    let merkle_root = body["merkle_root"].as_str().unwrap().to_string();
+
+    seed_valid_tsa_stub(chain_id, event_id, &merkle_root);
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "anchored");
+    assert!(body.get("tsa").unwrap().is_object());
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_get_proof_corrupted_tsa_returns_failed() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("proof-bad-tsa"),
+        &format!("proof-bad-tsa-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "anchored");
+    let merkle_root = body["merkle_root"].as_str().unwrap().to_string();
+
+    seed_valid_tsa_stub(chain_id, event_id, &merkle_root);
+    corrupt_tsa_token(chain_id, &merkle_root);
+
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["proof_status"], "failed");
+    assert!(body.get("merkle_root").is_none());
 
     cleanup_chain(chain_id);
 }

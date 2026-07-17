@@ -16,6 +16,7 @@ mod sac_pdf;
 mod service;
 mod signing;
 mod state;
+mod tsa;
 mod tsa_worker;
 
 async fn serve_whitepaper_pdf() -> impl axum::response::IntoResponse {
