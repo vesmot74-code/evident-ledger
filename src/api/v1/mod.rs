@@ -4,6 +4,7 @@ pub mod chain_verification;
 pub mod errors;
 pub mod event_access;
 pub mod events;
+pub mod file_verification;
 pub mod idempotency;
 pub mod proof;
 pub mod proof_material;

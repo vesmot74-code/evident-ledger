@@ -34,6 +34,7 @@ pub enum ApiError {
     NotFound,
     Conflict,
     InvalidRequest,
+    InvalidVerifyFileHash,
     ProofNotReady,
     ProofGenerationFailed,
     Internal,
@@ -48,6 +49,7 @@ impl ApiError {
             ApiError::NotFound => StatusCode::NOT_FOUND,
             ApiError::Conflict => StatusCode::CONFLICT,
             ApiError::InvalidRequest => StatusCode::BAD_REQUEST,
+            ApiError::InvalidVerifyFileHash => StatusCode::BAD_REQUEST,
             ApiError::ProofNotReady => StatusCode::CONFLICT,
             ApiError::ProofGenerationFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ApiError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
@@ -62,6 +64,7 @@ impl ApiError {
             ApiError::NotFound => "not_found",
             ApiError::Conflict => "conflict",
             ApiError::InvalidRequest => "invalid_request",
+            ApiError::InvalidVerifyFileHash => "invalid_request",
             ApiError::ProofNotReady => "proof_not_ready",
             ApiError::ProofGenerationFailed => "proof_generation_failed",
             ApiError::Internal => "internal_error",
@@ -76,6 +79,9 @@ impl ApiError {
             ApiError::NotFound => "Resource not found",
             ApiError::Conflict => "Request conflict",
             ApiError::InvalidRequest => "Invalid request",
+            ApiError::InvalidVerifyFileHash => {
+                "file_hash must be a valid SHA-256 hex string (64 chars, 0-9a-f)"
+            }
             ApiError::ProofNotReady => "Proof material is not yet available for this event",
             ApiError::ProofGenerationFailed => "Proof generation failed for this event",
             ApiError::Internal => "Internal server error",

@@ -1,8 +1,9 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     routing::get,
     Json, Router,
 };
+use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
@@ -12,9 +13,15 @@ use super::auth::V1Auth;
 use super::chain_verification::verify_chain_prefix;
 use super::errors::ApiError;
 use super::event_access::verify_event_access;
+use super::file_verification::{normalize_query_file_hash, verify_file_hash};
 use super::proof_material::{build_proof_snapshot_read, load_event_prefix};
 use super::proof_state::resolve_proof_state;
 use super::proof_status::ProofStatus;
+
+#[derive(Debug, Deserialize)]
+struct VerifyQuery {
+    file_hash: Option<String>,
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -22,14 +29,21 @@ pub fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// `GET /v1/verify/{event_id}` — ownership first, then proof status gating (Stage 5.2).
+/// `GET /v1/verify/{event_id}` — ownership, query validation, proof gating, chain + file.
 async fn handler(
     State(state): State<AppState>,
     auth: V1Auth,
     Path(event_id): Path<Uuid>,
+    Query(query): Query<VerifyQuery>,
 ) -> Result<Json<Value>, ApiError> {
+    // 1. X-API-KEY via V1Auth extractor (above)
+    // 2. Ownership before any query validation (anti-leak).
     let event = verify_event_access(&state.db, auth.0.account_id, event_id).await?;
     let request_id = ApiError::request_id();
+
+    // 3. Validate optional file_hash query before proof_status gating.
+    let provided_file_hash =
+        normalize_query_file_hash(query.file_hash).map_err(|_| ApiError::InvalidVerifyFileHash)?;
 
     let mut conn = state.db.acquire().await.map_err(|_| ApiError::Internal)?;
 
@@ -46,12 +60,14 @@ async fn handler(
         &public_key,
     );
 
+    // 4. Proof status gating.
     let resolved = resolve_proof_state(&state.db, event.chain_id, &event, &snapshot).await?;
 
     match resolved.status {
         ProofStatus::Pending => Err(ApiError::ProofNotReady),
         ProofStatus::Failed => Err(ApiError::ProofGenerationFailed),
         ProofStatus::Anchored => {
+            // 5. Chain verification (Stage 5.3).
             let chain = verify_chain_prefix(
                 event.chain_id,
                 event.event_id,
@@ -60,6 +76,10 @@ async fn handler(
                 &prefix,
                 &resolved.resolved_root,
             );
+
+            // 6. File hash claim verification (Stage 5.4). stored hash never exposed.
+            let file = verify_file_hash(provided_file_hash, &event.file_hash);
+
             Ok(Json(json!({
                 "event_id": event.event_id,
                 "chain_id": event.chain_id,
@@ -70,6 +90,11 @@ async fn handler(
                     "merkle_valid": chain.merkle_valid,
                     "signature_valid": chain.signature_valid,
                     "errors": chain.errors,
+                },
+                "file": {
+                    "provided": file.provided,
+                    "provided_hash": file.provided_hash,
+                    "is_valid_file_hash": file.is_valid_file_hash,
                 },
                 "request_id": request_id,
             })))

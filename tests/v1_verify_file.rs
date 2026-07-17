@@ -1,4 +1,4 @@
-//! Integration tests for GET /v1/verify/{event_id} (Stage 5.2 proof status gating).
+//! Integration tests for `file{}` on GET /v1/verify/{event_id} (Stage 5.4).
 
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
@@ -91,9 +91,18 @@ fn post_event(client: &Client, api_key: &str, chain_id: Uuid, file_hash: &str, k
     resp.json().expect("json")
 }
 
-fn get_verify(client: &Client, api_key: &str, event_id: Uuid) -> reqwest::blocking::Response {
+fn get_verify(
+    client: &Client,
+    api_key: &str,
+    event_id: Uuid,
+    file_hash: Option<&str>,
+) -> reqwest::blocking::Response {
+    let url = match file_hash {
+        Some(hash) => format!("{BASE}/v1/verify/{event_id}?file_hash={hash}"),
+        None => format!("{BASE}/v1/verify/{event_id}"),
+    };
     client
-        .get(format!("{BASE}/v1/verify/{event_id}"))
+        .get(url)
         .header("X-API-KEY", api_key)
         .send()
         .expect("get verify")
@@ -147,7 +156,7 @@ fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
             "INSERT INTO accounts (account_id, email, tariff_plan_id) VALUES ($1, $2, (SELECT plan_id FROM tariff_plans WHERE name = 'free'))",
         )
         .bind(foreign_id)
-        .bind(format!("foreign-verify-{foreign_id}@test.local"))
+        .bind(format!("foreign-verify-file-{foreign_id}@test.local"))
         .execute(&pool)
         .await
         .expect("seed foreign account");
@@ -182,8 +191,8 @@ fn seed_foreign_event(owner_account_id: Uuid) -> (Uuid, Uuid) {
         .bind(event_id)
         .bind(chain_id)
         .bind(Uuid::nil())
-        .bind(valid_hash("foreign-verify-event"))
-        .bind(format!("foreign-verify-{event_id}"))
+        .bind(valid_hash("foreign-verify-file-event"))
+        .bind(format!("foreign-verify-file-{event_id}"))
         .bind("")
         .bind(1_i64)
         .execute(&pool)
@@ -220,8 +229,8 @@ fn seed_owned_event_empty_signature(owner_account_id: Uuid) -> (Uuid, Uuid) {
         .bind(event_id)
         .bind(chain_id)
         .bind(Uuid::nil())
-        .bind(valid_hash("verify-pending-empty-sig"))
-        .bind(format!("verify-pending-{event_id}"))
+        .bind(valid_hash("verify-file-pending-empty-sig"))
+        .bind(format!("verify-file-pending-{event_id}"))
         .bind("")
         .bind(1_i64)
         .execute(&pool)
@@ -231,157 +240,233 @@ fn seed_owned_event_empty_signature(owner_account_id: Uuid) -> (Uuid, Uuid) {
     (chain_id, event_id)
 }
 
-fn set_event_signature(event_id: Uuid, signature: &str) {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-    let rt = tokio::runtime::Runtime::new().expect("runtime");
-    rt.block_on(async {
-        let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        sqlx::query("UPDATE events SET signature = $1 WHERE event_id = $2")
-            .bind(signature)
-            .bind(event_id)
-            .execute(&pool)
-            .await
-            .expect("update signature");
-    });
-}
-
-fn error_body_without_request_id(body: &Value) -> Value {
-    let mut normalized = body.clone();
-    if let Some(error) = normalized.get_mut("error").and_then(|v| v.as_object_mut()) {
-        error.remove("request_id");
+/// Zero-disclosure: stored hash and derived status enum must not appear in responses.
+fn assert_file_response_contract(body: &Value) {
+    assert!(body.get("expected_hash").is_none());
+    assert!(body.get("stored_hash").is_none());
+    assert!(body.get("stored_file_hash").is_none());
+    if let Some(file) = body.get("file").and_then(|v| v.as_object()) {
+        assert!(file.get("status").is_none());
+        assert!(file.get("expected_hash").is_none());
+        assert!(file.get("stored_hash").is_none());
+        assert!(file.get("stored_file_hash").is_none());
     }
-    normalized
+    if let Some(error) = body.get("error").and_then(|v| v.as_object()) {
+        assert!(error.get("expected_hash").is_none());
+        assert!(error.get("stored_hash").is_none());
+    }
 }
 
 #[test]
-fn v1_verify_missing_event_returns_not_found() {
+fn v1_verify_file_not_provided() {
     let client = Client::new();
     let api_key = evident_api_key();
     ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
 
-    let resp = get_verify(&client, &api_key, Uuid::new_v4());
-    assert_eq!(resp.status(), 404);
-    let body: Value = resp.json().expect("json");
-    assert_eq!(body["error"]["code"], "not_found");
-    assert!(body["error"]["request_id"].as_str().is_some());
-}
-
-#[test]
-fn v1_verify_foreign_event_returns_not_found_same_shape_as_missing() {
-    let client = Client::new();
-    let api_key = evident_api_key();
-    let caller_account = account_id_for_api_key(&api_key);
-    ensure_machine_plan(caller_account);
-
-    let missing = get_verify(&client, &api_key, Uuid::new_v4());
-    assert_eq!(missing.status(), 404);
-    let missing_body: Value = missing.json().expect("json");
-
-    let foreign_owner = foreign_account_id(caller_account);
-    let (chain_id, event_id) = seed_foreign_event(foreign_owner);
-
-    let foreign = get_verify(&client, &api_key, event_id);
-    assert_eq!(foreign.status(), 404);
-    let foreign_body: Value = foreign.json().expect("json");
-
-    assert_eq!(
-        error_body_without_request_id(&missing_body),
-        error_body_without_request_id(&foreign_body)
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("verify-file-not-provided"),
+        &format!("verify-file-none-{}", Uuid::new_v4()),
     );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_verify(&client, &api_key, event_id, None);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["file"]["provided"], false);
+    assert!(body["file"]["provided_hash"].is_null());
+    assert!(body["file"]["is_valid_file_hash"].is_null());
+    assert_file_response_contract(&body);
 
     cleanup_chain(chain_id);
 }
 
 #[test]
-fn v1_verify_pending_proof_returns_proof_not_ready() {
+fn v1_verify_file_matching_hash_returns_valid() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let stored = valid_hash("verify-file-valid-match");
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &stored,
+        &format!("verify-file-valid-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_verify(&client, &api_key, event_id, Some(&stored));
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["file"]["provided"], true);
+    assert_eq!(body["file"]["provided_hash"], stored);
+    assert_eq!(body["file"]["is_valid_file_hash"], true);
+    assert_file_response_contract(&body);
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_verify_file_mismatching_hash_returns_tampered() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let stored = valid_hash("verify-file-stored");
+    let provided = valid_hash("verify-file-different");
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &stored,
+        &format!("verify-file-tampered-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_verify(&client, &api_key, event_id, Some(&provided));
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["file"]["provided"], true);
+    assert_eq!(body["file"]["provided_hash"], provided);
+    assert_eq!(body["file"]["is_valid_file_hash"], false);
+    assert_file_response_contract(&body);
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_verify_file_invalid_hex_returns_bad_request() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("verify-file-invalid-hex"),
+        &format!("verify-file-badhex-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let resp = get_verify(
+        &client,
+        &api_key,
+        event_id,
+        Some("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"),
+    );
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["error"]["code"], "invalid_request");
+    assert_eq!(
+        body["error"]["message"],
+        "file_hash must be a valid SHA-256 hex string (64 chars, 0-9a-f)"
+    );
+    assert_file_response_contract(&body);
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_verify_file_wrong_length_returns_bad_request() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    ensure_machine_plan(account_id_for_api_key(&api_key));
+    let chain_id = Uuid::new_v4();
+    cleanup_chain(chain_id);
+
+    let created = post_event(
+        &client,
+        &api_key,
+        chain_id,
+        &valid_hash("verify-file-wrong-len"),
+        &format!("verify-file-len-{}", Uuid::new_v4()),
+    );
+    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
+
+    let short = "a".repeat(63);
+    let resp = get_verify(&client, &api_key, event_id, Some(&short));
+    assert_eq!(resp.status(), 400);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["error"]["code"], "invalid_request");
+    assert_file_response_contract(&body);
+
+    cleanup_chain(chain_id);
+}
+
+#[test]
+fn v1_verify_file_pending_with_valid_hash_returns_proof_not_ready() {
     let client = Client::new();
     let api_key = evident_api_key();
     let owner = account_id_for_api_key(&api_key);
     ensure_machine_plan(owner);
 
-    // Empty persisted signature → ProofStatus::Pending via resolve_proof_state.
     let (chain_id, event_id) = seed_owned_event_empty_signature(owner);
+    let provided = valid_hash("verify-file-pending-empty-sig");
 
-    let resp = get_verify(&client, &api_key, event_id);
+    let resp = get_verify(&client, &api_key, event_id, Some(&provided));
     assert_eq!(resp.status(), 409);
     let body: Value = resp.json().expect("json");
     assert_eq!(body["error"]["code"], "proof_not_ready");
-    assert!(body["error"]["request_id"].as_str().is_some());
-
-    cleanup_chain(chain_id);
-}
-
-// Intentional deviation from TZ letter: we corrupt persisted signature after
-// post_event instead of seeding a boolean failure_signal flag. Failed status
-// still flows through build_proof_snapshot_read → detect_failure_signal →
-// resolve_proof_state (full stack, not a resolver bypass).
-#[test]
-fn v1_verify_failed_proof_returns_proof_generation_failed() {
-    let client = Client::new();
-    let api_key = evident_api_key();
-    ensure_machine_plan(account_id_for_api_key(&api_key));
-    let chain_id = Uuid::new_v4();
-    cleanup_chain(chain_id);
-
-    let created = post_event(
-        &client,
-        &api_key,
-        chain_id,
-        &valid_hash("verify-failed-sig"),
-        &format!("verify-failed-{}", Uuid::new_v4()),
-    );
-    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
-    set_event_signature(event_id, &"aa".repeat(64));
-
-    let resp = get_verify(&client, &api_key, event_id);
-    assert_eq!(resp.status(), 422);
-    let body: Value = resp.json().expect("json");
-    assert_eq!(body["error"]["code"], "proof_generation_failed");
-    assert!(body["error"]["request_id"].as_str().is_some());
+    assert_file_response_contract(&body);
 
     cleanup_chain(chain_id);
 }
 
 #[test]
-fn v1_verify_anchored_returns_minimal_body() {
+fn v1_verify_file_pending_with_invalid_hash_returns_bad_request() {
     let client = Client::new();
     let api_key = evident_api_key();
-    ensure_machine_plan(account_id_for_api_key(&api_key));
-    let chain_id = Uuid::new_v4();
-    cleanup_chain(chain_id);
+    let owner = account_id_for_api_key(&api_key);
+    ensure_machine_plan(owner);
 
-    let created = post_event(
-        &client,
-        &api_key,
-        chain_id,
-        &valid_hash("verify-anchored"),
-        &format!("verify-anchored-{}", Uuid::new_v4()),
-    );
-    let event_id = Uuid::parse_str(created["event_id"].as_str().unwrap()).unwrap();
-    let expected_chain_id = Uuid::parse_str(created["chain_id"].as_str().unwrap()).unwrap();
-    let expected_sequence = created["sequence"].as_i64().unwrap();
+    let (chain_id, event_id) = seed_owned_event_empty_signature(owner);
 
-    let resp = get_verify(&client, &api_key, event_id);
-    assert_eq!(resp.status(), 200);
+    let resp = get_verify(&client, &api_key, event_id, Some("not-a-valid-hash"));
+    assert_eq!(resp.status(), 400);
     let body: Value = resp.json().expect("json");
-    assert_eq!(body["proof_status"], "anchored");
-    assert_eq!(body["event_id"], event_id.to_string());
-    assert_eq!(body["chain_id"], expected_chain_id.to_string());
-    assert_eq!(body["sequence"], expected_sequence);
-    assert!(body["request_id"].as_str().is_some());
-    // Intentional deviation from Stage 5.3 TZ "do not edit v1_verify.rs": Stage 5.3
-    // always includes chain{} on Anchored; the Stage 5.2 assert chain.is_none() is obsolete.
-    assert_eq!(body["chain"]["valid"], true);
-    assert_eq!(body["file"]["provided"], false);
-    assert!(body["file"]["provided_hash"].is_null());
-    assert!(body["file"]["is_valid_file_hash"].is_null());
-    assert!(body["file"].get("status").is_none());
-    assert!(body.get("expected_hash").is_none());
-    assert!(body.get("tsa").is_none());
+    assert_eq!(body["error"]["code"], "invalid_request");
+    assert_eq!(
+        body["error"]["message"],
+        "file_hash must be a valid SHA-256 hex string (64 chars, 0-9a-f)"
+    );
+    assert_file_response_contract(&body);
 
     cleanup_chain(chain_id);
 }
 
-// Stage 5.2 gap: infra failure → 500 internal_error is not covered here — no mock
-// infrastructure for snapshot builder / DB failures in integration tests.
+#[test]
+fn v1_verify_file_foreign_event_invalid_hash_returns_not_found() {
+    let client = Client::new();
+    let api_key = evident_api_key();
+    let caller_account = account_id_for_api_key(&api_key);
+    ensure_machine_plan(caller_account);
+
+    let foreign_owner = foreign_account_id(caller_account);
+    let (chain_id, event_id) = seed_foreign_event(foreign_owner);
+
+    let resp = get_verify(
+        &client,
+        &api_key,
+        event_id,
+        Some("zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz"),
+    );
+    assert_eq!(resp.status(), 404);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["error"]["code"], "not_found");
+    assert_file_response_contract(&body);
+
+    cleanup_chain(chain_id);
+}
