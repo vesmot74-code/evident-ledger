@@ -97,8 +97,32 @@ fn assert_no_forbidden_public_fields(body: &Value) {
 }
 
 #[tokio::test]
+async fn verify_hash_endpoint_is_deprecated() {
+    use evident_ledger::api::verify::router;
+
+    let pool = PgPoolOptions::new()
+        .connect_lazy("postgres://127.0.0.1:1/unreachable")
+        .expect("lazy");
+    let state = common::test_app_state(pool);
+    let app = Router::new().nest("/verify", router(state));
+    let port = spawn_server(app).await;
+    let url = format!("http://127.0.0.1:{port}/verify/hash");
+    let resp = reqwest::Client::new()
+        .post(&url)
+        .json(&json!({
+            "hash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+        }))
+        .send()
+        .await
+        .expect("request");
+    assert_eq!(resp.status(), StatusCode::GONE);
+    let body: Value = resp.json().await.expect("json");
+    assert_eq!(body["error"]["code"], "endpoint_deprecated");
+    assert!(body["error"]["request_id"].is_string());
+}
+
+#[tokio::test]
 async fn legacy_hash_attestation_pdf_returns_410() {
-    use axum::routing::get;
     use evident_ledger::api::verify::router;
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(

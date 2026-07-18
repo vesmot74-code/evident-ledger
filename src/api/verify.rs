@@ -9,7 +9,6 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::{Deserialize, Serialize};
 use serde_json::json;
 use uuid::Uuid;
 
@@ -119,70 +118,21 @@ async fn handler_proof(
         .map_err(|e| ApiError::Internal(e.to_string()))
 }
 
-#[derive(Debug, Deserialize)]
-struct HashLookupRequest {
-    hash: String,
-}
-
-#[derive(Debug, Serialize)]
-struct HashMatch {
-    chain_id: Uuid,
-    event_id: Uuid,
-    sequence: i64,
-    created_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Serialize)]
-struct HashLookupResponse {
-    found: bool,
-    matches: Vec<HashMatch>,
-}
-
 async fn handler_verify_hash(
-    State(state): State<AppState>,
-    Json(payload): Json<HashLookupRequest>,
-) -> Result<Json<HashLookupResponse>, ApiError> {
-    let hash = payload.hash.trim().to_lowercase();
-
-    if hash.len() != 64 || !hash.chars().all(|c| c.is_ascii_hexdigit()) {
-        return Err(ApiError::BadRequest(
-            "invalid sha256 hash format".to_string(),
-        ));
-    }
-
-    let rows = sqlx::query!(
-        r#"
-        SELECT chain_id, event_id, sequence, created_at
-        FROM events
-        WHERE file_hash = $1
-        ORDER BY created_at ASC
-        "#,
-        hash
-    )
-    .fetch_all(&state.db)
-    .await
-    .map_err(|e| ApiError::Internal(e.to_string()))?;
-
-    let matches: Vec<HashMatch> = rows
-        .into_iter()
-        .map(|r| HashMatch {
-            chain_id: r.chain_id,
-            event_id: r.event_id,
-            sequence: r.sequence,
-            created_at: r.created_at,
-        })
-        .collect();
-
-    Ok(Json(HashLookupResponse {
-        found: !matches.is_empty(),
-        matches,
-    }))
+    _state: State<AppState>,
+    _payload: Json<serde_json::Value>,
+) -> impl IntoResponse {
+    deprecated_hash_lookup_response()
 }
 
 async fn handler_hash_attestation_pdf(
     _state: State<AppState>,
     _path: Path<String>,
 ) -> impl IntoResponse {
+    deprecated_hash_lookup_response()
+}
+
+fn deprecated_hash_lookup_response() -> Response {
     let request_id = uuid::Uuid::new_v4();
     (
         StatusCode::GONE,
@@ -194,4 +144,5 @@ async fn handler_hash_attestation_pdf(
             }
         })),
     )
+        .into_response()
 }
