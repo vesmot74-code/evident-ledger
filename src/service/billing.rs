@@ -1,12 +1,9 @@
-//! Billing service layer — Paddle checkout and customer management (Stage 8.3.2).
+//! Billing service layer — Paddle checkout and customer management (Stage 8.3.2, 10.1).
 
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
 use crate::paddle::client::{paddle_client_error_is_unavailable, PaddleClient, PaddleClientError};
-
-/// MVP upgrade target — fixed server-side, not accepted from clients.
-pub const DEFAULT_UPGRADE_PLAN_NAME: &str = "legal";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BillingError {
@@ -15,12 +12,20 @@ pub enum BillingError {
     AlreadyActive,
     AccountNotFound,
     PaddleUnavailable,
+    InvalidPlan,
+    PlanNotPurchasable,
     Internal,
 }
 
 struct AccountPaddleRow {
     email: String,
     paddle_customer_id: Option<String>,
+}
+
+#[derive(Debug, sqlx::FromRow)]
+struct TariffPlanCheckoutRow {
+    name: String,
+    paddle_price_id: Option<String>,
 }
 
 /// Check whether the account already has an active paid subscription.
@@ -43,6 +48,31 @@ pub async fn has_active_subscription(
     match status {
         Some(value) => Ok(value == "active"),
         None => Err(BillingError::AccountNotFound),
+    }
+}
+
+/// Resolve a purchasable Paddle price id from `tariff_plans`.
+pub async fn resolve_purchasable_plan(
+    db: &PgPool,
+    plan_name: &str,
+) -> Result<String, BillingError> {
+    let plan = sqlx::query_as::<_, TariffPlanCheckoutRow>(
+        r#"
+        SELECT name, paddle_price_id
+        FROM tariff_plans
+        WHERE name = $1
+        "#,
+    )
+    .bind(plan_name)
+    .fetch_optional(db)
+    .await
+    .map_err(|_| BillingError::Internal)?;
+
+    match plan {
+        None => Err(BillingError::InvalidPlan),
+        Some(plan) if plan.name == "free" => Err(BillingError::InvalidPlan),
+        Some(plan) if plan.paddle_price_id.is_none() => Err(BillingError::PlanNotPurchasable),
+        Some(plan) => Ok(plan.paddle_price_id.expect("checked above")),
     }
 }
 
@@ -75,12 +105,15 @@ pub async fn ensure_paddle_customer(
     Ok(customer_id)
 }
 
-/// Create a checkout session for the default upgrade plan (`legal`).
+/// Create a checkout session for the requested plan.
 pub async fn create_checkout(
     db: &PgPool,
     paddle: &dyn PaddleClient,
     account_id: Uuid,
+    plan_name: &str,
 ) -> Result<String, BillingError> {
+    let price_id = resolve_purchasable_plan(db, plan_name).await?;
+
     let customer_id: Option<String> = sqlx::query_scalar(
         r#"
         SELECT paddle_customer_id
@@ -98,41 +131,31 @@ pub async fn create_checkout(
         return Err(BillingError::CustomerCreationFailed);
     };
 
-    let price_id: Option<String> = sqlx::query_scalar(
-        r#"
-        SELECT paddle_price_id
-        FROM tariff_plans
-        WHERE name = $1
-        "#,
-    )
-    .bind(DEFAULT_UPGRADE_PLAN_NAME)
-    .fetch_optional(db)
-    .await
-    .map_err(|_| BillingError::Internal)?;
-
-    let Some(price_id) = price_id else {
-        return Err(BillingError::Internal);
-    };
-
     paddle
         .create_checkout(&customer_id, &price_id)
         .await
         .map_err(map_checkout_error)
 }
 
-/// Full upgrade flow: ensure customer, then create checkout for the default plan.
+/// Full upgrade flow: validate plan, ensure customer, then create checkout.
 pub async fn initiate_upgrade(
     db: &PgPool,
     paddle: &dyn PaddleClient,
     account_id: Uuid,
     email: &str,
+    plan_name: &str,
 ) -> Result<String, BillingError> {
     if has_active_subscription(db, account_id).await? {
         return Err(BillingError::AlreadyActive);
     }
 
-    ensure_paddle_customer(db, paddle, account_id, email).await?;
-    create_checkout(db, paddle, account_id).await
+    let price_id = resolve_purchasable_plan(db, plan_name).await?;
+    let customer_id = ensure_paddle_customer(db, paddle, account_id, email).await?;
+
+    paddle
+        .create_checkout(&customer_id, &price_id)
+        .await
+        .map_err(map_checkout_error)
 }
 
 async fn lock_account_paddle_row(
@@ -238,5 +261,65 @@ impl sqlx::FromRow<'_, sqlx::postgres::PgRow> for AccountPaddleRow {
             email: row.try_get("email")?,
             paddle_customer_id: row.try_get("paddle_customer_id")?,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    async fn test_pool() -> PgPool {
+        dotenvy::dotenv().ok();
+        let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(5)
+            .connect(&database_url)
+            .await
+            .expect("db")
+    }
+
+    #[tokio::test]
+    async fn resolve_purchasable_plan_rejects_unknown_plan() {
+        let pool = test_pool().await;
+        let err = resolve_purchasable_plan(&pool, "hacked_plan")
+            .await
+            .expect_err("unknown plan");
+        assert_eq!(err, BillingError::InvalidPlan);
+    }
+
+    #[tokio::test]
+    async fn resolve_purchasable_plan_rejects_free_plan() {
+        let pool = test_pool().await;
+        let err = resolve_purchasable_plan(&pool, "free")
+            .await
+            .expect_err("free plan");
+        assert_eq!(err, BillingError::InvalidPlan);
+    }
+
+    #[tokio::test]
+    async fn resolve_purchasable_plan_rejects_missing_paddle_price() {
+        let pool = test_pool().await;
+        let original: Option<String> = sqlx::query_scalar(
+            "SELECT paddle_price_id FROM tariff_plans WHERE name = 'identity'",
+        )
+        .fetch_one(&pool)
+        .await
+        .expect("identity price");
+
+        sqlx::query("UPDATE tariff_plans SET paddle_price_id = NULL WHERE name = 'identity'")
+            .execute(&pool)
+            .await
+            .expect("clear price");
+
+        let err = resolve_purchasable_plan(&pool, "identity")
+            .await
+            .expect_err("missing price");
+        assert_eq!(err, BillingError::PlanNotPurchasable);
+
+        sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = 'identity'")
+            .bind(original)
+            .execute(&pool)
+            .await
+            .expect("restore price");
     }
 }

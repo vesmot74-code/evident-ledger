@@ -1,4 +1,4 @@
-//! Stage 8.3.2 — Dashboard billing and checkout tests.
+//! Stage 8.3.2 / 10.1 — Dashboard billing and checkout tests.
 
 mod common;
 
@@ -7,15 +7,20 @@ use axum::extract::ConnectInfo;
 use axum::http::{header, Request, StatusCode};
 use evident_ledger::api::{auth, dashboard_billing};
 use evident_ledger::paddle::client::MockPaddleClient;
-use evident_ledger::service::billing::{self, DEFAULT_UPGRADE_PLAN_NAME};
+use evident_ledger::service::billing;
 use evident_ledger::state::rate_limiter::LoginRateLimitState;
 use evident_ledger::state::AppState;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tower::util::ServiceExt;
 use uuid::Uuid;
+
+fn tariff_plan_test_lock() -> std::sync::MutexGuard<'static, ()> {
+    static LOCK: Mutex<()> = Mutex::new(());
+    LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+}
 
 async fn test_pool() -> sqlx::PgPool {
     dotenvy::dotenv().ok();
@@ -50,12 +55,19 @@ fn state_with_paddle(pool: sqlx::PgPool, paddle: Arc<MockPaddleClient>) -> AppSt
     )
 }
 
-fn peer_request(method: &str, uri: &str, cookie: Option<&str>) -> Request<Body> {
+fn peer_request(method: &str, uri: &str, cookie: Option<&str>, body: Option<Value>) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(cookie) = cookie {
         builder = builder.header(header::COOKIE, cookie);
     }
-    let mut req = builder.body(Body::empty()).expect("request");
+    let body = match body {
+        Some(json) => {
+            builder = builder.header("content-type", "application/json");
+            Body::from(json.to_string())
+        }
+        None => Body::empty(),
+    };
+    let mut req = builder.body(body).expect("request");
     req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
         IpAddr::V4(Ipv4Addr::new(203, 0, 113, 60)),
         0,
@@ -153,12 +165,13 @@ async fn register_and_login(app: &axum::Router, email: &str) -> String {
     cookie_header_from_set_cookie(&cookies).expect("session cookie")
 }
 
-async fn setup_legal_price(pool: &sqlx::PgPool) {
-    sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = 'legal'")
-        .bind("pri_legal_test")
+async fn set_plan_price(pool: &sqlx::PgPool, plan_name: &str, price_id: &str) {
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = $2")
+        .bind(price_id)
+        .bind(plan_name)
         .execute(pool)
         .await
-        .expect("legal price");
+        .expect("set plan price");
 }
 
 async fn create_unlinked_account(pool: &sqlx::PgPool, email: &str) -> Uuid {
@@ -179,8 +192,9 @@ async fn create_unlinked_account(pool: &sqlx::PgPool, email: &str) -> Uuid {
 
 #[tokio::test]
 async fn post_dashboard_upgrade_with_session_returns_checkout_url() {
+    let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
-    setup_legal_price(&pool).await;
+    set_plan_price(&pool, "legal", "pri_legal_test").await;
     let email = format!("bill-upgrade-{}@example.com", Uuid::new_v4());
     cleanup_email(&pool, &email).await;
     let paddle = MockPaddleClient::new();
@@ -189,7 +203,12 @@ async fn post_dashboard_upgrade_with_session_returns_checkout_url() {
 
     let (status, body, _) = call(
         app,
-        peer_request("POST", "/dashboard/upgrade", Some(&cookie)),
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "legal" })),
+        ),
     )
     .await;
 
@@ -208,7 +227,12 @@ async fn post_dashboard_upgrade_without_session_returns_unauthorized() {
 
     let (status, body, _) = call(
         app,
-        peer_request("POST", "/dashboard/upgrade", None),
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            None,
+            Some(json!({ "plan": "legal" })),
+        ),
     )
     .await;
 
@@ -218,8 +242,9 @@ async fn post_dashboard_upgrade_without_session_returns_unauthorized() {
 
 #[tokio::test]
 async fn post_dashboard_upgrade_with_active_subscription_returns_conflict() {
+    let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
-    setup_legal_price(&pool).await;
+    set_plan_price(&pool, "legal", "pri_legal_test").await;
     let email = format!("bill-active-{}@example.com", Uuid::new_v4());
     cleanup_email(&pool, &email).await;
     let app = billing_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
@@ -237,12 +262,145 @@ async fn post_dashboard_upgrade_with_active_subscription_returns_conflict() {
 
     let (status, body, _) = call(
         app,
-        peer_request("POST", "/dashboard/upgrade", Some(&cookie)),
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "legal" })),
+        ),
     )
     .await;
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["status"], "already_active");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn post_dashboard_upgrade_unknown_plan_returns_invalid_plan() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    let email = format!("bill-unknown-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = billing_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "hacked_plan" })),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_plan");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn post_dashboard_upgrade_free_plan_returns_invalid_plan() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    let email = format!("bill-free-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = billing_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "free" })),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "invalid_plan");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn post_dashboard_upgrade_identity_without_paddle_price_returns_not_purchasable() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    let original: Option<String> = sqlx::query_scalar(
+        "SELECT paddle_price_id FROM tariff_plans WHERE name = 'identity'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("identity price");
+
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = NULL WHERE name = 'identity'")
+        .execute(&pool)
+        .await
+        .expect("clear identity price");
+
+    let email = format!("bill-no-price-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = billing_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "identity" })),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"], "plan_not_purchasable");
+
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = 'identity'")
+        .bind(original)
+        .execute(&pool)
+        .await
+        .expect("restore identity price");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn post_dashboard_upgrade_identity_plan_uses_configured_paddle_price() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_plan_price(&pool, "identity", "price_identity_test").await;
+    let email = format!("bill-identity-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let paddle = MockPaddleClient::new();
+    let app = billing_app(state_with_paddle(pool.clone(), paddle.clone()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "identity" })),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["checkout_url"]
+        .as_str()
+        .unwrap()
+        .contains("price_identity_test"));
+
+    let (customer_id, price_id) = paddle.last_checkout().expect("checkout call");
+    assert!(customer_id.starts_with("ctm_mock_"));
+    assert_eq!(price_id, "price_identity_test");
+
     cleanup_email(&pool, &email).await;
 }
 
@@ -296,13 +454,14 @@ async fn ensure_paddle_customer_returns_existing_without_new_api_call() {
 
 #[tokio::test]
 async fn paddle_customer_id_saved_before_checkout_redirect() {
+    let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
-    setup_legal_price(&pool).await;
+    set_plan_price(&pool, "legal", "pri_legal_test").await;
     let email = format!("bill-persist-{}@example.com", Uuid::new_v4());
     let account_id = create_unlinked_account(&pool, &email).await;
     let paddle = MockPaddleClient::new();
 
-    billing::initiate_upgrade(&pool, paddle.as_ref(), account_id, &email)
+    billing::initiate_upgrade(&pool, paddle.as_ref(), account_id, &email, "legal")
         .await
         .expect("upgrade");
 
@@ -319,8 +478,9 @@ async fn paddle_customer_id_saved_before_checkout_redirect() {
 
 #[tokio::test]
 async fn paddle_api_timeout_returns_bad_gateway() {
+    let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
-    setup_legal_price(&pool).await;
+    set_plan_price(&pool, "legal", "pri_legal_test").await;
     let email = format!("bill-timeout-{}@example.com", Uuid::new_v4());
     cleanup_email(&pool, &email).await;
     let paddle = MockPaddleClient::new();
@@ -330,7 +490,12 @@ async fn paddle_api_timeout_returns_bad_gateway() {
 
     let (status, body, _) = call(
         app,
-        peer_request("POST", "/dashboard/upgrade", Some(&cookie)),
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "legal" })),
+        ),
     )
     .await;
 
@@ -350,8 +515,9 @@ async fn paddle_api_timeout_returns_bad_gateway() {
 
 #[tokio::test]
 async fn concurrent_upgrade_requests_create_single_paddle_customer() {
+    let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
-    setup_legal_price(&pool).await;
+    set_plan_price(&pool, "legal", "pri_legal_test").await;
     let email = format!("bill-concurrent-{}@example.com", Uuid::new_v4());
     let account_id = create_unlinked_account(&pool, &email).await;
     let paddle = MockPaddleClient::new();
@@ -390,9 +556,4 @@ async fn concurrent_upgrade_requests_create_single_paddle_customer() {
     .expect("count");
     assert_eq!(count, 1);
     cleanup_email(&pool, &email).await;
-}
-
-#[tokio::test]
-async fn default_upgrade_plan_is_legal() {
-    assert_eq!(DEFAULT_UPGRADE_PLAN_NAME, "legal");
 }

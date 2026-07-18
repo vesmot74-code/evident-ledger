@@ -1,7 +1,7 @@
 //! HTTP client for Paddle Billing API (Stage 8.3.2).
 
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -93,6 +93,7 @@ pub struct MockPaddleClient {
     fail_create: AtomicBool,
     fail_checkout: AtomicBool,
     create_delay_ms: AtomicUsize,
+    last_checkout: Mutex<Option<(String, String)>>,
 }
 
 impl MockPaddleClient {
@@ -118,6 +119,10 @@ impl MockPaddleClient {
 
     pub fn set_create_delay_ms(&self, value: usize) {
         self.create_delay_ms.store(value, Ordering::SeqCst);
+    }
+
+    pub fn last_checkout(&self) -> Option<(String, String)> {
+        self.last_checkout.lock().ok()?.clone()
     }
 }
 
@@ -146,6 +151,9 @@ impl PaddleClient for MockPaddleClient {
         customer_id: &str,
         price_id: &str,
     ) -> Result<String, PaddleClientError> {
+        if let Ok(mut last) = self.last_checkout.lock() {
+            *last = Some((customer_id.to_string(), price_id.to_string()));
+        }
         if self.simulate_timeout.load(Ordering::SeqCst) {
             return Err(PaddleClientError::Timeout);
         }
