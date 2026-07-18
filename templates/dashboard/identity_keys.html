@@ -1,0 +1,44 @@
+{% extends "dashboard/layout.html" %}
+{% block title %}Identity Keys{% endblock %}
+{% block nav_identity %}active{% endblock %}
+{% block content %}
+<h2 style="margin-bottom: 16px;">Identity Keys</h2>
+<p style="margin-bottom: 16px; color: var(--text-secondary);">
+  Read-only overview of registered identity keys and signed event counts.
+</p>
+
+{% if keys.is_empty() %}
+<p>No identity keys registered for this account.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Fingerprint</th>
+      <th>Status</th>
+      <th>Created</th>
+      <th>Verified</th>
+      <th>Revoked</th>
+      <th>Events</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key in keys %}
+    <tr>
+      <td><a href="/dashboard/identity/{{ key.key_id }}"><code>{{ key.fingerprint }}</code></a></td>
+      <td>
+        {% if key.status == "active" %}
+        <span class="badge badge-active">Active</span>
+        {% else %}
+        <span class="badge">Revoked</span>
+        {% endif %}
+      </td>
+      <td>{{ key.created_at }}</td>
+      <td>{{ key.verified_at }}</td>
+      <td>{{ key.revoked_at }}</td>
+      <td>{{ key.events_count }}</td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+{% endblock %}

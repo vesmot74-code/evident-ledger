@@ -36,6 +36,7 @@ pub fn router(state: AppState) -> Router {
         .route("/ui/subscription", get(subscription_handler))
         .route("/ui/usage", get(usage_handler))
         .route("/ui/api-keys", get(api_keys_handler))
+        .merge(crate::web::dashboard_identity::router(state.clone()))
         .merge(mutations)
         .layer(middleware::from_fn_with_state(
             state.clone(),

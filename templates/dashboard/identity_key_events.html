@@ -1,0 +1,55 @@
+{% extends "dashboard/layout.html" %}
+{% block title %}Identity Key Events{% endblock %}
+{% block nav_identity %}active{% endblock %}
+{% block content %}
+<p style="margin-bottom: 16px;"><a href="/dashboard/identity">&larr; All identity keys</a></p>
+
+<h2 style="margin-bottom: 8px;">Signed Events</h2>
+<p style="margin-bottom: 16px; color: var(--text-secondary);">
+  Key <code>{{ key_id }}</code>
+  {% if key_status == "active" %}
+  <span class="badge badge-active">Active</span>
+  {% else %}
+  <span class="badge">Revoked</span>
+  {% endif %}
+</p>
+
+{% if events.is_empty() %}
+<p>No signed events for this key.</p>
+{% else %}
+<table>
+  <thead>
+    <tr>
+      <th>Event</th>
+      <th>Chain</th>
+      <th>Sequence</th>
+      <th>Signed At</th>
+      <th>Signature Valid</th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for event in events %}
+    <tr>
+      <td><code>{{ event.event_id }}</code></td>
+      <td><code>{{ event.chain_id }}</code></td>
+      <td>{{ event.sequence }}</td>
+      <td>{{ event.signed_at }}</td>
+      <td>
+        {% if event.signature_valid %}
+        <span class="badge badge-active">Valid</span>
+        {% else %}
+        <span class="badge">Invalid</span>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endif %}
+
+{% if let Some(url) = next_page_url %}
+<p style="margin-top: 16px;">
+  <a class="btn" href="{{ url }}">Next page</a>
+</p>
+{% endif %}
+{% endblock %}

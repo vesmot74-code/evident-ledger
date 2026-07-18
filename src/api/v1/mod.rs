@@ -6,6 +6,8 @@ pub mod event_access;
 pub mod events;
 pub mod file_verification;
 pub mod idempotency;
+pub mod identity_key_events;
+pub mod identity_keys;
 pub mod proof;
 pub mod proof_material;
 pub mod proof_state;
@@ -28,6 +30,7 @@ pub fn router(state: AppState) -> Router {
         .nest("/proof", proof::router(state.clone()))
         .nest("/verify", verify::router(state.clone()))
         .nest("/account", account::router(state.clone()))
+        .nest("/identity/keys", identity_keys::router(state.clone()))
         .layer(middleware::from_fn_with_state(
             state.clone(),
             subscription_enforcement_middleware,

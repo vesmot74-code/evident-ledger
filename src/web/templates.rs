@@ -57,6 +57,41 @@ pub struct ApiKeyCreatedTemplate {
 #[template(path = "dashboard/api_key_revoked.html")]
 pub struct ApiKeyRevokedTemplate;
 
+#[derive(Template)]
+#[template(path = "dashboard/identity_keys.html")]
+pub struct IdentityKeysTemplate {
+    pub keys: Vec<IdentityKeyRow>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentityKeyRow {
+    pub key_id: String,
+    pub fingerprint: String,
+    pub status: String,
+    pub created_at: String,
+    pub verified_at: String,
+    pub revoked_at: String,
+    pub events_count: String,
+}
+
+#[derive(Template)]
+#[template(path = "dashboard/identity_key_events.html")]
+pub struct IdentityKeyEventsTemplate {
+    pub key_id: String,
+    pub key_status: String,
+    pub events: Vec<IdentityKeyEventRow>,
+    pub next_page_url: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct IdentityKeyEventRow {
+    pub event_id: String,
+    pub chain_id: String,
+    pub sequence: String,
+    pub signed_at: String,
+    pub signature_valid: bool,
+}
+
 pub fn format_usage_summary(server_commits: i32, monthly_limit: Option<i32>) -> String {
     match monthly_limit {
         Some(limit) => format!("{server_commits} / {limit}"),
