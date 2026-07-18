@@ -713,6 +713,23 @@ Frozen at Stage 8.0 — see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §4 and [SE
 - Cross-account access is forbidden (`404` non-leak).
 - Tariff plan (`tariff_plan_id` → `tariff_plans`) determines limits and features for the account.
 
+### Subscription Lifecycle
+
+Frozen at Stage 8.2a — see [docs/BILLING_MODEL.md](docs/BILLING_MODEL.md) and [SECURITY.md](SECURITY.md) §2.5 Invariants 17–24.
+
+- `tariff_plan_id` defines current limits and features.
+- `pending_tariff_plan_id` defines scheduled changes (downgrades).
+- `subscription_status` defines payment state.
+- Free tier (`tariff_plan_id = free`) is always accessible within free limits.
+- Paid tiers require `subscription_status = active` for write access (except `canceled` before `current_period_end`).
+- `past_due` allows reads but blocks writes on paid tiers.
+- `canceled` allows full paid access until `current_period_end`.
+- After `current_period_end`, canceled → `none` and tariff resets to `free` (lazy evaluation on first authenticated request).
+- Downgrades apply from the next billing period via `pending_tariff_plan_id`, not immediately.
+- Upgrades apply immediately to `tariff_plan_id`.
+- Lazy evaluation: `pending → active` and `canceled → none` use an atomic conditional update — not read-then-write.
+- Current-period `usage_monthly` limits follow `tariff_plan_id`, never `pending_tariff_plan_id`.
+
 ## 18.3 Public vs Private API Boundary
 
 | Layer | Authentication | Primary identifier | Disclosure |

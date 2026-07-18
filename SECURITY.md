@@ -187,6 +187,22 @@ A change to any invariant below is an intentional edit to `SECURITY.md`, not a s
 
 16. Authentication layer **MUST NOT** leak account existence via timing or error messages — except the documented `409 Conflict` on duplicate email at `POST /accounts/register` (see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §3).
 
+17. Subscription status determines API access for paid features.
+
+18. Past-due accounts lose write access immediately.
+
+19. Canceled accounts retain paid-tier access until `current_period_end`; after expiry, `subscription_status` becomes `none` and `tariff_plan_id` reverts to the free tariff.
+
+20. Billing status **MUST NOT** be used to reject free-tier API calls.
+
+21. Webhook signatures **MUST** be verified before any state change.
+
+22. Webhook processing **MUST** be idempotent.
+
+23. Paddle is the source of truth for payment state; local DB is derived state.
+
+24. `tariff_plan_id` always reflects the active plan; `pending_tariff_plan_id` is used for scheduled downgrades.
+
 ---
 
 ## 2.6 Authentication Model
@@ -201,6 +217,23 @@ Full specification: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) (frozen at Stage 8.
 | **Web sessions** (Stage 8.3) | Cookie-based | Dashboard only; deferred — requires `password_hash` |
 
 **API key storage (normative):** `key_hash = SHA-256(secret)` where `secret` is the 32-hex portion after the `ev_` prefix. Pre-Stage 8.1 legacy keys use `SHA-256(full_key)` — see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §1. Plaintext keys are returned once at creation only.
+
+---
+
+## 2.7 Billing Model
+
+Full specification: [docs/BILLING_MODEL.md](docs/BILLING_MODEL.md) (frozen at Stage 8.2a).
+
+| Concept | Field / rule |
+|---------|----------------|
+| Active plan | `accounts.tariff_plan_id` — limits, features, enforcement |
+| Scheduled downgrade | `accounts.pending_tariff_plan_id` — applies after `current_period_end` |
+| Payment state | `accounts.subscription_status` — `none` / `active` / `past_due` / `canceled` |
+| Period boundary | `accounts.current_period_end` — paid access window; lazy transitions on first auth request after expiry |
+| External authority | Paddle — payment truth; local DB is derived, verified state |
+| Free tier | `tariff_plan_id = free` — never blocked by `subscription_status` |
+
+Paid-tier write access requires `active` (or `canceled` before period end). `past_due` blocks writes only on paid tiers. Webhooks: signature verification + idempotency required (Invariants 21–22).
 
 ---
 
