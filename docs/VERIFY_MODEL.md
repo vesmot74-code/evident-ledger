@@ -129,9 +129,9 @@ In the current `/v1/verify` pipeline, `chain.merkle_valid = false` and `chain.si
 
 `verify_chain_prefix()` is covered by unit and direct integration tests. The false branches exist in the algorithm for defense-in-depth and future divergence, but they are not HTTP-reachable under the current private pipeline.
 
-**Future public API:**
+**Future public API** *(Pre-6.4 design note — superseded)*:
 
-For `/public/verify` (without proof-status gating), reusing `verify_chain_prefix()` will make these false branches **HTTP-reachable for the first time**. This is intentional: **the public layer has a wider spectrum of reachable verification states than the private layer.**
+For `/public/verify`, the original plan was to reuse `verify_chain_prefix()` on the read path. The implemented public contract (Stage 6.4+) uses **registry existence-only** lookup instead — see [SECURITY.md](../SECURITY.md) §2.3. The reuse rule below applies to shared verification primitives at materialization time and to private `/v1/verify`, not to public HTTP read handlers.
 
 ---
 
@@ -202,13 +202,13 @@ Nothing the caller did not provide is exposed by default.
 
 ---
 
-### Future Public API — `/public/verify` *(superseded — see Public Verification Model below)*
+### Future Public API — `/public/verify` *(Pre-6.4 planning note — superseded; see Public Verification Model below)*
 
 **Purpose:** Verify existence of a proof by file hash (no ownership).
 
 **Input (planned):** `file_hash`
 
-**Not in scope for Stage 5.5.** Design and implementation are Stage 6.
+**Not in scope for Stage 5.5.** Implemented in Stages 6.3–6.6; normative contract in [SECURITY.md](../SECURITY.md) §2.3.
 
 ---
 
@@ -240,11 +240,11 @@ Properties:
 
 #### Canonical Proof Immutability (first-materialized-wins)
 
-Once a canonical public proof is materialized for a `file_hash` (first successful row in `public_proofs` with `enabled = true`), that binding is **fixed** while `enabled = true`.
+Once a canonical public proof is materialized for a `file_hash` (first successful row in `public_proof_registry` with `enabled = true`), that binding is **fixed** while `enabled = true`.
 
 - The `ORDER BY created_at ASC` rule applies **only** when selecting the first candidate at initial materialization — not on every request, and not after an active canonical row already exists for that hash.
 - A later internal proof for the same `file_hash` becoming `Anchored` does **not** replace the canonical public proof (first-materialized-wins).
-- `public_id` is assigned **once** at materialization — not recomputed per request. This preserves "same hash → same public proof while enabled" without re-evaluating canonical selection on each lookup.
+- `public_proof_id` is assigned **once** at materialization — not recomputed per request. This preserves "same hash → same public proof while enabled" without re-evaluating canonical selection on each lookup.
 
 Re-materialization runs only when no active canonical row exists (never materialized, or previous canonical was disabled with `enabled = false`). Proofs explicitly disabled (`enabled = false` row for a given `proof_id`) are not auto-reactivated.
 
@@ -257,10 +257,10 @@ Public verification exposes only externally verifiable existence.
 Visibility rules:
 
 ```
-Anchored  → verified = true
-Pending   → verified = false (no disclosure)
-Failed    → verified = false (no disclosure)
-Missing   → verified = false
+Anchored  → exists = true
+Pending   → exists = false (no disclosure)
+Failed    → exists = false (no disclosure)
+Missing   → exists = false
 ```
 
 The public API MUST NOT distinguish between:
@@ -291,7 +291,11 @@ Public response after disabling:
 
 ```json
 {
-  "verified": false
+  "exists": false,
+  "public_proof_id": null,
+  "timestamp": null,
+  "tsa_class": null,
+  "integrity": null
 }
 ```
 
@@ -309,7 +313,22 @@ Public verification is an existence proof interface, not an audit history interf
 
 #### Public Lookup Source
 
-Public verification MUST query only the public proof registry.
+Public verification MUST query only the public proof registry (`public_proof_registry`).
+
+Lookup flow:
+
+```
+file_hash
+ |
+ v
+rate limit → format validation
+ |
+ v
+public_proof_registry
+ |
+ v
+existence-only response
+```
 
 The public verification layer MUST NOT access:
 
@@ -353,21 +372,51 @@ to indicate proof existence.
 
 Expected behavior:
 
-- `200 + verified=true`
-- `200 + verified=false`
+- `200` + `exists: true` (with `public_proof_id`, `timestamp`, `tsa_class`, `integrity` when registered)
+- `200` + `exists: false` (same schema; disclosure fields `null`)
+
+Example — found:
+
+```json
+{
+  "exists": true,
+  "public_proof_id": "pv_...",
+  "timestamp": "2026-07-18T12:00:00Z",
+  "tsa_class": "legal",
+  "integrity": "VALID"
+}
+```
+
+Example — not found:
+
+```json
+{
+  "exists": false,
+  "public_proof_id": null,
+  "timestamp": null,
+  "tsa_class": null,
+  "integrity": null
+}
+```
+
+Error envelopes (see [SECURITY.md](../SECURITY.md) §2.3):
+
+- `400` + `invalid_request` — invalid `file_hash` or `public_proof_id` format
+- `429` + `rate_limited` — rate limit exceeded (includes `Retry-After`)
+- `410` + `endpoint_deprecated` — legacy routes such as `/verify/hash/:hash/attestation.pdf` (Pre-6.4; removed from public contract)
 
 #### Lookup Timing Rule
 
 Public verification MUST minimize observable timing differences
-between verified and not verified responses.
+between `exists: true` and `exists: false` responses.
 
 Found and not found paths MUST use the same lookup flow.
 
 Implementation requirement — a single public registry lookup:
 
 ```sql
-SELECT public_id
-FROM public_proofs
+SELECT public_proof_id
+FROM public_proof_registry
 WHERE file_hash = $1
   AND enabled = true
 ```
@@ -390,7 +439,17 @@ Before public registry lookup:
 4. Normalize hexadecimal characters to lowercase.
 5. Execute public registry lookup using normalized hash.
 
-Invalid hash → `400 Bad Request`, `{"error": "invalid_hash"}`.
+Invalid hash → `400 Bad Request`:
+
+```json
+{
+  "error": {
+    "code": "invalid_request",
+    "message": "Invalid request",
+    "request_id": "..."
+  }
+}
+```
 
 Invalid hashes MUST NOT execute database lookup.
 
@@ -400,18 +459,13 @@ matches stored registry keys.
 
 #### Forbidden Disclosure Fields
 
-Public verification responses MUST NOT contain:
+Public verification responses MUST NOT contain (see [SECURITY.md](../SECURITY.md) §2.3 and §2.5 Invariant 3 for the normative list):
 
-- event_id;
-- chain_id;
-- account_id;
-- internal proof_id;
-- sequence numbers;
-- merkle roots;
-- signatures;
-- internal timestamps;
-- storage paths;
-- database identifiers.
+- `event_id`, `chain_id`, `account_id`, `match_count`, and registration cardinality;
+- internal `proof_id`, sequence numbers, merkle roots, signatures;
+- internal timestamps, storage paths, database identifiers.
+
+These fields are **not disclosed publicly** — they may exist only in private, authenticated APIs.
 
 Internal identifiers MUST NOT be exposed through:
 
@@ -437,13 +491,13 @@ the residual timing risk MUST be documented.
 Public verification is anonymous.
 No API key is required.
 
-Rate limiting is enforced using network-level controls.
+Rate limiting is enforced per [SECURITY.md](../SECURITY.md) §2.4 (current: per-IP fixed window, in-memory, before validation and registry lookup).
 
 Minimum protection:
 
-- per-IP request limiting;
+- per-IP request limiting (`429` + `rate_limited` envelope);
 - burst protection;
-- abuse monitoring.
+- abuse monitoring via public verification telemetry (without hash/proof-id persistence — Invariant 8).
 
 IP-based limiting alone is not considered a complete
 anti-enumeration solution.
@@ -460,7 +514,7 @@ the value of enumeration attempts.
 
 ## 5. Reuse Rule for Future Public API
 
-> The future public layer **must not implement its own verification logic**.
+> The public layer **must not implement its own verification logic** for owner-grade chain/file checks on the read path.
 
 **Required reuse:**
 
