@@ -679,7 +679,9 @@ intentionally different (prose label vs. field value).
 
 # 16. API KEY AUTHENTICATION
 
-Server API requests use API key authentication through X-API-KEY header.
+Server API requests use API key authentication through the `X-API-KEY` header.
+
+Full lifecycle, flows, and invariants: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) (Stage 8.0).
 
 ---
 
@@ -701,6 +703,15 @@ Local artifacts (PDF reports, ZIP exports, offline `proof.json`, GUI/CLI project
 - Cross-account access to private event metadata returns **404** (no existence side-channel via error type where ownership checks apply first).
 
 Public verification **does not** use account context and **must not** reveal which account(s) registered a hash.
+
+### Ownership Boundary
+
+Frozen at Stage 8.0 — see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §4 and [SECURITY.md](SECURITY.md) §2.5 Invariant 15.
+
+- `account_id` is the owner of all chains, events, and proofs.
+- An API key belongs to exactly one account.
+- Cross-account access is forbidden (`404` non-leak).
+- Tariff plan (`tariff_plan_id` → `tariff_plans`) determines limits and features for the account.
 
 ## 18.3 Public vs Private API Boundary
 

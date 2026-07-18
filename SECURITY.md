@@ -177,6 +177,31 @@ A change to any invariant below is an intentional edit to `SECURITY.md`, not a s
 
 11. All security-sensitive changes require a corresponding update to this document (`SECURITY.md`) and, where ownership or API boundaries are affected, to `SYSTEM_CONTRACT.md`, in the same change set.
 
+12. API keys are bearer credentials with the same security requirements as passwords.
+
+13. API keys are never stored in plaintext.
+
+14. Revoked API keys are rejected immediately.
+
+15. Account is the ownership boundary for all resources.
+
+16. Authentication layer **MUST NOT** leak account existence via timing or error messages — except the documented `409 Conflict` on duplicate email at `POST /accounts/register` (see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §3).
+
+---
+
+## 2.6 Authentication Model
+
+Full specification: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) (frozen at Stage 8.0).
+
+| Surface | Authentication | Notes |
+|---------|----------------|-------|
+| **Public API** (`/public/*`) | None | Anonymous; rate-limited per §2.4 |
+| **Private API** (`/v1/*`) | `X-API-KEY` required | Bearer API key; SHA-256 hash lookup |
+| **Account management** (`/accounts/*`) | `X-API-KEY` required | Except `POST /accounts/register` (public bootstrap) |
+| **Web sessions** (Stage 8.3) | Cookie-based | Dashboard only; deferred — requires `password_hash` |
+
+**API key storage (normative):** `key_hash = SHA-256(secret)` where `secret` is the 32-hex portion after the `ev_` prefix. Plaintext keys are returned once at creation only.
+
 ---
 
 ## Integrity Guarantees (summary)
