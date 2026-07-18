@@ -683,10 +683,68 @@ Server API requests use API key authentication through X-API-KEY header.
 
 ---
 
-# 17. FUTURE PRODUCT LAYERS
+# 17. ARCHITECTURE & PUBLIC SECURITY BOUNDARY
 
-Vault Layer: planned
+**Status:** Frozen at Stage 7. Security invariants: [SECURITY.md](SECURITY.md) §2.5. Verification model: [docs/VERIFY_MODEL.md](docs/VERIFY_MODEL.md).
 
-Identity Layer: planned
+## 18.1 Source of Truth
 
-Billing Layer: planned
+The **server** is the authoritative source of truth for **anchored evidence** and **account ownership**.
+
+Local artifacts (PDF reports, ZIP exports, offline `proof.json`, GUI/CLI project files) are verifiable **projections** of server-anchored state — not an independent source of truth. See [SECURITY.md](SECURITY.md) Security Invariant 1.
+
+## 18.2 Ownership Model
+
+- Every anchored event belongs to exactly one **account** (`account_id`).
+- Authenticated API operations (`X-API-KEY`) resolve the caller's account and enforce **ownership** before returning event-scoped data.
+- Private verification (`GET /v1/verify/{event_id}`) requires authentication and confirms the event belongs to the authenticated account before proof, chain, or file checks.
+- Cross-account access to private event metadata returns **404** (no existence side-channel via error type where ownership checks apply first).
+
+Public verification **does not** use account context and **must not** reveal which account(s) registered a hash.
+
+## 18.3 Public vs Private API Boundary
+
+| Layer | Authentication | Primary identifier | Disclosure |
+|-------|----------------|-------------------|------------|
+| **Private** (`/v1/*`, legacy `/events`, etc.) | `X-API-KEY` required | `event_id`, `chain_id` (within account scope) | Owner-grade: proof state, chain prefix integrity, file hash claim comparison |
+| **Public** (`/public/verify`, certificate PDF) | None | `file_hash` or opaque `public_proof_id` | Existence-only: registration fact without ownership or chain structure |
+
+Owner-grade evidence (full chain, Merkle proof, signatures, internal audit trail) is **never** exposed through public HTTP endpoints. See [SECURITY.md](SECURITY.md) Invariants 2, 5.
+
+## 18.4 Materialization Model
+
+Private event ledger → **public-safe projection** (materialized at anchor time):
+
+- Internal proofs and events remain in private storage.
+- When a proof becomes eligible, a **public-safe row** is written to the public projection (registry) containing only fields approved for external disclosure.
+- Public handlers query **only** the public projection — not `events`, internal proof tables, or account tables.
+- The concrete table or view name is an implementation detail; the invariant is "dedicated projection without reversible private references" ([SECURITY.md](SECURITY.md) Invariant 6).
+
+`public_proof_id` is assigned at materialization, opaque (`pv_` + base58), and must not encode internal ids (Invariant 9).
+
+## 18.5 Public Disclosure Boundary
+
+Public responses answer: **"Is this hash currently registered in the public projection?"**
+
+They do **not** answer:
+
+- Who registered it
+- How many accounts registered it
+- Internal chain or event structure
+- Whether a hash was previously submitted but is now disabled (beyond `exists: false` for the current query)
+
+**Zero-disclosure fields** — public JSON, PDF, headers, and URLs **must not** include the forbidden set listed in [SECURITY.md](SECURITY.md) §2.5 Invariant 3 (`chain_id`, `event_id`, `merkle_root`, internal signatures, account identifiers, registration cardinality, and equivalent metadata). Do not duplicate the full list here; treat §2.5 as normative.
+
+Cross-account registration of the same hash must produce the **same public disclosure shape** as a single-account registration (Invariant 4).
+
+---
+
+# 18. FUTURE PRODUCT LAYERS
+
+See [ROADMAP.md](ROADMAP.md) for the full split between frozen architecture, evolvable implementation, and product-layer work.
+
+Summary:
+
+- Vault Layer: planned
+- Identity Layer: planned
+- Billing Layer: planned

@@ -1,8 +1,13 @@
 # Evident Ledger — Verification Model
 
-This document freezes the trust model for `/v1/verify` as implemented through Stage 5.4.
-It describes verification layers, disclosure rules, and architectural boundaries for future `/public/verify`.
-**It does not define runtime behavior by itself** — the implementation in `src/api/v1/` is authoritative.
+This document freezes the trust model for private verification (`/v1/verify`) and the public verification layer (`/public/verify`) as implemented through Stage 6.6 and documented in Stage 7.
+It describes verification layers, disclosure rules, and architectural boundaries.
+**It does not define runtime behavior by itself** — the implementation in `src/api/` is authoritative.
+
+**Related documents:**
+
+- [SECURITY.md](../SECURITY.md) — threat model, security assumptions, public API guarantees, security controls, and **security invariants** (architectural truths that survive implementation changes).
+- [SYSTEM_CONTRACT.md](../SYSTEM_CONTRACT.md) — ownership model, public/private API boundary, materialization, and system-wide contracts.
 
 ---
 
@@ -517,5 +522,8 @@ Future events
 
 ## Document status
 
-Frozen at Stage 5.5. Changes to verification semantics require a new stage and implementation review.
-Stage 6 (Public Verification Layer) should treat this document as the architectural boundary.
+**Frozen at Stage 7 (Architecture Freeze).**
+
+Changes to verification semantics, public disclosure rules, or trust boundaries require an explicit stage and updates to this document, [SECURITY.md](../SECURITY.md) (§2.5 invariants), and [SYSTEM_CONTRACT.md](../SYSTEM_CONTRACT.md) where ownership or API boundaries are affected — per Security Invariant 11.
+
+For implementation details of the public perimeter (Stages 6.3–6.6): existence-only responses, rate limiting, format validation, unified query path, and public verification telemetry — see [SECURITY.md](../SECURITY.md) §2.3–2.4.
