@@ -18,8 +18,51 @@
     <p class="value">{{ current_period_end }}</p>
   </section>
   <section class="card">
-    <h2>Pending plan</h2>
+    <h2>Pending</h2>
     <p class="value">{{ pending_plan_display }}</p>
   </section>
+  {% if can_upgrade %}
+  <section class="card">
+    <h2>Upgrade</h2>
+    <p class="value">Legal plan</p>
+    <p style="margin-top: 10px;">
+      <button class="btn upgrade-plan-btn" type="button">Upgrade plan</button>
+    </p>
+    <p class="upgrade-error error" aria-live="polite"></p>
+  </section>
+  {% endif %}
 </div>
+{% if can_upgrade %}
+<script>
+  document.querySelectorAll('.upgrade-plan-btn').forEach((button) => {
+    button.addEventListener('click', async () => {
+      const errorEl = button.parentElement.parentElement.querySelector('.upgrade-error');
+      if (errorEl) errorEl.textContent = '';
+      button.disabled = true;
+      try {
+        const response = await fetch('/dashboard/upgrade', {
+          method: 'POST',
+          credentials: 'same-origin',
+        });
+        const body = await response.json().catch(() => ({}));
+        if (response.ok && body.checkout_url) {
+          window.location.href = body.checkout_url;
+          return;
+        }
+        if (response.status === 409) {
+          if (errorEl) errorEl.textContent = body.message || 'Subscription already active';
+          return;
+        }
+        if (errorEl) {
+          errorEl.textContent = body.error?.message || 'Unable to start checkout';
+        }
+      } catch (_) {
+        if (errorEl) errorEl.textContent = 'Unable to start checkout';
+      } finally {
+        button.disabled = false;
+      }
+    });
+  });
+</script>
+{% endif %}
 {% endblock %}

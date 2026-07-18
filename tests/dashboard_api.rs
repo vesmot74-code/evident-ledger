@@ -30,16 +30,7 @@ async fn test_pool() -> sqlx::PgPool {
 }
 
 fn test_state(pool: sqlx::PgPool) -> AppState {
-    AppState {
-        db: pool,
-        signer: Arc::new(
-            evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
-        ),
-        config: {
-            common::setup_test_env();
-            AppConfig::from_env()
-        },
-    }
+    common::test_app_state(pool)
 }
 
 fn combined_app(state: AppState) -> axum::Router {

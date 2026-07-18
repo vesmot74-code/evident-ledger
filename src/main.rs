@@ -55,11 +55,7 @@ async fn main() {
         println!("Dev mode: enabled (tariff switcher available)");
     }
 
-    let state = state::AppState {
-        db: pool,
-        signer,
-        config: config.clone(),
-    };
+    let state = state::AppState::new(pool, signer, config.clone());
 
     let rate_limits =
         state::rate_limiter::PublicRateLimitState::from_config(config.trust_proxy_headers);
@@ -70,6 +66,7 @@ async fn main() {
     let auth_routes = api::auth::router(state.clone(), login_limits);
     let dashboard_ui = web::dashboard::router(state.clone());
     let dashboard_api = api::dashboard::router(state.clone());
+    let dashboard_billing = api::dashboard_billing::router(state.clone());
 
     let app = axum::Router::new()
         .route(
@@ -103,7 +100,9 @@ async fn main() {
         .nest("/auth", auth_routes)
         .nest(
             "/dashboard",
-            dashboard_ui.merge(dashboard_api),
+            dashboard_ui
+                .merge(dashboard_api)
+                .merge(dashboard_billing),
         )
         .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);

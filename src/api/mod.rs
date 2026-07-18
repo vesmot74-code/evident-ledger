@@ -4,6 +4,7 @@ pub mod auth;
 pub mod backup;
 pub mod chains;
 pub mod dashboard;
+pub mod dashboard_billing;
 pub mod events;
 pub mod identity;
 pub mod paddle_webhook;

@@ -1,4 +1,5 @@
 pub mod linking;
+pub mod client;
 pub mod models;
 pub mod processor;
 pub mod signature;

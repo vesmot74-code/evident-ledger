@@ -54,13 +54,7 @@ fn test_rate_limits(verify_max: u32, window_secs: u64) -> PublicRateLimitState {
 }
 
 fn test_state_with_pool(pool: sqlx::PgPool) -> AppState {
-    AppState {
-        db: pool,
-        signer: Arc::new(
-            evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
-        ),
-        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
-    }
+    common::test_app_state(pool)
 }
 
 fn peer_request(uri: &str) -> Request<Body> {

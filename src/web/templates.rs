@@ -7,6 +7,7 @@ pub struct DashboardIndexTemplate {
     pub plan_display: String,
     pub usage_summary: String,
     pub percentage: String,
+    pub can_upgrade: bool,
 }
 
 #[derive(Template)]
@@ -17,6 +18,7 @@ pub struct SubscriptionTemplate {
     pub subscription_status: String,
     pub current_period_end: String,
     pub pending_plan_display: String,
+    pub can_upgrade: bool,
 }
 
 #[derive(Template)]

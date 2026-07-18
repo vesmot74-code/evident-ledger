@@ -2,6 +2,7 @@ pub mod account;
 pub mod accounts;
 pub mod attestation;
 pub mod backup;
+pub mod billing;
 pub mod backup_restore;
 pub mod backup_snapshot;
 pub mod capabilities;

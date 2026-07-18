@@ -108,11 +108,7 @@ async fn legacy_hash_attestation_pdf_returns_410() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let state = AppState {
-        db: pool,
-        signer,
-        config,
-    };
+    let state = common::test_app_state(pool);
     let app = Router::new().nest("/verify", router(state));
     let port = spawn_server(app).await;
     let hash = canonical_hash("legacy-410");
@@ -146,11 +142,7 @@ async fn public_verify_returns_existence_only_fields() {
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
     ));
-    let state = AppState {
-        db: pool.clone(),
-        signer,
-        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
-    };
+    let state = common::test_app_state(pool.clone());
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
     let client = reqwest::Client::new();
@@ -204,11 +196,7 @@ async fn public_certificate_pdf_has_no_private_fields() {
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
     ));
-    let state = AppState {
-        db: pool.clone(),
-        signer,
-        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
-    };
+    let state = common::test_app_state(pool.clone());
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
     let client = reqwest::Client::new();
@@ -277,11 +265,7 @@ async fn cross_account_same_hash_reveals_no_multi_tenant_metadata() {
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
     ));
-    let state = AppState {
-        db: pool.clone(),
-        signer,
-        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
-    };
+    let state = common::test_app_state(pool.clone());
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
     let resp = reqwest::Client::new()

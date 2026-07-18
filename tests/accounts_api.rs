@@ -31,13 +31,7 @@ async fn test_pool() -> sqlx::PgPool {
 }
 
 fn test_state(pool: sqlx::PgPool) -> AppState {
-    AppState {
-        db: pool,
-        signer: Arc::new(
-            evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
-        ),
-        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
-    }
+    common::test_app_state(pool)
 }
 
 fn rate_limits(register_max: u32) -> PublicRateLimitState {

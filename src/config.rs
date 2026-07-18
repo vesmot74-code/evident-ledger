@@ -5,6 +5,8 @@ pub struct AppConfig {
     pub dev_mode: bool,
     pub trust_proxy_headers: bool,
     pub paddle_webhook_secret: String,
+    pub paddle_api_key: String,
+    pub paddle_api_base_url: String,
 }
 
 impl AppConfig {
@@ -31,10 +33,26 @@ impl AppConfig {
             }
         });
 
+        let paddle_api_key = env::var("PADDLE_API_KEY").unwrap_or_else(|_| {
+            #[cfg(test)]
+            {
+                return "test-paddle-api-key".into();
+            }
+            #[cfg(not(test))]
+            {
+                panic!("PADDLE_API_KEY must be set");
+            }
+        });
+
+        let paddle_api_base_url = env::var("PADDLE_API_BASE_URL")
+            .unwrap_or_else(|_| "https://api.paddle.com".into());
+
         Self {
             dev_mode,
             trust_proxy_headers,
             paddle_webhook_secret,
+            paddle_api_key,
+            paddle_api_base_url,
         }
     }
 
@@ -44,6 +62,8 @@ impl AppConfig {
             dev_mode: true,
             trust_proxy_headers: false,
             paddle_webhook_secret: "test-paddle-webhook-secret".into(),
+            paddle_api_key: "test-paddle-api-key".into(),
+            paddle_api_base_url: "https://api.paddle.com".into(),
         }
     }
 }
