@@ -14,6 +14,9 @@ struct EventAccessRow {
     created_at: DateTime<Utc>,
     signature: String,
     account_id: Option<Uuid>,
+    identity_key_id: Option<Uuid>,
+    identity_signature: Option<String>,
+    identity_fingerprint: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -26,6 +29,9 @@ pub struct Event {
     pub sequence: i64,
     pub created_at: DateTime<Utc>,
     pub signature: String,
+    pub identity_key_id: Option<Uuid>,
+    pub identity_signature: Option<String>,
+    pub identity_fingerprint: Option<String>,
 }
 
 /// Ensures `event_id` exists and belongs to `account_id`.
@@ -47,7 +53,10 @@ pub async fn verify_event_access(
             e.sequence,
             e.created_at,
             e.signature,
-            c.account_id
+            c.account_id,
+            e.identity_key_id,
+            e.identity_signature,
+            e.identity_fingerprint
         FROM events e
         INNER JOIN chains c ON c.chain_id = e.chain_id
         WHERE e.event_id = $1
@@ -79,6 +88,9 @@ pub async fn verify_event_access(
         sequence: row.sequence,
         created_at: row.created_at,
         signature: row.signature,
+        identity_key_id: row.identity_key_id,
+        identity_signature: row.identity_signature,
+        identity_fingerprint: row.identity_fingerprint,
     })
 }
 

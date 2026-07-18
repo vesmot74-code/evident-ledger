@@ -348,6 +348,9 @@ mod tests {
             sequence: 1,
             created_at: Utc::now(),
             signature: String::new(),
+            identity_key_id: None,
+            identity_signature: None,
+            identity_fingerprint: None,
         };
         let body = pending_proof_response(&event, Uuid::new_v4());
         assert_eq!(body["proof_status"], "pending");

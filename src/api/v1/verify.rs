@@ -7,6 +7,8 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use uuid::Uuid;
 
+use crate::merkle::MerkleTree;
+use crate::service::identity_verification::IdentityVerificationService;
 use crate::state::AppState;
 
 use super::auth::V1Auth;
@@ -80,6 +82,42 @@ async fn handler(
             // 6. File hash claim verification (Stage 5.4). stored hash never exposed.
             let file = verify_file_hash(provided_file_hash, &event.file_hash);
 
+            let identity_event = crate::models::event::Event {
+                event_id: event.event_id,
+                chain_id: event.chain_id,
+                parent_event_id: event.parent_event_id,
+                file_hash: event.file_hash.clone(),
+                sequence: event.sequence,
+                identity_key_id: event.identity_key_id,
+                identity_signature: event.identity_signature.clone(),
+                identity_fingerprint: event.identity_fingerprint.clone(),
+            };
+            let canonical_event_hash_hex = MerkleTree::build_leaf(
+                event.sequence,
+                &event.event_id,
+                &event.parent_event_id,
+                &event.file_hash,
+            );
+            let identity_verification = IdentityVerificationService::verify(
+                &state.db,
+                &identity_event,
+                &canonical_event_hash_hex,
+            )
+            .await
+            .map_err(|_| ApiError::Internal)?;
+
+            let identity_signature = if identity_verification.present {
+                Some(json!({
+                    "present": true,
+                    "valid": identity_verification.valid,
+                    "reason": identity_verification.reason,
+                    "fingerprint": identity_verification.fingerprint,
+                    "key_id": identity_verification.key_id,
+                }))
+            } else {
+                None
+            };
+
             Ok(Json(json!({
                 "event_id": event.event_id,
                 "chain_id": event.chain_id,
@@ -96,6 +134,7 @@ async fn handler(
                     "provided_hash": file.provided_hash,
                     "is_valid_file_hash": file.is_valid_file_hash,
                 },
+                "identity_signature": identity_signature,
                 "request_id": request_id,
             })))
         }
