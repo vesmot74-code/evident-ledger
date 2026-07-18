@@ -200,7 +200,7 @@ Full specification: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) (frozen at Stage 8.
 | **Account management** (`/accounts/*`) | `X-API-KEY` required | Except `POST /accounts/register` (public bootstrap) |
 | **Web sessions** (Stage 8.3) | Cookie-based | Dashboard only; deferred — requires `password_hash` |
 
-**API key storage (normative):** `key_hash = SHA-256(secret)` where `secret` is the 32-hex portion after the `ev_` prefix. Plaintext keys are returned once at creation only.
+**API key storage (normative):** `key_hash = SHA-256(secret)` where `secret` is the 32-hex portion after the `ev_` prefix. Pre-Stage 8.1 legacy keys use `SHA-256(full_key)` — see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §1. Plaintext keys are returned once at creation only.
 
 ---
 

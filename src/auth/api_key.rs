@@ -7,6 +7,15 @@ pub const API_KEY_PREFIX: &str = "ev_";
 pub const SECRET_HEX_LEN: usize = 32;
 pub const KEY_PREFIX_DISPLAY_LEN: usize = 8;
 
+/// Stored in `api_keys.key_prefix` for rows created before Stage 8.1 (prefix not recoverable).
+pub const LEGACY_KEY_PREFIX_STORED: &str = "legacy:no-prefix";
+
+/// Shown in `GET /accounts/api-keys` for [`LEGACY_KEY_PREFIX_STORED`] rows.
+pub const LEGACY_KEY_PREFIX_DISPLAY: &str = "legacy key — prefix unavailable";
+
+/// First migration backfill used this sentinel; normalized at read time like [`LEGACY_KEY_PREFIX_STORED`].
+const LEGACY_KEY_PREFIX_STORED_V1: &str = "ev_legacy";
+
 #[derive(Debug, Clone)]
 pub struct GeneratedApiKey {
     pub full_key: String,
@@ -53,6 +62,24 @@ pub fn display_prefix(full_key: &str) -> String {
     format!("{visible}…")
 }
 
+/// Maps a stored `key_prefix` to the value returned by account APIs.
+pub fn key_prefix_for_listing(stored: &str) -> String {
+    if stored == LEGACY_KEY_PREFIX_STORED || stored == LEGACY_KEY_PREFIX_STORED_V1 {
+        LEGACY_KEY_PREFIX_DISPLAY.to_string()
+    } else {
+        stored.to_string()
+    }
+}
+
+/// Whether lookup uses legacy full-string hashing (pre-Stage 8.1 keys).
+pub fn is_legacy_lookup_key(raw_key: &str) -> bool {
+    !(raw_key.starts_with(API_KEY_PREFIX)
+        && raw_key.len() == API_KEY_PREFIX.len() + SECRET_HEX_LEN
+        && raw_key[API_KEY_PREFIX.len()..]
+            .chars()
+            .all(|c| c.is_ascii_hexdigit()))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -90,5 +117,19 @@ mod tests {
         hasher.update(legacy.as_bytes());
         let expected = hex::encode(hasher.finalize());
         assert_eq!(hash_api_key_for_lookup(legacy), expected);
+        assert!(is_legacy_lookup_key(legacy));
+    }
+
+    #[test]
+    fn legacy_prefix_sentinels_map_to_display_label() {
+        assert_eq!(
+            key_prefix_for_listing(LEGACY_KEY_PREFIX_STORED),
+            LEGACY_KEY_PREFIX_DISPLAY
+        );
+        assert_eq!(
+            key_prefix_for_listing(LEGACY_KEY_PREFIX_STORED_V1),
+            LEGACY_KEY_PREFIX_DISPLAY
+        );
+        assert_eq!(key_prefix_for_listing("ev_abcd1234…"), "ev_abcd1234…");
     }
 }

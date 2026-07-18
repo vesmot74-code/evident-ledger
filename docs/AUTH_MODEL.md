@@ -39,6 +39,16 @@ key_hash = SHA-256(secret)
 
 The `ev_` prefix is **not** included in hashing — it is metadata and is not secret material.
 
+**Legacy lookup (pre-Stage 8.1 keys):** API keys created before the `ev_<secret>` format (dev seeds, manual inserts, early integration tests) did not use the secret-only hash. Authentication **MUST** accept them until explicitly retired:
+
+```
+key_hash = SHA-256(full_key_as_presented_in_X-API-KEY)
+```
+
+A credential is treated as **current-format** only when it matches `ev_` + exactly 32 hexadecimal characters; all other shapes use legacy full-string hashing. New keys created via `POST /accounts/register` or `POST /accounts/api-keys` always use the current format.
+
+**Removal policy:** legacy lookup is a **compatibility path**, not part of the long-term contract. It may be removed only after a dated update to this document and confirmation that no production accounts rely on non-`ev_` keys.
+
 **Rationale:** a 128-bit secret makes brute force infeasible. SHA-256 is sufficient for this threat model; bcrypt/argon2 would add per-request latency without meaningful security gain for high-entropy bearer tokens.
 
 The original key in plaintext **must not** be stored.
@@ -60,6 +70,14 @@ Only a **prefix** (e.g. `ev_a83f…`) and metadata are shown:
 
 - `created_at`
 - `revoked_at` (if revoked)
+
+**Legacy rows (pre-Stage 8.1):** the plaintext prefix cannot be recovered from `key_hash` alone. Such rows store an internal sentinel (`legacy:no-prefix` in the database) and list as:
+
+```
+legacy key — prefix unavailable
+```
+
+This is not a secret fragment and must not be mistaken for an `ev_…` prefix. Operators should rotate legacy keys to current-format keys when convenient.
 
 `last_used_at` is **not** in the current schema; it may be added in a future migration if needed.
 

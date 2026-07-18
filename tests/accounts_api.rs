@@ -515,3 +515,95 @@ async fn revoked_api_key_is_rejected() {
     )
     .await;
 }
+
+#[tokio::test]
+async fn list_api_keys_shows_legacy_placeholder_for_pre_stage81_rows() {
+    let pool = test_pool().await;
+    let email = unique_email("legacy-prefix-list");
+    cleanup_email(&pool, &email).await;
+
+    let app = accounts::router(test_state(pool.clone()), rate_limits(100));
+    let (_, registered) = register_account(&app, &email).await;
+    let account_id = Uuid::parse_str(registered["account_id"].as_str().unwrap()).unwrap();
+    let new_key = registered["api_key"].as_str().unwrap();
+
+    let legacy_plaintext = format!("dev-legacy-{}", Uuid::new_v4());
+    let legacy_hash = api_key::hash_api_key_for_lookup(&legacy_plaintext);
+    sqlx::query(
+        r#"
+        INSERT INTO api_keys (account_id, key_hash, key_prefix, label)
+        VALUES ($1, $2, $3, 'dev-legacy')
+        "#,
+    )
+    .bind(account_id)
+    .bind(&legacy_hash)
+    .bind(api_key::LEGACY_KEY_PREFIX_STORED)
+    .execute(&pool)
+    .await
+    .expect("insert legacy key");
+
+    let (status, body) = response_json(
+        app.clone(),
+        peer_request("GET", "/api-keys", None, Some(new_key)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let prefixes: Vec<&str> = body["api_keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|row| row["key_prefix"].as_str().unwrap())
+        .collect();
+    assert!(prefixes.contains(&api_key::LEGACY_KEY_PREFIX_DISPLAY));
+    assert!(!prefixes.iter().any(|p| *p == api_key::LEGACY_KEY_PREFIX_STORED));
+    assert!(!prefixes.iter().any(|p| p.starts_with("ev_legacy")));
+
+    let (status, _) = response_json(
+        app,
+        peer_request("GET", "/me", None, Some(&legacy_plaintext)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    cleanup_account(&pool, account_id).await;
+}
+
+#[tokio::test]
+async fn list_api_keys_normalizes_ev_legacy_sentinel_from_first_migration() {
+    let pool = test_pool().await;
+    let email = unique_email("ev-legacy-sentinel");
+    cleanup_email(&pool, &email).await;
+
+    let app = accounts::router(test_state(pool.clone()), rate_limits(100));
+    let (_, registered) = register_account(&app, &email).await;
+    let account_id = Uuid::parse_str(registered["account_id"].as_str().unwrap()).unwrap();
+    let new_key = registered["api_key"].as_str().unwrap();
+
+    sqlx::query(
+        r#"
+        UPDATE api_keys
+        SET key_prefix = 'ev_legacy'
+        WHERE account_id = $1
+          AND key_hash = $2
+        "#,
+    )
+    .bind(account_id)
+    .bind(api_key::hash_api_key_for_lookup(new_key))
+    .execute(&pool)
+    .await
+    .expect("simulate first migration backfill");
+
+    let (status, body) = response_json(
+        app,
+        peer_request("GET", "/api-keys", None, Some(new_key)),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(
+        body["api_keys"][0]["key_prefix"].as_str().unwrap(),
+        api_key::LEGACY_KEY_PREFIX_DISPLAY
+    );
+
+    cleanup_account(&pool, account_id).await;
+}

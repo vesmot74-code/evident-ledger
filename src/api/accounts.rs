@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::auth::AuthedAccount;
+use crate::auth::api_key;
 use crate::middleware::public_rate_limit::{
     public_rate_limit_middleware, PublicRateLimitMiddlewareState,
 };
@@ -104,7 +105,7 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
 fn map_key_record(record: ApiKeyRecord) -> ApiKeyListItem {
     ApiKeyListItem {
         id: record.api_key_id,
-        key_prefix: record.key_prefix,
+        key_prefix: api_key::key_prefix_for_listing(&record.key_prefix),
         label: record.label,
         created_at: record.created_at,
         revoked_at: record.revoked_at,
@@ -239,7 +240,7 @@ async fn create_key_handler(
             Json(CreateApiKeyResponse {
                 id: record.api_key_id,
                 api_key: generated.full_key,
-                key_prefix: record.key_prefix,
+                key_prefix: api_key::key_prefix_for_listing(&record.key_prefix),
                 label: record.label,
                 created_at: record.created_at,
             }),
