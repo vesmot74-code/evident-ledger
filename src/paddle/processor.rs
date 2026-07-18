@@ -1,4 +1,4 @@
-//! Paddle webhook business logic (Stage 8.2b).
+//! Paddle webhook business logic (Stage 8.2b, extended 8.2d).
 
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Row, Transaction};
@@ -6,21 +6,22 @@ use uuid::Uuid;
 
 use super::models::{is_downgrade, is_upgrade, PaddleWebhookEvent, TariffPlanRow};
 use super::webhook_store::{
-    find_by_paddle_event_id, insert_received, last_processed_occurred_at, mark_failed,
-    mark_processed, mark_processing, payload_hash, WebhookEventRow,
+    find_by_paddle_event_id, insert_pending_link, insert_received, insert_received_unlinked,
+    last_processed_occurred_at, mark_failed, mark_processed, mark_processing,
+    mark_waiting_for_account_link, payload_hash, WebhookEventRow,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WebhookOutcome {
     Processed,
     Idempotent,
+    WaitingForAccountLink,
 }
 
 #[derive(Debug)]
 pub enum WebhookError {
     PayloadHashConflict,
     InvalidStatusTransition,
-    AccountNotFound,
     PlanNotFound,
     MissingField(&'static str),
     Database(String),
@@ -76,9 +77,80 @@ pub async fn process_paddle_webhook(
 
     let account = resolve_account_by_paddle_customer(pool, customer_id)
         .await
-        .map_err(|e| WebhookError::Database(e.to_string()))?
-        .ok_or(WebhookError::AccountNotFound)?;
+        .map_err(|e| WebhookError::Database(e.to_string()))?;
 
+    let Some(account) = account else {
+        return store_unlinked_webhook(pool, event, &hash, customer_id).await;
+    };
+
+    process_linked_webhook(pool, event, &hash, account).await
+}
+
+async fn store_unlinked_webhook(
+    pool: &PgPool,
+    event: &PaddleWebhookEvent,
+    hash: &str,
+    customer_id: &str,
+) -> Result<WebhookOutcome, WebhookError> {
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| WebhookError::Database(e.to_string()))?;
+
+    let webhook_id = match insert_received_unlinked(
+        &mut tx,
+        &event.event_id,
+        &event.normalized_event_type(),
+        hash,
+        event.subscription_id(),
+        event.occurred_at,
+    )
+    .await
+    {
+        Ok(id) => id,
+        Err(e) if is_unique_violation(&e) => {
+            tx.rollback().await.ok();
+            if let Some(existing) = find_by_paddle_event_id(pool, &event.event_id)
+                .await
+                .map_err(|e| WebhookError::Database(e.to_string()))?
+            {
+                return handle_existing_event(existing, hash);
+            }
+            return Err(WebhookError::Database(e.to_string()));
+        }
+        Err(e) => return Err(WebhookError::Database(e.to_string())),
+    };
+
+    if !mark_processing(&mut tx, webhook_id)
+        .await
+        .map_err(|e| WebhookError::Database(e.to_string()))?
+    {
+        tx.rollback().await.ok();
+        return Err(WebhookError::InvalidStatusTransition);
+    }
+
+    let paddle_email = event.customer_email().unwrap_or("");
+    insert_pending_link(&mut tx, customer_id, paddle_email)
+        .await
+        .map_err(|e| WebhookError::Database(e.to_string()))?;
+
+    mark_waiting_for_account_link(&mut tx, webhook_id)
+        .await
+        .map_err(|e| WebhookError::Database(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| WebhookError::Database(e.to_string()))?;
+
+    Ok(WebhookOutcome::WaitingForAccountLink)
+}
+
+async fn process_linked_webhook(
+    pool: &PgPool,
+    event: &PaddleWebhookEvent,
+    hash: &str,
+    account: AccountBillingRow,
+) -> Result<WebhookOutcome, WebhookError> {
     let mut tx = pool
         .begin()
         .await
@@ -88,7 +160,7 @@ pub async fn process_paddle_webhook(
         &mut tx,
         &event.event_id,
         &event.normalized_event_type(),
-        &hash,
+        hash,
         account.account_id,
         event.subscription_id(),
         event.occurred_at,
@@ -102,7 +174,7 @@ pub async fn process_paddle_webhook(
                 .await
                 .map_err(|e| WebhookError::Database(e.to_string()))?
             {
-                return handle_existing_event(existing, &hash);
+                return handle_existing_event(existing, hash);
             }
             return Err(WebhookError::Database(e.to_string()));
         }
@@ -149,7 +221,7 @@ fn handle_existing_event(
     if existing.payload_hash != hash {
         return Err(WebhookError::PayloadHashConflict);
     }
-    if existing.status == "processed" {
+    if existing.status == "processed" || existing.status == "waiting_for_account_link" {
         return Ok(WebhookOutcome::Idempotent);
     }
     Err(WebhookError::InvalidStatusTransition)

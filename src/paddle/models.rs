@@ -23,6 +23,7 @@ pub struct PaddleEventData {
 #[derive(Debug, Clone, Deserialize)]
 pub struct PaddleCustomerRef {
     pub id: Option<String>,
+    pub email: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -57,6 +58,10 @@ impl PaddleWebhookEvent {
             .customer_id
             .as_deref()
             .or_else(|| self.data.customer.as_ref()?.id.as_deref())
+    }
+
+    pub fn customer_email(&self) -> Option<&str> {
+        self.data.customer.as_ref()?.email.as_deref()
     }
 
     pub fn subscription_id(&self) -> Option<&str> {

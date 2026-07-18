@@ -60,10 +60,11 @@ async fn webhook_handler(
             Json(json!({ "status": "idempotent" })),
         )
             .into_response(),
-        Err(WebhookError::AccountNotFound) => error_response(
-            StatusCode::NOT_FOUND,
-            json!({ "error": "account_not_found" }),
-        ),
+        Ok(WebhookOutcome::WaitingForAccountLink) => (
+            StatusCode::OK,
+            Json(json!({ "status": "waiting_for_account_link" })),
+        )
+            .into_response(),
         Err(WebhookError::PayloadHashConflict) => error_response(
             StatusCode::CONFLICT,
             json!({ "error": "conflict" }),

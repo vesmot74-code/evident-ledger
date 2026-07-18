@@ -113,6 +113,87 @@ pub async fn mark_processed(
     Ok(())
 }
 
+pub async fn insert_received_unlinked(
+    tx: &mut Transaction<'_, Postgres>,
+    paddle_event_id: &str,
+    event_type: &str,
+    payload_hash: &str,
+    subscription_id: Option<&str>,
+    event_occurred_at: DateTime<Utc>,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        INSERT INTO paddle_webhook_events (
+            paddle_event_id, event_type, payload_hash, account_id,
+            subscription_id, event_occurred_at, status
+        )
+        VALUES ($1, $2, $3, NULL, $4, $5, 'received')
+        RETURNING id
+        "#,
+    )
+    .bind(paddle_event_id)
+    .bind(event_type)
+    .bind(payload_hash)
+    .bind(subscription_id)
+    .bind(event_occurred_at)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+pub async fn mark_waiting_for_account_link(
+    tx: &mut Transaction<'_, Postgres>,
+    id: Uuid,
+) -> Result<(), sqlx::Error> {
+    sqlx::query(
+        r#"
+        UPDATE paddle_webhook_events
+        SET status = 'waiting_for_account_link', processed_at = now(), error_message = NULL
+        WHERE id = $1 AND status = 'processing'
+        "#,
+    )
+    .bind(id)
+    .execute(&mut **tx)
+    .await?;
+    Ok(())
+}
+
+pub async fn insert_pending_link(
+    tx: &mut Transaction<'_, Postgres>,
+    paddle_customer_id: &str,
+    paddle_email: &str,
+) -> Result<Uuid, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        INSERT INTO paddle_pending_links (paddle_customer_id, paddle_email)
+        VALUES ($1, $2)
+        RETURNING id
+        "#,
+    )
+    .bind(paddle_customer_id)
+    .bind(paddle_email)
+    .fetch_one(&mut **tx)
+    .await
+}
+
+pub async fn pending_link_exists(
+    pool: &PgPool,
+    paddle_customer_id: &str,
+) -> Result<bool, sqlx::Error> {
+    sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1
+            FROM paddle_pending_links
+            WHERE paddle_customer_id = $1
+              AND resolved_at IS NULL
+        )
+        "#,
+    )
+    .bind(paddle_customer_id)
+    .fetch_one(pool)
+    .await
+}
+
 pub async fn mark_failed(
     tx: &mut Transaction<'_, Postgres>,
     id: Uuid,

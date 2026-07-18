@@ -358,31 +358,46 @@ async fn invalid_signature_rejected_without_db_changes() {
 }
 
 #[tokio::test]
-async fn unknown_customer_returns_not_found_without_db_changes() {
+async fn unknown_customer_stored_as_waiting_for_account_link() {
     let pool = test_pool().await;
     let event_id = format!("evt_{}", Uuid::new_v4());
+    let customer_id = format!("ctm_{}", Uuid::new_v4());
     let app = paddle_webhook::router(test_state(pool.clone()));
 
     let body = event_payload(
         &event_id,
         "subscription.created",
-        "ctm_does_not_exist",
+        &customer_id,
         &format!("sub_{}", Uuid::new_v4()),
         "2026-08-18T10:00:00Z",
     );
     let (status, json) = post_webhook(app, signed_request(&body)).await;
 
-    assert_eq!(status, StatusCode::NOT_FOUND);
-    assert_eq!(json["error"], "account_not_found");
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "waiting_for_account_link");
 
-    let rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1",
+    let webhook_status: String = sqlx::query_scalar(
+        "SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1",
     )
     .bind(&event_id)
     .fetch_one(&pool)
     .await
-    .expect("event count");
-    assert_eq!(rows, 0);
+    .expect("webhook status");
+    assert_eq!(webhook_status, "waiting_for_account_link");
+
+    let pending: bool = sqlx::query_scalar(
+        r#"
+        SELECT EXISTS(
+            SELECT 1 FROM paddle_pending_links
+            WHERE paddle_customer_id = $1 AND resolved_at IS NULL
+        )
+        "#,
+    )
+    .bind(&customer_id)
+    .fetch_one(&pool)
+    .await
+    .expect("pending link");
+    assert!(pending);
 }
 
 #[tokio::test]
