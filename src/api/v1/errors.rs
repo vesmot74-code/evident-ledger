@@ -45,6 +45,11 @@ pub enum ApiError {
     PasswordAlreadySet,
     Internal,
     NotImplemented,
+    EntitlementMissing,
+    IdentityKeyNotFound,
+    IdentityKeyRevoked,
+    IdentityKeyNotVerified,
+    InvalidIdentitySignature,
 }
 
 impl ApiError {
@@ -66,6 +71,11 @@ impl ApiError {
             ApiError::PasswordAlreadySet => StatusCode::CONFLICT,
             ApiError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
+            ApiError::EntitlementMissing => StatusCode::FORBIDDEN,
+            ApiError::IdentityKeyNotFound => StatusCode::NOT_FOUND,
+            ApiError::IdentityKeyRevoked => StatusCode::FORBIDDEN,
+            ApiError::IdentityKeyNotVerified => StatusCode::FORBIDDEN,
+            ApiError::InvalidIdentitySignature => StatusCode::UNAUTHORIZED,
         }
     }
 
@@ -87,6 +97,11 @@ impl ApiError {
             ApiError::PasswordAlreadySet => "conflict",
             ApiError::Internal => "internal_error",
             ApiError::NotImplemented => "not_implemented",
+            ApiError::EntitlementMissing => "entitlement_missing",
+            ApiError::IdentityKeyNotFound => "identity_key_not_found",
+            ApiError::IdentityKeyRevoked => "identity_key_revoked",
+            ApiError::IdentityKeyNotVerified => "identity_key_not_verified",
+            ApiError::InvalidIdentitySignature => "invalid_identity_signature",
         }
     }
 
@@ -114,6 +129,13 @@ impl ApiError {
             ApiError::PasswordAlreadySet => "Password is already set for this account",
             ApiError::Internal => "Internal server error",
             ApiError::NotImplemented => "Not implemented",
+            ApiError::EntitlementMissing => {
+                "Identity feature not available on current plan"
+            }
+            ApiError::IdentityKeyNotFound => "Identity key not found",
+            ApiError::IdentityKeyRevoked => "Identity key has been revoked",
+            ApiError::IdentityKeyNotVerified => "Identity key is not verified",
+            ApiError::InvalidIdentitySignature => "Signature verification failed",
         }
     }
 

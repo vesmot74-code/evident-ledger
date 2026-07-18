@@ -5,9 +5,14 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::merkle::MerkleTree;
 use crate::models::event::SubmitEventRequest;
 use crate::service::capabilities::get_account_capabilities;
-use crate::service::ledger::{ensure_chain_access_in_tx, insert_event_in_tx, LedgerError};
+use crate::service::entitlements::{require_feature, Feature};
+use crate::service::identity_signing::{IdentitySigningError, IdentitySigningService};
+use crate::service::ledger::{
+    ensure_chain_access_in_tx, insert_event_in_tx, plan_next_event, LedgerError,
+};
 use crate::public_proof::tsa_class_from_plan;
 use crate::signing::ServerSigner;
 
@@ -21,10 +26,19 @@ use super::proof_status::{derive_proof_status, ProofStatus};
 use super::validation::{is_valid_event_type, is_valid_file_hash};
 
 #[derive(Debug, Deserialize)]
+pub struct V1IdentitySignature {
+    pub key_id: Uuid,
+    pub signature: String,
+}
+
+#[derive(Debug, Deserialize)]
 pub struct V1SubmitEventRequest {
     pub chain_id: Uuid,
     pub file_hash: String,
     pub event_type: String,
+    /// Client-assigned event id (required when `identity_signature` is present).
+    pub event_id: Option<Uuid>,
+    pub identity_signature: Option<V1IdentitySignature>,
 }
 
 pub fn request_hash(body: &V1SubmitEventRequest) -> String {
@@ -41,6 +55,9 @@ pub fn validate_submit_request(body: &V1SubmitEventRequest) -> Result<(), ApiErr
         return Err(ApiError::InvalidRequest);
     }
     if !is_valid_file_hash(&body.file_hash) {
+        return Err(ApiError::InvalidRequest);
+    }
+    if body.identity_signature.is_some() && body.event_id.is_none() {
         return Err(ApiError::InvalidRequest);
     }
     Ok(())
@@ -108,6 +125,18 @@ fn map_ledger_error(err: LedgerError) -> ApiError {
     }
 }
 
+fn map_identity_signing_error(err: IdentitySigningError) -> ApiError {
+    match err {
+        IdentitySigningError::KeyNotFound => ApiError::IdentityKeyNotFound,
+        IdentitySigningError::KeyRevoked => ApiError::IdentityKeyRevoked,
+        IdentitySigningError::KeyNotVerified => ApiError::IdentityKeyNotVerified,
+        IdentitySigningError::InvalidSignature => ApiError::InvalidIdentitySignature,
+        IdentitySigningError::InvalidEventHash | IdentitySigningError::Database(_) => {
+            ApiError::Internal
+        }
+    }
+}
+
 pub async fn submit_v1_event(
     pool: &PgPool,
     signer: &ServerSigner,
@@ -128,6 +157,8 @@ pub async fn submit_v1_event(
         chain_id: body.chain_id,
         file_hash: file_hash.clone(),
         event_type: body.event_type.clone(),
+        event_id: body.event_id,
+        identity_signature: None,
     });
 
     let mut tx = pool.begin().await.map_err(|_| ApiError::Internal)?;
@@ -149,17 +180,54 @@ pub async fn submit_v1_event(
         .await
         .map_err(map_ledger_error)?;
 
+    let planned = plan_next_event(&mut *tx, body.chain_id, body.event_id)
+        .await
+        .map_err(map_ledger_error)?;
+
+    let canonical_event_hash = MerkleTree::build_leaf(
+        planned.sequence,
+        &planned.event_id,
+        &planned.parent_event_id,
+        &file_hash,
+    );
+
+    let identity_fields = if let Some(identity_signature) = &body.identity_signature {
+        require_feature(pool, account_id, Feature::Identity)
+            .await
+            .map_err(|_| ApiError::EntitlementMissing)?;
+
+        let (key_id, signature, fingerprint) = IdentitySigningService::validate_and_prepare(
+            pool,
+            account_id,
+            identity_signature.key_id,
+            &identity_signature.signature,
+            &canonical_event_hash,
+        )
+        .await
+        .map_err(map_identity_signing_error)?;
+
+        Some((key_id, signature, fingerprint))
+    } else {
+        None
+    };
+
     let ledger_req = SubmitEventRequest {
         chain_id: body.chain_id,
         file_hash: file_hash.clone(),
         idempotency_key: idempotency_key.to_string(),
         parent_event_id: None,
+        event_id: Some(planned.event_id),
+        identity_key_id: identity_fields.as_ref().map(|(key_id, _, _)| *key_id),
+        identity_signature: identity_fields.as_ref().map(|(_, signature, _)| signature.clone()),
+        identity_fingerprint: identity_fields.as_ref().map(|(_, _, fingerprint)| fingerprint.clone()),
     };
 
     let (event_id, sequence) =
         insert_event_in_tx(&mut *tx, pool, account_id, &ledger_req)
             .await
             .map_err(map_ledger_error)?;
+
+    debug_assert_eq!(event_id, planned.event_id);
 
     let (proof_status, _signature) =
         proof_context_for_event(&mut *tx, signer, body.chain_id, event_id, sequence).await?;

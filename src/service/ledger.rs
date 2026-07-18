@@ -7,6 +7,13 @@ use uuid::Uuid;
 
 use crate::{models::event::SubmitEventRequest, signing::ServerSigner};
 
+#[derive(Debug, Clone)]
+pub struct PlannedEvent {
+    pub event_id: Uuid,
+    pub sequence: i64,
+    pub parent_event_id: Uuid,
+}
+
 #[derive(Debug)]
 pub enum LedgerError {
     ChainNotFound,
@@ -126,6 +133,40 @@ pub async fn ensure_chain_access_in_tx(
     }
 }
 
+/// Reserves the next event slot for a chain inside an open transaction.
+pub async fn plan_next_event(
+    conn: &mut sqlx::PgConnection,
+    chain_id: Uuid,
+    event_id: Option<Uuid>,
+) -> Result<PlannedEvent, LedgerError> {
+    let head_event_id: Option<Uuid> = sqlx::query_scalar(
+        "SELECT head_event_id FROM chains WHERE chain_id = $1",
+    )
+    .bind(chain_id)
+    .fetch_one(&mut *conn)
+    .await
+    .map_err(LedgerError::DatabaseError)?;
+
+    let parent_event_id = head_event_id.unwrap_or(Uuid::nil());
+
+    let sequence = sqlx::query_scalar!(
+        r#"
+        SELECT COALESCE(MAX(sequence), 0) + 1
+        FROM events
+        WHERE chain_id = $1
+        "#,
+        chain_id
+    )
+    .fetch_one(&mut *conn)
+    .await?;
+
+    Ok(PlannedEvent {
+        event_id: event_id.unwrap_or_else(Uuid::new_v4),
+        sequence: sequence.unwrap_or(1),
+        parent_event_id,
+    })
+}
+
 pub async fn submit_event(
     pool: &PgPool,
     signer: &ServerSigner,
@@ -235,10 +276,6 @@ pub async fn insert_event_in_tx(
 
     let parent_event_id = head_event_id.unwrap_or(Uuid::nil());
 
-    // Sequence is assigned inside the open transaction while the chain row is locked
-    // (FOR UPDATE in ensure_chain_access_in_tx), so concurrent commits on the same
-    // chain_id get strictly monotonic sequence numbers. Defense-in-depth:
-    // events_chain_sequence_unique (see migrations/20260717104600_*).
     let sequence = sqlx::query_scalar!(
         r#"
         SELECT COALESCE(MAX(sequence), 0) + 1
@@ -250,9 +287,10 @@ pub async fn insert_event_in_tx(
     .fetch_one(&mut *conn)
     .await?;
 
-    let event_id = Uuid::new_v4();
+    let event_id = req.event_id.unwrap_or_else(Uuid::new_v4);
+    let sequence = sequence.unwrap_or(1);
 
-    sqlx::query!(
+    sqlx::query(
         r#"
         INSERT INTO events (
             event_id,
@@ -261,19 +299,24 @@ pub async fn insert_event_in_tx(
             file_hash,
             idempotency_key,
             signature,
-            sequence
+            sequence,
+            identity_key_id,
+            identity_signature,
+            identity_fingerprint
         )
-        VALUES ($1,$2,$3,$4,$5,$6,$7)
+        VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)
         "#,
-        event_id,
-        req.chain_id,
-        parent_event_id,
-        req.file_hash,
-        req.idempotency_key,
-        // Signature persisted by POST /v1/events (proof_material::persist_event_signature).
-        "",
-        sequence
     )
+    .bind(event_id)
+    .bind(req.chain_id)
+    .bind(parent_event_id)
+    .bind(&req.file_hash)
+    .bind(&req.idempotency_key)
+    .bind("")
+    .bind(sequence)
+    .bind(req.identity_key_id)
+    .bind(&req.identity_signature)
+    .bind(&req.identity_fingerprint)
     .execute(&mut *conn)
     .await?;
 
@@ -303,7 +346,7 @@ pub async fn insert_event_in_tx(
     .execute(&mut *conn)
     .await?;
 
-    Ok((event_id, sequence.unwrap_or(1)))
+    Ok((event_id, sequence))
 }
 
 async fn finalize_event_submission(

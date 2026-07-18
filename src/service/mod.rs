@@ -10,6 +10,7 @@ pub mod chains;
 pub mod entitlements;
 pub mod identity_challenge;
 pub mod identity_keys;
+pub mod identity_signing;
 pub mod ledger;
 pub mod subscription_enforcement;
 pub mod verification;
