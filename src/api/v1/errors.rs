@@ -37,6 +37,8 @@ pub enum ApiError {
     InvalidVerifyFileHash,
     ProofNotReady,
     ProofGenerationFailed,
+    PaymentRequired,
+    UsageLimitExceeded,
     Internal,
     NotImplemented,
 }
@@ -52,6 +54,8 @@ impl ApiError {
             ApiError::InvalidVerifyFileHash => StatusCode::BAD_REQUEST,
             ApiError::ProofNotReady => StatusCode::CONFLICT,
             ApiError::ProofGenerationFailed => StatusCode::UNPROCESSABLE_ENTITY,
+            ApiError::PaymentRequired => StatusCode::PAYMENT_REQUIRED,
+            ApiError::UsageLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
             ApiError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         }
@@ -67,6 +71,8 @@ impl ApiError {
             ApiError::InvalidVerifyFileHash => "invalid_request",
             ApiError::ProofNotReady => "proof_not_ready",
             ApiError::ProofGenerationFailed => "proof_generation_failed",
+            ApiError::PaymentRequired => "payment_required",
+            ApiError::UsageLimitExceeded => "usage_limit_exceeded",
             ApiError::Internal => "internal_error",
             ApiError::NotImplemented => "not_implemented",
         }
@@ -84,6 +90,12 @@ impl ApiError {
             }
             ApiError::ProofNotReady => "Proof material is not yet available for this event",
             ApiError::ProofGenerationFailed => "Proof generation failed for this event",
+            ApiError::PaymentRequired => {
+                "Subscription payment is past due. Write access is suspended until payment succeeds."
+            }
+            ApiError::UsageLimitExceeded => {
+                "Monthly commit limit for your tariff plan has been reached."
+            }
             ApiError::Internal => "Internal server error",
             ApiError::NotImplemented => "Not implemented",
         }

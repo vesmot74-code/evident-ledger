@@ -16,8 +16,10 @@ pub mod verify;
 
 use axum::{middleware, Router};
 
+use crate::middleware::subscription_enforcement::subscription_enforcement_middleware;
 use crate::state::AppState;
 
+use self::auth::v1_auth_middleware;
 use self::errors::request_id_layer;
 
 pub fn router(state: AppState) -> Router {
@@ -25,6 +27,11 @@ pub fn router(state: AppState) -> Router {
         .nest("/events", events::router(state.clone()))
         .nest("/proof", proof::router(state.clone()))
         .nest("/verify", verify::router(state.clone()))
-        .nest("/account", account::router(state))
+        .nest("/account", account::router(state.clone()))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            subscription_enforcement_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(state.clone(), v1_auth_middleware))
         .layer(middleware::from_fn(request_id_layer))
 }

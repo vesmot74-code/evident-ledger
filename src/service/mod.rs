@@ -8,5 +8,6 @@ pub mod capabilities;
 pub mod chains;
 pub mod entitlements;
 pub mod ledger;
+pub mod subscription_enforcement;
 pub mod verification;
 pub mod verifier;

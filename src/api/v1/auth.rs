@@ -1,10 +1,13 @@
 use axum::{
     async_trait,
-    extract::FromRequestParts,
-    http::request::Parts,
+    body::Body,
+    extract::{FromRequestParts, State},
+    http::{request::Parts, Request},
+    middleware::Next,
+    response::{IntoResponse, Response},
 };
 
-use crate::auth::AuthedAccount;
+use crate::auth::{resolve_authed_account, AuthedAccount};
 use crate::state::AppState;
 
 use super::errors::ApiError;
@@ -20,9 +23,28 @@ impl FromRequestParts<AppState> for V1Auth {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        AuthedAccount::from_request_parts(parts, state)
+        if let Some(auth) = parts.extensions.get::<AuthedAccount>() {
+            return Ok(V1Auth(auth.clone()));
+        }
+
+        resolve_authed_account(&parts.headers, state)
             .await
             .map(V1Auth)
             .map_err(|_| ApiError::Unauthorized)
+    }
+}
+
+/// Authenticates `/v1/*` requests once and stores `AuthedAccount` for downstream middleware/handlers.
+pub async fn v1_auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    match resolve_authed_account(request.headers(), &state).await {
+        Ok(auth) => {
+            request.extensions_mut().insert(auth);
+            next.run(request).await
+        }
+        Err(_) => ApiError::Unauthorized.into_response(),
     }
 }

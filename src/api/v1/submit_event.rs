@@ -99,7 +99,8 @@ async fn proof_context_for_event(
 fn map_ledger_error(err: LedgerError) -> ApiError {
     match err {
         LedgerError::ChainNotFound | LedgerError::ChainAccessDenied => ApiError::NotFound,
-        LedgerError::UsageLimitExceeded | LedgerError::TsaLimitExceeded => ApiError::Internal,
+        LedgerError::UsageLimitExceeded => ApiError::UsageLimitExceeded,
+        LedgerError::TsaLimitExceeded => ApiError::Internal,
         LedgerError::QualifiedTsaUnavailable => ApiError::Internal,
         LedgerError::ParentMismatch | LedgerError::DuplicateIdempotencyKey
         | LedgerError::DuplicateChainSequence => ApiError::Conflict,

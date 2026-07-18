@@ -8,18 +8,50 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use uuid::Uuid;
-
+use sqlx::Row;
 use crate::state::AppState;
 
+#[derive(Clone)]
 pub struct AuthedAccount {
-    pub account_id: Uuid,
+    pub account_id: uuid::Uuid,
     pub key_hash: String,
 }
 
 pub enum AuthError {
     Missing,
     Invalid,
+}
+
+/// Resolve `X-API-KEY` to an authenticated account (shared by extractors and v1 middleware).
+pub async fn resolve_authed_account(
+    headers: &axum::http::HeaderMap,
+    state: &AppState,
+) -> Result<AuthedAccount, AuthError> {
+    let raw_key = headers
+        .get("X-API-KEY")
+        .and_then(|v| v.to_str().ok())
+        .ok_or(AuthError::Missing)?;
+
+    let key_hash = api_key::hash_api_key_for_lookup(raw_key);
+
+    let row = sqlx::query(
+        r#"
+        SELECT account_id, key_hash
+        FROM api_keys
+        WHERE key_hash = $1 AND revoked_at IS NULL
+        "#,
+    )
+    .bind(&key_hash)
+    .fetch_optional(&state.db)
+    .await
+    .map_err(|_| AuthError::Invalid)?;
+
+    let row = row.ok_or(AuthError::Invalid)?;
+
+    Ok(AuthedAccount {
+        account_id: row.try_get("account_id").map_err(|_| AuthError::Invalid)?,
+        key_hash: row.try_get("key_hash").map_err(|_| AuthError::Invalid)?,
+    })
 }
 
 impl IntoResponse for AuthError {
@@ -40,31 +72,13 @@ impl FromRequestParts<AppState> for AuthedAccount {
         parts: &mut Parts,
         state: &AppState,
     ) -> Result<Self, Self::Rejection> {
-        let raw_key = parts
-            .headers
-            .get("X-API-KEY")
-            .and_then(|v| v.to_str().ok())
-            .ok_or(AuthError::Missing)?;
+        if let Some(auth) = parts.extensions.get::<AuthedAccount>() {
+            return Ok(AuthedAccount {
+                account_id: auth.account_id,
+                key_hash: auth.key_hash.clone(),
+            });
+        }
 
-        let key_hash = api_key::hash_api_key_for_lookup(raw_key);
-
-        let row = sqlx::query!(
-            r#"
-            SELECT account_id, key_hash
-            FROM api_keys
-            WHERE key_hash = $1 AND revoked_at IS NULL
-            "#,
-            key_hash
-        )
-        .fetch_optional(&state.db)
-        .await
-        .map_err(|_| AuthError::Invalid)?;
-
-        let row = row.ok_or(AuthError::Invalid)?;
-
-        Ok(AuthedAccount {
-            account_id: row.account_id,
-            key_hash: row.key_hash,
-        })
+        resolve_authed_account(&parts.headers, state).await
     }
 }
