@@ -7,6 +7,7 @@ pub mod dashboard;
 pub mod dashboard_billing;
 pub mod events;
 pub mod identity;
+pub mod identity_keys;
 pub mod paddle_webhook;
 pub mod public_verify;
 pub mod v1;

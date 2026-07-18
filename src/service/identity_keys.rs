@@ -1,5 +1,6 @@
 //! Identity key repository layer (Stage 9.1).
 
+use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -17,6 +18,12 @@ pub enum IdentityKeyError {
 }
 
 impl IdentityKeyRepository {
+    /// SHA-256 fingerprint of the raw Ed25519 public key bytes (hex-encoded).
+    pub fn fingerprint_from_public_key_hex(public_key_hex: &str) -> Option<String> {
+        let bytes = hex::decode(public_key_hex).ok()?;
+        Some(hex::encode(Sha256::digest(&bytes)))
+    }
+
     /// Create a verified identity key (after successful proof-of-possession in Stage 9.2).
     pub async fn create(
         db: &PgPool,

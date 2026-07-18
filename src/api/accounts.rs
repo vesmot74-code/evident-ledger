@@ -125,6 +125,7 @@ pub fn router(state: AppState, rate_limits: PublicRateLimitState) -> Router {
         .route("/me", get(me_handler))
         .route("/api-keys", get(list_keys_handler).post(create_key_handler))
         .route("/api-keys/:id", delete(revoke_key_handler))
+        .nest("/identity/keys", crate::api::identity_keys::router())
         .with_state(state);
 
     register.merge(protected)
