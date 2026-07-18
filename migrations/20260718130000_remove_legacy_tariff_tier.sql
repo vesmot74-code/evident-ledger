@@ -2,4 +2,4 @@
 -- tariff_plan_id replaced legacy tariff_tier.
 
 ALTER TABLE accounts
-DROP COLUMN tariff_tier;
+DROP COLUMN IF EXISTS tariff_tier;
