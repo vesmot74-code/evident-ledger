@@ -1,0 +1,20 @@
+{% extends "dashboard/layout.html" %}
+{% block title %}Usage{% endblock %}
+{% block nav_usage %}active{% endblock %}
+{% block content %}
+<h2 style="margin-bottom: 16px;">Usage</h2>
+<div class="grid">
+  <section class="card">
+    <h2>Period</h2>
+    <p class="value">{{ period }}</p>
+  </section>
+  <section class="card">
+    <h2>Server commits</h2>
+    <p class="value">{{ usage_summary }}</p>
+  </section>
+  <section class="card">
+    <h2>Utilization</h2>
+    <p class="value">{{ percentage }}</p>
+  </section>
+</div>
+{% endblock %}

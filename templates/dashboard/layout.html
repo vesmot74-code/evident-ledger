@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{% block title %}Dashboard{% endblock %} — Evident Ledger</title>
+  <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  <style>
+    :root {
+      --bg: #ffffff;
+      --bg-alt: #f5f7fb;
+      --text: #0f172a;
+      --text-secondary: #64748b;
+      --border: #e2e8f0;
+      --accent: #3652f6;
+      --font-main: 'Segoe UI', system-ui, sans-serif;
+      --font-mono: 'SF Mono', Menlo, monospace;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: var(--font-main); color: var(--text); background: var(--bg); line-height: 1.6; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .shell { max-width: 880px; margin: 0 auto; padding: 32px 24px; }
+    .header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
+    .header h1 { font-size: 1.25rem; font-weight: 700; }
+    .nav { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+    .nav a { color: var(--text-secondary); font-size: 0.95rem; }
+    .nav a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+    .card { border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 16px; background: var(--bg); }
+    .card h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); margin-bottom: 8px; }
+    .card .value { font-size: 1.1rem; font-weight: 600; }
+    .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid var(--border); font-size: 0.95rem; }
+    th { color: var(--text-secondary); font-weight: 600; font-size: 0.8rem; text-transform: uppercase; }
+    code { font-family: var(--font-mono); background: var(--bg-alt); padding: 2px 6px; border-radius: 4px; }
+    .btn { display: inline-block; border: 1px solid var(--border); background: var(--bg-alt); padding: 8px 14px; border-radius: 6px; cursor: pointer; font-size: 0.95rem; }
+    .btn:hover { border-color: var(--accent); }
+    .btn-danger { color: #b91c1c; }
+    .alert { border: 1px solid #bfdbfe; background: #eff6ff; padding: 16px; border-radius: 8px; margin-bottom: 16px; }
+    .alert p { margin-top: 8px; color: var(--text-secondary); font-size: 0.9rem; }
+    .error { color: #b91c1c; }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; background: var(--bg-alt); }
+    .badge-active { background: #dcfce7; color: #166534; }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <header class="header">
+      <h1>Evident Ledger</h1>
+      <nav class="nav">
+        <a href="/dashboard" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
+        <a href="/dashboard/ui/subscription" class="{% block nav_subscription %}{% endblock %}">Subscription</a>
+        <a href="/dashboard/ui/usage" class="{% block nav_usage %}{% endblock %}">Usage</a>
+        <a href="/dashboard/ui/api-keys" class="{% block nav_api_keys %}{% endblock %}">API Keys</a>
+      </nav>
+    </header>
+    <main>
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</body>
+</html>

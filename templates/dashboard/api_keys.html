@@ -1,0 +1,53 @@
+{% extends "dashboard/layout.html" %}
+{% block title %}API Keys{% endblock %}
+{% block nav_api_keys %}active{% endblock %}
+{% block content %}
+<h2 style="margin-bottom: 16px;">API Keys</h2>
+
+<div id="api-key-alerts"></div>
+
+<p style="margin-bottom: 16px;">
+  <button class="btn"
+          hx-post="/dashboard/ui/api-keys"
+          hx-target="#api-key-alerts"
+          hx-swap="innerHTML">
+    Create new key
+  </button>
+</p>
+
+<table>
+  <thead>
+    <tr>
+      <th>Prefix</th>
+      <th>Created</th>
+      <th>Status</th>
+      <th></th>
+    </tr>
+  </thead>
+  <tbody>
+    {% for key in api_keys %}
+    <tr id="key-row-{{ key.key_id }}">
+      <td><code>{{ key.prefix }}</code></td>
+      <td>{{ key.created_at }}</td>
+      <td>
+        {% if key.is_active %}
+        <span class="badge badge-active">Active</span>
+        {% else %}
+        <span class="badge">Revoked</span>
+        {% endif %}
+      </td>
+      <td>
+        {% if key.is_active %}
+        <button class="btn btn-danger"
+                hx-delete="/dashboard/ui/api-keys/{{ key.key_id }}"
+                hx-target="#key-row-{{ key.key_id }}"
+                hx-swap="innerHTML">
+          Revoke
+        </button>
+        {% endif %}
+      </td>
+    </tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

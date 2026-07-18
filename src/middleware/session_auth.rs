@@ -19,30 +19,53 @@ pub struct SessionUser {
     pub account_id: Uuid,
 }
 
+async fn resolve_session_user(
+    state: &AppState,
+    cookie_header: Option<&str>,
+) -> Option<SessionUser> {
+    let cookie_header = cookie_header?;
+    let token = parse_session_cookie(cookie_header)?;
+    let account_id = resolve_session_account_id(&state.db, &token)
+        .await
+        .ok()??;
+    Some(SessionUser { account_id })
+}
+
 pub async fn session_auth_middleware(
     State(state): State<AppState>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
-    let Some(cookie_header) = request
+    let cookie_header = request
         .headers()
         .get(header::COOKIE)
-        .and_then(|value| value.to_str().ok())
-    else {
+        .and_then(|value| value.to_str().ok());
+
+    let Some(user) = resolve_session_user(&state, cookie_header).await else {
         return ApiError::Unauthorized.into_response();
     };
 
-    let Some(token) = parse_session_cookie(cookie_header) else {
-        return ApiError::Unauthorized.into_response();
+    request.extensions_mut().insert(user);
+    next.run(request).await
+}
+
+pub async fn session_ui_auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    use axum::response::Redirect;
+
+    let cookie_header = request
+        .headers()
+        .get(header::COOKIE)
+        .and_then(|value| value.to_str().ok());
+
+    let Some(user) = resolve_session_user(&state, cookie_header).await else {
+        return Redirect::to("/login").into_response();
     };
 
-    let account_id = match resolve_session_account_id(&state.db, &token).await {
-        Ok(Some(id)) => id,
-        Ok(None) => return ApiError::Unauthorized.into_response(),
-        Err(_) => return ApiError::Internal.into_response(),
-    };
-
-    request.extensions_mut().insert(SessionUser { account_id });
+    request.extensions_mut().insert(user);
     next.run(request).await
 }
 

@@ -1,0 +1,25 @@
+{% extends "dashboard/layout.html" %}
+{% block title %}Dashboard{% endblock %}
+{% block nav_dashboard %}active{% endblock %}
+{% block content %}
+<h2 style="margin-bottom: 16px;">Dashboard</h2>
+<div class="grid">
+  <section class="card">
+    <h2>Account</h2>
+    <p class="value">{{ email }}</p>
+  </section>
+  <section class="card">
+    <h2>Plan</h2>
+    <p class="value">{{ plan_display }}</p>
+  </section>
+  <section class="card">
+    <h2>Usage</h2>
+    <p class="value">{{ usage_summary }}</p>
+    <p style="margin-top: 6px; color: var(--text-secondary); font-size: 0.9rem;">{{ percentage }} of monthly limit</p>
+  </section>
+  <section class="card">
+    <h2>API Keys</h2>
+    <p class="value"><a href="/dashboard/ui/api-keys">Manage</a></p>
+  </section>
+</div>
+{% endblock %}

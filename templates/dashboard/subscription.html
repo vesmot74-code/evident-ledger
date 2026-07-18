@@ -1,0 +1,25 @@
+{% extends "dashboard/layout.html" %}
+{% block title %}Subscription{% endblock %}
+{% block nav_subscription %}active{% endblock %}
+{% block content %}
+<h2 style="margin-bottom: 16px;">Subscription</h2>
+<div class="grid">
+  <section class="card">
+    <h2>Plan</h2>
+    <p class="value">{{ plan_display }}</p>
+    <p style="margin-top: 6px; color: var(--text-secondary); font-size: 0.9rem;">Internal name: {{ plan }}</p>
+  </section>
+  <section class="card">
+    <h2>Status</h2>
+    <p class="value">{{ subscription_status }}</p>
+  </section>
+  <section class="card">
+    <h2>Current period end</h2>
+    <p class="value">{{ current_period_end }}</p>
+  </section>
+  <section class="card">
+    <h2>Pending plan</h2>
+    <p class="value">{{ pending_plan_display }}</p>
+  </section>
+</div>
+{% endblock %}

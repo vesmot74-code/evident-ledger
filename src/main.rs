@@ -23,6 +23,7 @@ mod signing;
 mod state;
 mod tsa;
 mod tsa_worker;
+mod web;
 
 async fn serve_whitepaper_pdf() -> impl axum::response::IntoResponse {
     let pdf_bytes: &'static [u8] =
@@ -67,6 +68,8 @@ async fn main() {
     let public_routes = api::public_verify::public_router(state.clone(), rate_limits.clone());
     let accounts_routes = api::accounts::router(state.clone(), rate_limits.clone());
     let auth_routes = api::auth::router(state.clone(), login_limits);
+    let dashboard_ui = web::dashboard::router(state.clone());
+    let dashboard_api = api::dashboard::router(state.clone());
 
     let app = axum::Router::new()
         .route(
@@ -88,6 +91,7 @@ async fn main() {
             }),
         )
         .route("/whitepaper.pdf", axum::routing::get(serve_whitepaper_pdf))
+        .route("/login", axum::routing::get(web::dashboard::login_page))
         .nest("/account", api::account::router(state.clone()))
         .nest("/backup", api::backup::router(state.clone()))
         .nest("/chains", api::chains::router(state.clone()))
@@ -97,7 +101,10 @@ async fn main() {
         .nest("/v1", api::v1::router(state.clone()))
         .nest("/accounts", accounts_routes)
         .nest("/auth", auth_routes)
-        .nest("/dashboard", api::dashboard::router(state.clone()))
+        .nest(
+            "/dashboard",
+            dashboard_ui.merge(dashboard_api),
+        )
         .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);
 
