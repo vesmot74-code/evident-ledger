@@ -213,7 +213,21 @@ A change to any invariant below is an intentional edit to `SECURITY.md`, not a s
 
 29. Accounts without `password_hash` cannot be used for web login (`401`).
 
+30. User private keys are generated and stored locally, never transmitted to the server.
+
+31. Server never stores user private keys.
+
+32. User signatures are optional extensions; proofs remain valid without them.
+
+33. Identity key revocation is permanent and does not invalidate existing proofs.
+
+34. `identity_enabled` capability gates identity key registration and creation of new user signatures.
+
+35. Existing proofs remain verifiable after capability changes.
+
 **Web authentication rationale:** Existing API-only accounts **MUST NOT** receive web access based only on email knowledge. Transition from API authentication to Web authentication requires proof of account ownership. For MVP this proof is possession of the existing API key.
+
+**User identity rationale:** Full specification: [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md) (frozen at Stage 9.0). User identity is distinct from server signing identity (`GET /identity`).
 
 ---
 

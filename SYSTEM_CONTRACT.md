@@ -645,11 +645,27 @@ Includes:
 
 ## Identity
 
-Available in Identity plan.
+Available in Identity plan (`tariff_plans.identity_enabled`).
 
 Includes:
 
-- user identity binding
+- user identity binding (Stage 9 — see [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md))
+
+### User Identity Binding (Stage 9)
+
+- Each account may register multiple identity keys.
+- Identity keys are Ed25519 public keys generated client-side.
+- Registration requires proof-of-possession (challenge signed by private key).
+- Private keys are never transmitted to or stored by the server.
+- User signatures are optional extensions to proofs.
+- Revoked keys remain usable for verification of historical proofs.
+- Identity registration MUST be available through API:
+  `POST /accounts/identity/keys/challenge` and
+  `POST /accounts/identity/keys/register`.
+- Dashboard identity management is a presentation layer only.
+- CLI clients remain first-class identity clients.
+
+**Contract status:** Frozen at Stage 9.0. Implementation: Stages 9.1–9.5 per [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md) §8.
 
 ---
 
@@ -774,5 +790,5 @@ See [ROADMAP.md](ROADMAP.md) for the full split between frozen architecture, evo
 Summary:
 
 - Vault Layer: planned
-- Identity Layer: planned
-- Billing Layer: planned
+- Identity Layer: contract frozen (Stage 9.0 — [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md)); implementation Stages 9.1–9.5
+- Billing Layer: implemented (Stages 8.2–8.3)
