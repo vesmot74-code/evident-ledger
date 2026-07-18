@@ -10,6 +10,7 @@ pub mod hash_attestation_pdf;
 pub mod merkle;
 pub mod middleware;
 pub mod models;
+pub mod paddle;
 pub mod product;
 pub mod proof_format;
 pub mod public_certificate_pdf;

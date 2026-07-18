@@ -11,6 +11,7 @@ mod merkle;
 mod middleware;
 mod models;
 mod proof_format;
+mod paddle;
 mod public_certificate_pdf;
 mod public_proof;
 mod public_verification_audit;
@@ -92,6 +93,7 @@ async fn main() {
         .nest("/identity", api::identity::router(state.clone()))
         .nest("/v1", api::v1::router(state.clone()))
         .nest("/accounts", accounts_routes)
+        .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
