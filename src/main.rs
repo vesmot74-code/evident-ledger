@@ -97,6 +97,7 @@ async fn main() {
         .nest("/v1", api::v1::router(state.clone()))
         .nest("/accounts", accounts_routes)
         .nest("/auth", auth_routes)
+        .nest("/dashboard", api::dashboard::router(state.clone()))
         .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);
 

@@ -26,6 +26,34 @@ pub struct AccountProfile {
 }
 
 #[derive(Debug, Clone, FromRow)]
+pub struct DashboardProfile {
+    pub account_id: Uuid,
+    pub email: String,
+    pub plan_name: String,
+    pub plan_display_name: String,
+    pub subscription_status: String,
+    pub created_at: DateTime<Utc>,
+    pub email_verified_at: Option<DateTime<Utc>>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct SubscriptionSnapshot {
+    pub plan_name: String,
+    pub plan_display_name: String,
+    pub subscription_status: String,
+    pub current_period_end: Option<DateTime<Utc>>,
+    pub pending_plan_name: Option<String>,
+    pub pending_plan_display_name: Option<String>,
+}
+
+#[derive(Debug, Clone, FromRow)]
+pub struct MonthlyUsageSnapshot {
+    pub period_start: chrono::NaiveDate,
+    pub server_commits: i32,
+    pub monthly_commits_limit: Option<i32>,
+}
+
+#[derive(Debug, Clone, FromRow)]
 pub struct ApiKeyRecord {
     pub api_key_id: Uuid,
     pub key_prefix: String,
@@ -271,6 +299,77 @@ pub async fn get_account_profile(
             a.created_at
         FROM accounts a
         JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id
+        WHERE a.account_id = $1
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn get_dashboard_profile(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<Option<DashboardProfile>, sqlx::Error> {
+    sqlx::query_as::<_, DashboardProfile>(
+        r#"
+        SELECT
+            a.account_id,
+            a.email,
+            tp.name AS plan_name,
+            tp.display_name AS plan_display_name,
+            a.subscription_status,
+            a.created_at,
+            a.email_verified_at
+        FROM accounts a
+        JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id
+        WHERE a.account_id = $1
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn get_subscription_snapshot(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<Option<SubscriptionSnapshot>, sqlx::Error> {
+    sqlx::query_as::<_, SubscriptionSnapshot>(
+        r#"
+        SELECT
+            tp.name AS plan_name,
+            tp.display_name AS plan_display_name,
+            a.subscription_status,
+            a.current_period_end,
+            pending.name AS pending_plan_name,
+            pending.display_name AS pending_plan_display_name
+        FROM accounts a
+        JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id
+        LEFT JOIN tariff_plans pending ON pending.plan_id = a.pending_tariff_plan_id
+        WHERE a.account_id = $1
+        "#,
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+}
+
+pub async fn get_monthly_usage_snapshot(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<Option<MonthlyUsageSnapshot>, sqlx::Error> {
+    sqlx::query_as::<_, MonthlyUsageSnapshot>(
+        r#"
+        SELECT
+            date_trunc('month', now())::date AS period_start,
+            COALESCE(um.server_commits, 0) AS server_commits,
+            tp.monthly_commits_limit
+        FROM accounts a
+        JOIN tariff_plans tp ON tp.plan_id = a.tariff_plan_id
+        LEFT JOIN usage_monthly um
+            ON um.account_id = a.account_id
+           AND um.period_start = date_trunc('month', now())::date
         WHERE a.account_id = $1
         "#,
     )
