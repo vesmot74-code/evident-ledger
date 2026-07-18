@@ -1,5 +1,7 @@
 //! Stage 6.6 — public verification hardening tests.
 
+mod common;
+
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode as HttpStatusCode};
@@ -57,7 +59,7 @@ fn test_state_with_pool(pool: sqlx::PgPool) -> AppState {
         signer: Arc::new(
             evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
         ),
-        config: evident_ledger::config::AppConfig::from_env(),
+        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
     }
 }
 

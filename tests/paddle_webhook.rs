@@ -1,10 +1,11 @@
 //! Stage 8.2b — Paddle webhook processing tests.
 
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
 use chrono::{DateTime, Utc};
 use evident_ledger::api::paddle_webhook;
-use evident_ledger::config::AppConfig;
 use evident_ledger::paddle::sign_payload_for_test;
 use evident_ledger::state::AppState;
 use serde_json::{json, Value};
@@ -14,11 +15,10 @@ use std::sync::Arc;
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
-const WEBHOOK_SECRET: &str = "test-paddle-webhook-secret";
+const WEBHOOK_SECRET: &str = common::TEST_PADDLE_WEBHOOK_SECRET;
 
 async fn test_pool() -> sqlx::PgPool {
     dotenvy::dotenv().ok();
-    std::env::set_var("PADDLE_WEBHOOK_SECRET", WEBHOOK_SECRET);
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
     let pool = PgPoolOptions::new()
         .max_connections(5)
@@ -35,7 +35,10 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
         signer: Arc::new(
             evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
         ),
-        config: AppConfig::from_env(),
+        config: {
+            common::setup_test_env();
+            evident_ledger::config::AppConfig::from_env()
+        },
     }
 }
 

@@ -1,5 +1,7 @@
 //! Stage 6.4 — public disclosure boundary tests.
 
+mod common;
+
 use axum::Router;
 use evident_ledger::api::public_verify::verify_by_hash;
 use evident_ledger::state::rate_limiter::{FixedWindowLimiter, PublicRateLimitState, RateLimitConfig};
@@ -102,7 +104,7 @@ async fn legacy_hash_attestation_pdf_returns_410() {
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
     ));
-    let config = evident_ledger::config::AppConfig::from_env();
+    let config = { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() };
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
@@ -147,7 +149,7 @@ async fn public_verify_returns_existence_only_fields() {
     let state = AppState {
         db: pool.clone(),
         signer,
-        config: evident_ledger::config::AppConfig::from_env(),
+        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
     };
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
@@ -205,7 +207,7 @@ async fn public_certificate_pdf_has_no_private_fields() {
     let state = AppState {
         db: pool.clone(),
         signer,
-        config: evident_ledger::config::AppConfig::from_env(),
+        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
     };
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
@@ -278,7 +280,7 @@ async fn cross_account_same_hash_reveals_no_multi_tenant_metadata() {
     let state = AppState {
         db: pool.clone(),
         signer,
-        config: evident_ledger::config::AppConfig::from_env(),
+        config: { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() },
     };
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
