@@ -96,7 +96,12 @@ The full key is never displayed after creation.
 | `tariff_plan_id` | UUID reference to `tariff_plans` |
 | `subscription_status` | `none` / `active` / `past_due` / `canceled` |
 
-**Deferred to Stage 8.3 (Dashboard):** `password_hash`, web sessions, and cookie/JWT login flows are **not** part of Phase 8.1.
+**Deferred to Stage 8.3.1 (Dashboard UI):** email verification flows and dashboard pages.
+
+| Field | Role |
+|-------|------|
+| `password_hash` | Argon2id hash for web login (`NULL` for API-only accounts) |
+| `email_verified_at` | Reserved for future email verification (Stage 8.3.1+) |
 
 ---
 
@@ -174,14 +179,19 @@ All `/accounts/*` endpoints except `POST /accounts/register` use the same authen
 
 ---
 
-### Future — Stage 8.3 (Dashboard)
+### Web Authentication (Stage 8.3.0)
 
-```http
-POST /auth/login
-POST /auth/logout
-```
+- `POST /auth/register` — create account with password (new email only; existing email → `409`)
+- `POST /auth/set-password` — add password to existing API-only account (requires `X-API-KEY` as ownership proof)
+- `POST /auth/login` — sign in; sets `evident_session` cookie (HttpOnly, Secure, SameSite=Lax)
+- `POST /auth/logout` — delete session
+- `GET /auth/me` — account profile (session required)
 
-Session-based access (cookie or JWT). Requires `password_hash` in the account schema (added in Stage 8.3).
+Session token: 256-bit entropy, stored as SHA256 hash.
+
+Rate limit: 10 login attempts/minute per IP (scoped `login:<ip>`).
+
+**Security:** API-only accounts cannot gain web access from email knowledge alone. Adding a password to an existing API-only account requires a valid `X-API-KEY`.
 
 ---
 

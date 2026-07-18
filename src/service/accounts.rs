@@ -130,6 +130,132 @@ pub async fn register_account(pool: &PgPool, email: &str) -> Result<RegisterResu
     })
 }
 
+#[derive(Debug, Clone)]
+pub struct WebRegisterResult {
+    pub account_id: Uuid,
+    pub email: String,
+    pub plan_name: String,
+    pub created_at: DateTime<Utc>,
+}
+
+#[derive(Debug)]
+pub enum WebRegisterError {
+    EmailAlreadyRegistered,
+    Database(String),
+}
+
+#[derive(Debug)]
+pub enum SetPasswordError {
+    PasswordAlreadySet,
+    NotFound,
+    Database(String),
+}
+
+pub async fn register_web_account(
+    pool: &PgPool,
+    email: &str,
+    password_hash: &str,
+) -> Result<WebRegisterResult, WebRegisterError> {
+    let email = email.trim().to_lowercase();
+
+    let mut tx = pool
+        .begin()
+        .await
+        .map_err(|e| WebRegisterError::Database(e.to_string()))?;
+
+    if email_exists(&mut tx, &email)
+        .await
+        .map_err(|e| match e {
+            RegisterError::Database(msg) => WebRegisterError::Database(msg),
+            RegisterError::EmailAlreadyRegistered => WebRegisterError::EmailAlreadyRegistered,
+        })?
+    {
+        return Err(WebRegisterError::EmailAlreadyRegistered);
+    }
+
+    let free_plan = sqlx::query_as::<_, FreePlanRow>(
+        r#"
+        SELECT plan_id, name
+        FROM tariff_plans
+        WHERE name = 'free'
+        "#,
+    )
+    .fetch_optional(&mut *tx)
+    .await
+    .map_err(|e| WebRegisterError::Database(e.to_string()))?
+    .ok_or_else(|| WebRegisterError::Database("free tariff plan missing".into()))?;
+
+    let account_id = Uuid::new_v4();
+    let created = sqlx::query_as::<_, CreatedAccountRow>(
+        r#"
+        INSERT INTO accounts (account_id, email, tariff_plan_id, password_hash, subscription_status)
+        VALUES ($1, $2, $3, $4, 'none')
+        RETURNING created_at
+        "#,
+    )
+    .bind(account_id)
+    .bind(&email)
+    .bind(free_plan.plan_id)
+    .bind(password_hash)
+    .fetch_one(&mut *tx)
+    .await
+    .map_err(|e| WebRegisterError::Database(e.to_string()))?;
+
+    let generated = api_key::generate_api_key();
+    insert_api_key(&mut tx, account_id, &generated, "default")
+        .await
+        .map_err(|e| WebRegisterError::Database(e.to_string()))?;
+
+    tx.commit()
+        .await
+        .map_err(|e| WebRegisterError::Database(e.to_string()))?;
+
+    Ok(WebRegisterResult {
+        account_id,
+        email,
+        plan_name: free_plan.name,
+        created_at: created.created_at,
+    })
+}
+
+pub async fn set_account_password(
+    pool: &PgPool,
+    account_id: Uuid,
+    password_hash: &str,
+) -> Result<(), SetPasswordError> {
+    let updated = sqlx::query(
+        r#"
+        UPDATE accounts
+        SET password_hash = $2
+        WHERE account_id = $1 AND password_hash IS NULL
+        "#,
+    )
+    .bind(account_id)
+    .bind(password_hash)
+    .execute(pool)
+    .await
+    .map_err(|e| SetPasswordError::Database(e.to_string()))?;
+
+    if updated.rows_affected() == 1 {
+        return Ok(());
+    }
+
+    let has_password: bool = sqlx::query_scalar(
+        "SELECT password_hash IS NOT NULL FROM accounts WHERE account_id = $1",
+    )
+    .bind(account_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| SetPasswordError::Database(e.to_string()))?
+    .ok_or(SetPasswordError::NotFound)?;
+
+    if has_password {
+        Err(SetPasswordError::PasswordAlreadySet)
+    } else {
+        Err(SetPasswordError::NotFound)
+    }
+}
+
 pub async fn get_account_profile(
     pool: &PgPool,
     account_id: Uuid,

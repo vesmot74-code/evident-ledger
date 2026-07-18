@@ -39,6 +39,10 @@ pub enum ApiError {
     ProofGenerationFailed,
     PaymentRequired,
     UsageLimitExceeded,
+    InvalidCredentials,
+    RateLimited,
+    EmailAlreadyRegistered,
+    PasswordAlreadySet,
     Internal,
     NotImplemented,
 }
@@ -56,6 +60,10 @@ impl ApiError {
             ApiError::ProofGenerationFailed => StatusCode::UNPROCESSABLE_ENTITY,
             ApiError::PaymentRequired => StatusCode::PAYMENT_REQUIRED,
             ApiError::UsageLimitExceeded => StatusCode::TOO_MANY_REQUESTS,
+            ApiError::InvalidCredentials => StatusCode::UNAUTHORIZED,
+            ApiError::RateLimited => StatusCode::TOO_MANY_REQUESTS,
+            ApiError::EmailAlreadyRegistered => StatusCode::CONFLICT,
+            ApiError::PasswordAlreadySet => StatusCode::CONFLICT,
             ApiError::Internal => StatusCode::INTERNAL_SERVER_ERROR,
             ApiError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
         }
@@ -73,6 +81,10 @@ impl ApiError {
             ApiError::ProofGenerationFailed => "proof_generation_failed",
             ApiError::PaymentRequired => "payment_required",
             ApiError::UsageLimitExceeded => "usage_limit_exceeded",
+            ApiError::InvalidCredentials => "unauthorized",
+            ApiError::RateLimited => "rate_limited",
+            ApiError::EmailAlreadyRegistered => "conflict",
+            ApiError::PasswordAlreadySet => "conflict",
             ApiError::Internal => "internal_error",
             ApiError::NotImplemented => "not_implemented",
         }
@@ -96,6 +108,10 @@ impl ApiError {
             ApiError::UsageLimitExceeded => {
                 "Monthly commit limit for your tariff plan has been reached."
             }
+            ApiError::InvalidCredentials => "Invalid email or password",
+            ApiError::RateLimited => "Too many login attempts. Please try again later.",
+            ApiError::EmailAlreadyRegistered => "Email is already registered",
+            ApiError::PasswordAlreadySet => "Password is already set for this account",
             ApiError::Internal => "Internal server error",
             ApiError::NotImplemented => "Not implemented",
         }

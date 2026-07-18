@@ -50,6 +50,14 @@ impl RateLimitConfig {
         }
     }
 
+    pub fn login() -> Self {
+        Self {
+            max_requests: 10,
+            window_secs: DEFAULT_WINDOW_SECS,
+            max_entries: DEFAULT_MAX_ENTRIES,
+        }
+    }
+
     pub fn window(&self) -> Duration {
         Duration::from_secs(self.window_secs)
     }
@@ -190,6 +198,21 @@ fn unix_after(start: Instant, window: Duration) -> u64 {
         .unwrap_or(0);
     let elapsed = start.elapsed();
     now_unix + window.saturating_sub(elapsed).as_secs()
+}
+
+#[derive(Debug, Clone)]
+pub struct LoginRateLimitState {
+    pub login: std::sync::Arc<FixedWindowLimiter>,
+    pub trust_proxy_headers: bool,
+}
+
+impl LoginRateLimitState {
+    pub fn from_config(trust_proxy_headers: bool) -> Self {
+        Self {
+            login: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::login())),
+            trust_proxy_headers,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]

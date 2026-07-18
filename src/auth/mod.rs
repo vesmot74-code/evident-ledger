@@ -1,4 +1,10 @@
 pub mod api_key;
+pub mod password;
+pub mod session_store;
+pub mod web_auth;
+pub mod web_me;
+
+pub use web_auth::router as web_auth_router;
 
 use axum::{
     async_trait,

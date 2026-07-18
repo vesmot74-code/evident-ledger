@@ -203,6 +203,18 @@ A change to any invariant below is an intentional edit to `SECURITY.md`, not a s
 
 24. `tariff_plan_id` always reflects the active plan; `pending_tariff_plan_id` is used for scheduled downgrades.
 
+25. Passwords are hashed using Argon2id.
+
+26. Session tokens have 256 bits of entropy and are stored only as SHA256 hashes.
+
+27. Login attempts are rate-limited to prevent brute force.
+
+28. Session tokens are never logged or exposed in plaintext.
+
+29. Accounts without `password_hash` cannot be used for web login (`401`).
+
+**Web authentication rationale:** Existing API-only accounts **MUST NOT** receive web access based only on email knowledge. Transition from API authentication to Web authentication requires proof of account ownership. For MVP this proof is possession of the existing API key.
+
 ---
 
 ## 2.6 Authentication Model
@@ -214,7 +226,7 @@ Full specification: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) (frozen at Stage 8.
 | **Public API** (`/public/*`) | None | Anonymous; rate-limited per §2.4 |
 | **Private API** (`/v1/*`) | `X-API-KEY` required | Bearer API key; SHA-256 hash lookup |
 | **Account management** (`/accounts/*`) | `X-API-KEY` required | Except `POST /accounts/register` (public bootstrap) |
-| **Web sessions** (Stage 8.3) | Cookie-based | Dashboard only; deferred — requires `password_hash` |
+| **Web sessions** (Stage 8.3.0) | Cookie-based (`evident_session`) | Dashboard flows; requires `password_hash` |
 
 **API key storage (normative):** `key_hash = SHA-256(secret)` where `secret` is the 32-hex portion after the `ev_` prefix. Pre-Stage 8.1 legacy keys use `SHA-256(full_key)` — see [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md) §1. Plaintext keys are returned once at creation only.
 

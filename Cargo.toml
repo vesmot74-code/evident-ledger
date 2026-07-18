@@ -25,6 +25,7 @@ chrono = { version = "0.4", features = ["serde"] }
 dotenvy = "0.15"
 sha2 = "0.10"
 hmac = "0.12"
+argon2 = "0.5"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rand = "0.8"
 bs58 = "0.5"

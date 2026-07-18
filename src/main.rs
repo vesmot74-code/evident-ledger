@@ -62,8 +62,11 @@ async fn main() {
 
     let rate_limits =
         state::rate_limiter::PublicRateLimitState::from_config(config.trust_proxy_headers);
+    let login_limits =
+        state::rate_limiter::LoginRateLimitState::from_config(config.trust_proxy_headers);
     let public_routes = api::public_verify::public_router(state.clone(), rate_limits.clone());
     let accounts_routes = api::accounts::router(state.clone(), rate_limits.clone());
+    let auth_routes = api::auth::router(state.clone(), login_limits);
 
     let app = axum::Router::new()
         .route(
@@ -93,6 +96,7 @@ async fn main() {
         .nest("/identity", api::identity::router(state.clone()))
         .nest("/v1", api::v1::router(state.clone()))
         .nest("/accounts", accounts_routes)
+        .nest("/auth", auth_routes)
         .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);
 
