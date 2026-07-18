@@ -58,6 +58,10 @@ pub struct ApiKeyCreatedTemplate {
 pub struct ApiKeyRevokedTemplate;
 
 #[derive(Template)]
+#[template(path = "dashboard/identity_key_revoked.html")]
+pub struct IdentityKeyRevokedTemplate;
+
+#[derive(Template)]
 #[template(path = "dashboard/identity_keys.html")]
 pub struct IdentityKeysTemplate {
     pub keys: Vec<IdentityKeyRow>,

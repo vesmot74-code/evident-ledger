@@ -19,6 +19,7 @@
       <th>Verified</th>
       <th>Revoked</th>
       <th>Events</th>
+      <th>Action</th>
     </tr>
   </thead>
   <tbody>
@@ -36,7 +37,13 @@
       <td>{{ key.verified_at }}</td>
       <td>{{ key.revoked_at }}</td>
       <td>{{ key.events_count }}</td>
-    </tr>
+      <td>
+        {% if key.status == "active" %}
+        <form method="post" action="/dashboard/identity/{{ key.key_id }}/revoke" onsubmit="return confirm('Revoke this identity key? This cannot be undone. Future signatures will be rejected; existing signatures remain valid.');">
+          <button type="submit">Revoke</button>
+        </form>
+        {% endif %}
+      </td>
     {% endfor %}
   </tbody>
 </table>

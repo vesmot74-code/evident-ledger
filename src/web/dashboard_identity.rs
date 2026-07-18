@@ -1,19 +1,21 @@
-//! Read-only identity keys dashboard UI (Stage 9.5).
+//! Identity keys dashboard UI (Stage 9.5 read-only, Stage 9.7 revoke).
 
 use axum::{
     extract::{Path, Query, State},
+    http::StatusCode,
     response::{Html, IntoResponse, Response},
-    routing::get,
+    routing::{get, post},
     Router,
 };
 use uuid::Uuid;
 
+use crate::api::v1::errors::ApiError;
 use crate::middleware::session_auth::SessionUser;
 use crate::service::identity_dashboard::{clamp_events_limit, IdentityDashboardService};
 use crate::state::AppState;
 use crate::web::templates::{
-    format_optional_datetime, IdentityKeyEventRow, IdentityKeyEventsTemplate, IdentityKeyRow,
-    IdentityKeysTemplate,
+    format_optional_datetime, IdentityKeyEventRow, IdentityKeyEventsTemplate, IdentityKeyRevokedTemplate,
+    IdentityKeyRow, IdentityKeysTemplate,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -25,6 +27,7 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/identity", get(list_handler))
         .route("/identity/:key_id", get(events_handler))
+        .route("/identity/:key_id/revoke", post(revoke_identity_key_handler))
         .with_state(state)
 }
 
@@ -48,6 +51,29 @@ async fn list_handler(State(state): State<AppState>, session: SessionUser) -> Re
         .collect();
 
     render_template(IdentityKeysTemplate { keys: rows })
+}
+
+async fn revoke_identity_key_handler(
+    State(state): State<AppState>,
+    session: SessionUser,
+    Path(key_id): Path<Uuid>,
+) -> Response {
+    match crate::api::v1::identity_key_revoke::revoke_identity_key(
+        &state.db,
+        session.account_id,
+        key_id,
+    )
+    .await
+    {
+        Ok(_) => render_template(IdentityKeyRevokedTemplate),
+        Err(ApiError::IdentityKeyNotFound) => StatusCode::NOT_FOUND.into_response(),
+        Err(ApiError::IdentityKeyAlreadyRevoked) => (
+            StatusCode::CONFLICT,
+            Html("<span class=\"error\">Identity key already revoked</span>"),
+        )
+            .into_response(),
+        Err(_) => StatusCode::INTERNAL_SERVER_ERROR.into_response(),
+    }
 }
 
 async fn events_handler(
