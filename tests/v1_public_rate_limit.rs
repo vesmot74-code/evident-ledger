@@ -35,6 +35,11 @@ fn test_rate_limits(verify_max: u32, cert_max: u32, window_secs: u64) -> PublicR
             window_secs,
             max_entries: 1_000,
         })),
+        register: Arc::new(FixedWindowLimiter::new(RateLimitConfig {
+            max_requests: 10,
+            window_secs,
+            max_entries: 1_000,
+        })),
         trust_proxy_headers: false,
         include_user_agent_in_key: false,
     }
@@ -150,6 +155,9 @@ async fn certificate_endpoint_allows_first_20_then_blocks() {
         trust_proxy_headers: false,
         include_user_agent_in_key: false,
         request_type: evident_ledger::public_verification_audit::PublicVerificationRequestType::CertificatePdf,
+        rate_limit_scope: None,
+        rate_limit_message: "Too many requests. Please try again later.",
+        audit_enabled: true,
     };
     let app = axum::Router::new()
         .route(
@@ -216,6 +224,9 @@ async fn rate_limit_isolates_different_peer_ips() {
                 trust_proxy_headers: false,
                 include_user_agent_in_key: false,
                 request_type: evident_ledger::public_verification_audit::PublicVerificationRequestType::Verify,
+                rate_limit_scope: None,
+                rate_limit_message: "Too many requests. Please try again later.",
+                audit_enabled: true,
             },
             public_rate_limit_middleware,
         ));

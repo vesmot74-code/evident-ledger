@@ -1,4 +1,5 @@
 pub mod account;
+pub mod accounts;
 pub mod attestation;
 pub mod backup;
 pub mod backup_restore;

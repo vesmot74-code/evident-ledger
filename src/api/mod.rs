@@ -1,4 +1,5 @@
 pub mod account;
+pub mod accounts;
 pub mod backup;
 pub mod chains;
 pub mod events;

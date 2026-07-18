@@ -54,6 +54,11 @@ fn generous_rate_limits() -> PublicRateLimitState {
             window_secs: 60,
             max_entries: 1_000,
         })),
+        register: Arc::new(FixedWindowLimiter::new(RateLimitConfig {
+            max_requests: 10,
+            window_secs: 60,
+            max_entries: 1_000,
+        })),
         trust_proxy_headers: false,
         include_user_agent_in_key: false,
     }

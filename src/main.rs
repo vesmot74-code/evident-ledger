@@ -61,7 +61,8 @@ async fn main() {
 
     let rate_limits =
         state::rate_limiter::PublicRateLimitState::from_config(config.trust_proxy_headers);
-    let public_routes = api::public_verify::public_router(state.clone(), rate_limits);
+    let public_routes = api::public_verify::public_router(state.clone(), rate_limits.clone());
+    let accounts_routes = api::accounts::router(state.clone(), rate_limits.clone());
 
     let app = axum::Router::new()
         .route(
@@ -90,6 +91,7 @@ async fn main() {
         .nest("/verify", api::verify::router(state.clone()))
         .nest("/identity", api::identity::router(state.clone()))
         .nest("/v1", api::v1::router(state.clone()))
+        .nest("/accounts", accounts_routes)
         .nest("/public", public_routes);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));

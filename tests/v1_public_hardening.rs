@@ -41,6 +41,11 @@ fn test_rate_limits(verify_max: u32, window_secs: u64) -> PublicRateLimitState {
             window_secs,
             max_entries: 1_000,
         })),
+        register: Arc::new(FixedWindowLimiter::new(RateLimitConfig {
+            max_requests: 10,
+            window_secs,
+            max_entries: 1_000,
+        })),
         trust_proxy_headers: false,
         include_user_agent_in_key: false,
     }

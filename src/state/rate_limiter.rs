@@ -14,6 +14,7 @@ use std::{
 
 pub const VERIFY_MAX_REQUESTS: u32 = 100;
 pub const CERTIFICATE_MAX_REQUESTS: u32 = 20;
+pub const REGISTER_MAX_REQUESTS: u32 = 10;
 pub const DEFAULT_WINDOW_SECS: u64 = 60;
 pub const DEFAULT_MAX_ENTRIES: usize = 10_000;
 
@@ -36,6 +37,14 @@ impl RateLimitConfig {
     pub fn certificate() -> Self {
         Self {
             max_requests: CERTIFICATE_MAX_REQUESTS,
+            window_secs: DEFAULT_WINDOW_SECS,
+            max_entries: DEFAULT_MAX_ENTRIES,
+        }
+    }
+
+    pub fn register() -> Self {
+        Self {
+            max_requests: REGISTER_MAX_REQUESTS,
             window_secs: DEFAULT_WINDOW_SECS,
             max_entries: DEFAULT_MAX_ENTRIES,
         }
@@ -92,7 +101,20 @@ impl FixedWindowLimiter {
 
 /// Public rate-limit key: `sha256(client_ip)` with optional user-agent extension.
 pub fn rate_limit_client_key(ip: IpAddr, user_agent: Option<&str>) -> [u8; 32] {
+    rate_limit_scoped_client_key(ip, user_agent, None)
+}
+
+/// Scoped rate-limit key, e.g. `register:<ip>` for registration abuse protection.
+pub fn rate_limit_scoped_client_key(
+    ip: IpAddr,
+    user_agent: Option<&str>,
+    scope: Option<&str>,
+) -> [u8; 32] {
     let mut hasher = Sha256::new();
+    if let Some(scope) = scope {
+        hasher.update(scope.as_bytes());
+        hasher.update(b":");
+    }
     hasher.update(ip.to_string().as_bytes());
     if let Some(ua) = user_agent {
         hasher.update(ua.as_bytes());
@@ -174,6 +196,7 @@ fn unix_after(start: Instant, window: Duration) -> u64 {
 pub struct PublicRateLimitState {
     pub verify: std::sync::Arc<FixedWindowLimiter>,
     pub certificate: std::sync::Arc<FixedWindowLimiter>,
+    pub register: std::sync::Arc<FixedWindowLimiter>,
     pub trust_proxy_headers: bool,
     pub include_user_agent_in_key: bool,
 }
@@ -183,6 +206,7 @@ impl PublicRateLimitState {
         Self {
             verify: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::verify())),
             certificate: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::certificate())),
+            register: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::register())),
             trust_proxy_headers,
             include_user_agent_in_key: false,
         }

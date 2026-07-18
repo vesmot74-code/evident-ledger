@@ -1,3 +1,5 @@
+pub mod api_key;
+
 use axum::{
     async_trait,
     extract::FromRequestParts,
@@ -6,7 +8,6 @@ use axum::{
     Json,
 };
 use serde_json::json;
-use sha2::{Digest, Sha256};
 use uuid::Uuid;
 
 use crate::state::AppState;
@@ -45,9 +46,7 @@ impl FromRequestParts<AppState> for AuthedAccount {
             .and_then(|v| v.to_str().ok())
             .ok_or(AuthError::Missing)?;
 
-        let mut hasher = Sha256::new();
-        hasher.update(raw_key.as_bytes());
-        let key_hash = hex::encode(hasher.finalize());
+        let key_hash = api_key::hash_api_key_for_lookup(raw_key);
 
         let row = sqlx::query!(
             r#"

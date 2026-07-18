@@ -25,7 +25,7 @@ use crate::public_verification_audit::{
     PublicVerificationOutcome, PublicVerificationRateLimitAction, PublicVerificationRequestType,
 };
 use crate::state::rate_limiter::{
-    rate_limit_client_key, FixedWindowLimiter, PublicRateLimitState, RateLimitDecision,
+    rate_limit_scoped_client_key, FixedWindowLimiter, PublicRateLimitState, RateLimitDecision,
 };
 
 #[derive(Clone)]
@@ -34,6 +34,9 @@ pub struct PublicRateLimitMiddlewareState {
     pub trust_proxy_headers: bool,
     pub include_user_agent_in_key: bool,
     pub request_type: PublicVerificationRequestType,
+    pub rate_limit_scope: Option<&'static str>,
+    pub rate_limit_message: &'static str,
+    pub audit_enabled: bool,
 }
 
 impl PublicRateLimitMiddlewareState {
@@ -43,6 +46,9 @@ impl PublicRateLimitMiddlewareState {
             trust_proxy_headers: state.trust_proxy_headers,
             include_user_agent_in_key: state.include_user_agent_in_key,
             request_type: PublicVerificationRequestType::Verify,
+            rate_limit_scope: None,
+            rate_limit_message: "Too many requests. Please try again later.",
+            audit_enabled: true,
         }
     }
 
@@ -52,6 +58,21 @@ impl PublicRateLimitMiddlewareState {
             trust_proxy_headers: state.trust_proxy_headers,
             include_user_agent_in_key: state.include_user_agent_in_key,
             request_type: PublicVerificationRequestType::CertificatePdf,
+            rate_limit_scope: None,
+            rate_limit_message: "Too many requests. Please try again later.",
+            audit_enabled: true,
+        }
+    }
+
+    pub fn register(state: &PublicRateLimitState) -> Self {
+        Self {
+            limiter: state.register.clone(),
+            trust_proxy_headers: state.trust_proxy_headers,
+            include_user_agent_in_key: state.include_user_agent_in_key,
+            request_type: PublicVerificationRequestType::Verify,
+            rate_limit_scope: Some("register"),
+            rate_limit_message: "Too many registration attempts. Please try again later.",
+            audit_enabled: false,
         }
     }
 }
@@ -144,26 +165,28 @@ pub async fn public_rate_limit_middleware(
         None
     };
     let ip = client_ip_from_request(&request, peer, state.trust_proxy_headers);
-    let client_key = rate_limit_client_key(ip, user_agent);
+    let client_key = rate_limit_scoped_client_key(ip, user_agent, state.rate_limit_scope);
     let client_ip_hash = client_ip_hash_hex(client_key);
     let decision = state.limiter.check(client_key, std::time::Instant::now());
 
     if !decision.allowed {
         let request_id = Uuid::new_v4().to_string();
-        log_public_verification_audit(&PublicVerificationAuditEvent::new(
-            state.request_type,
-            PublicVerificationOutcome::RateLimited,
-            PublicVerificationRateLimitAction::Blocked,
-            request_id.clone(),
-            Some(client_ip_hash),
-        ));
+        if state.audit_enabled {
+            log_public_verification_audit(&PublicVerificationAuditEvent::new(
+                state.request_type,
+                PublicVerificationOutcome::RateLimited,
+                PublicVerificationRateLimitAction::Blocked,
+                request_id.clone(),
+                Some(client_ip_hash),
+            ));
+        }
         return (
             StatusCode::TOO_MANY_REQUESTS,
             [(header::RETRY_AFTER, decision.retry_after_secs.to_string())],
             Json(RateLimitErrorEnvelope {
                 error: RateLimitErrorBody {
                     code: "rate_limited".to_string(),
-                    message: "Too many requests. Please try again later.".to_string(),
+                    message: state.rate_limit_message.to_string(),
                     request_id,
                 },
             }),
