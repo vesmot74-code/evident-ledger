@@ -8,6 +8,7 @@ pub mod backup_snapshot;
 pub mod capabilities;
 pub mod chains;
 pub mod entitlements;
+pub mod identity_audit;
 pub mod identity_challenge;
 pub mod identity_dashboard;
 pub mod identity_keys;

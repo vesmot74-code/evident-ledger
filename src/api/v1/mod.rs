@@ -7,6 +7,7 @@ pub mod events;
 pub mod file_verification;
 pub mod idempotency;
 pub mod identity_key_events;
+pub mod identity_key_revoke;
 pub mod identity_keys;
 pub mod proof;
 pub mod proof_material;

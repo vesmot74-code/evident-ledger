@@ -2,7 +2,7 @@
 
 use axum::{
     extract::State,
-    routing::get,
+    routing::{get, post},
     Json, Router,
 };
 use chrono::{DateTime, Utc};
@@ -14,6 +14,7 @@ use crate::state::AppState;
 use super::auth::V1Auth;
 use super::errors::ApiError;
 use super::identity_key_events::list_key_events_handler;
+use super::identity_key_revoke::revoke_key_handler;
 use crate::service::identity_dashboard::{IdentityDashboardError, IdentityDashboardService};
 
 #[derive(Debug, Serialize)]
@@ -36,6 +37,7 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/", get(list_keys_handler))
         .route("/:key_id/events", get(list_key_events_handler))
+        .route("/:key_id/revoke", post(revoke_key_handler))
         .with_state(state)
 }
 

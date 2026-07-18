@@ -47,6 +47,7 @@ pub enum ApiError {
     NotImplemented,
     EntitlementMissing,
     IdentityKeyNotFound,
+    IdentityKeyAlreadyRevoked,
     IdentityKeyRevoked,
     IdentityKeyNotVerified,
     InvalidIdentitySignature,
@@ -73,6 +74,7 @@ impl ApiError {
             ApiError::NotImplemented => StatusCode::NOT_IMPLEMENTED,
             ApiError::EntitlementMissing => StatusCode::FORBIDDEN,
             ApiError::IdentityKeyNotFound => StatusCode::NOT_FOUND,
+            ApiError::IdentityKeyAlreadyRevoked => StatusCode::CONFLICT,
             ApiError::IdentityKeyRevoked => StatusCode::FORBIDDEN,
             ApiError::IdentityKeyNotVerified => StatusCode::FORBIDDEN,
             ApiError::InvalidIdentitySignature => StatusCode::UNAUTHORIZED,
@@ -99,6 +101,7 @@ impl ApiError {
             ApiError::NotImplemented => "not_implemented",
             ApiError::EntitlementMissing => "entitlement_missing",
             ApiError::IdentityKeyNotFound => "identity_key_not_found",
+            ApiError::IdentityKeyAlreadyRevoked => "identity_key_already_revoked",
             ApiError::IdentityKeyRevoked => "identity_key_revoked",
             ApiError::IdentityKeyNotVerified => "identity_key_not_verified",
             ApiError::InvalidIdentitySignature => "invalid_identity_signature",
@@ -133,6 +136,7 @@ impl ApiError {
                 "Identity feature not available on current plan"
             }
             ApiError::IdentityKeyNotFound => "Identity key not found",
+            ApiError::IdentityKeyAlreadyRevoked => "Identity key is already revoked",
             ApiError::IdentityKeyRevoked => "Identity key has been revoked",
             ApiError::IdentityKeyNotVerified => "Identity key is not verified",
             ApiError::InvalidIdentitySignature => "Signature verification failed",
