@@ -66,6 +66,26 @@ pub fn generate_public_id() -> String {
     format!("pv_{}", bs58::encode(bytes).into_string())
 }
 
+const BASE58_ALPHABET: &str = "123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz";
+
+/// Validates `public_proof_id` against [`generate_public_id`] output (Stage 6.3/6.4 format).
+pub fn validate_public_proof_id(public_proof_id: &str) -> bool {
+    if !public_proof_id.starts_with("pv_") {
+        return false;
+    }
+    let suffix = &public_proof_id[3..];
+    if suffix.is_empty() {
+        return false;
+    }
+    if !suffix.chars().all(|c| BASE58_ALPHABET.contains(c)) {
+        return false;
+    }
+    match bs58::decode(suffix).into_vec() {
+        Ok(bytes) => bytes.len() == 16,
+        Err(_) => false,
+    }
+}
+
 /// Records an internal proof as Anchored and materializes canonical public proof if eligible.
 pub async fn on_proof_anchored(
     pool: &PgPool,
@@ -298,6 +318,7 @@ mod tests {
         let id = generate_public_id();
         assert!(id.starts_with("pv_"));
         assert!(id.len() > 3);
+        assert!(validate_public_proof_id(&id));
     }
 
     #[test]

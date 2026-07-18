@@ -1,5 +1,7 @@
 //! Shared structural-integrity cases: restore and evident-verify must agree.
 
+mod verifier_harness;
+
 use chrono::Utc;
 use evident_ledger::db::EventRow;
 use evident_ledger::service::backup_restore::{print_restore_summary, restore_snapshot_bytes};
@@ -9,59 +11,9 @@ use evident_ledger::service::backup_snapshot::{
 use evident_ledger::service::verification::{
     check_event_structure, StructuralFailure, STRUCTURAL_INTEGRITY_ERROR,
 };
-use std::path::PathBuf;
-use std::process::Command;
 use tempfile::TempDir;
 use uuid::Uuid;
-
-fn setup_isolated_home() -> PathBuf {
-    let home = PathBuf::from(format!("/tmp/evident_structural_home_{}", uuid_simple()));
-    let evident_dir = home.join(".evident");
-    std::fs::create_dir_all(&evident_dir).expect("create isolated home");
-
-    let fixture_key =
-        PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/server_identity.pub");
-    std::fs::copy(&fixture_key, evident_dir.join("server_identity.pub"))
-        .expect("tests/fixtures/server_identity.pub missing");
-
-    home
-}
-
-fn run_verifier(proof_path: &str) -> (String, i32) {
-    let home = setup_isolated_home();
-    let output = Command::new("cargo")
-        .args(["run", "--bin", "evident-verify", "--", proof_path])
-        .current_dir(env!("CARGO_MANIFEST_DIR"))
-        .env("HOME", &home)
-        .output()
-        .expect("failed to run verifier");
-    let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-    let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    let combined = format!("{}{}", stdout, stderr);
-    let code = output.status.code().unwrap_or(-1);
-    (combined, code)
-}
-
-fn uuid_simple() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .subsec_nanos()
-        .to_string()
-}
-
-fn load_proof() -> serde_json::Value {
-    let content = std::fs::read_to_string("tests/fixtures/proof.json")
-        .expect("tests/fixtures/proof.json missing");
-    serde_json::from_str(&content).expect("invalid JSON")
-}
-
-fn write_temp(value: &serde_json::Value) -> String {
-    let path = format!("/tmp/evident_structural_{}.json", uuid_simple());
-    std::fs::write(&path, serde_json::to_string(value).unwrap()).unwrap();
-    path
-}
+use verifier_harness::{load_proof, run_verifier};
 
 fn proof_events_to_rows(proof: &serde_json::Value) -> Vec<EventRow> {
     proof["events"]
@@ -190,8 +142,7 @@ fn shared_sequence_corruption_fails_restore_and_verify() {
         .join(format!("{backup_id}.json"))
         .exists());
 
-    let path = write_temp(&proof);
-    let (output, code) = run_verifier(&path);
+    let (output, code) = run_verifier(&proof);
     assert_eq!(code, 2);
     assert!(output.contains("sequence not monotonic"));
 }
@@ -226,8 +177,7 @@ fn shared_parent_corruption_fails_restore_and_verify() {
     )
     .unwrap_err();
 
-    let path = write_temp(&proof);
-    let (output, code) = run_verifier(&path);
+    let (output, code) = run_verifier(&proof);
     assert_eq!(code, 2);
     assert!(output.contains("parent mismatch"));
 }
@@ -256,8 +206,7 @@ fn merkle_tamper_fails_verify_but_restore_is_structural_only() {
     .expect("restore allows structurally valid tampered leaf");
     assert!(summary.output_path.exists());
 
-    let path = write_temp(&proof);
-    let (output, code) = run_verifier(&path);
+    let (output, code) = run_verifier(&proof);
     assert_eq!(code, 2);
     assert!(output.contains("merkle root mismatch"));
 }

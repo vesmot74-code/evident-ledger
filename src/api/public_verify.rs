@@ -1,4 +1,4 @@
-//! Public verification HTTP handlers (Stage 6.3 / 6.4 / 6.5).
+//! Public verification HTTP handlers (Stage 6.3 / 6.4 / 6.5 / 6.6).
 
 use axum::{
     extract::{Path, Query, State},
@@ -6,18 +6,24 @@ use axum::{
     middleware,
     response::{IntoResponse, Response},
     routing::get,
-    Json, Router,
+    Extension, Json, Router,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::PgPool;
+use uuid::Uuid;
 
-use crate::api::v1::file_verification::normalize_query_file_hash;
 use crate::middleware::public_rate_limit::{
     public_rate_limit_middleware, PublicRateLimitMiddlewareState,
 };
+use crate::middleware::public_request::PublicRequestMetadata;
 use crate::public_certificate_pdf::render_public_certificate_pdf;
 use crate::public_proof::PublicRegistryEntry;
+use crate::public_verification_audit::{
+    log_public_verification_audit, PublicVerificationAuditEvent, PublicVerificationOutcome,
+    PublicVerificationRateLimitAction, PublicVerificationRequestType,
+};
+use crate::public_verify_validation::{validate_public_file_hash, validate_public_proof_id};
 use crate::state::rate_limiter::PublicRateLimitState;
 use crate::state::AppState;
 
@@ -35,8 +41,18 @@ pub struct PublicVerifyResponse {
     pub integrity: Option<String>,
 }
 
-pub fn normalize_public_verify_hash(raw: Option<String>) -> Result<String, ()> {
-    normalize_query_file_hash(raw).and_then(|opt| opt.ok_or(()))
+pub fn invalid_request_response(request_id: String) -> Response {
+    (
+        StatusCode::BAD_REQUEST,
+        Json(json!({
+            "error": {
+                "code": "invalid_request",
+                "message": "Invalid request",
+                "request_id": request_id,
+            }
+        })),
+    )
+        .into_response()
 }
 
 pub async fn lookup_public_registry_entry(
@@ -75,14 +91,6 @@ pub async fn lookup_public_registry_by_id(
     .await
 }
 
-pub fn invalid_hash_response() -> Response {
-    (
-        StatusCode::BAD_REQUEST,
-        Json(json!({ "error": "invalid_hash" })),
-    )
-        .into_response()
-}
-
 fn response_from_entry(entry: Option<PublicRegistryEntry>) -> PublicVerifyResponse {
     match entry {
         Some(row) => PublicVerifyResponse {
@@ -102,16 +110,61 @@ fn response_from_entry(entry: Option<PublicRegistryEntry>) -> PublicVerifyRespon
     }
 }
 
+fn audit_verify(
+    metadata: &PublicRequestMetadata,
+    request_id: &str,
+    outcome: PublicVerificationOutcome,
+) {
+    log_public_verification_audit(&PublicVerificationAuditEvent::new(
+        PublicVerificationRequestType::Verify,
+        outcome,
+        metadata.rate_limit_action,
+        request_id,
+        metadata.client_ip_hash.clone(),
+    ));
+}
+
+fn audit_certificate(
+    metadata: &PublicRequestMetadata,
+    request_id: &str,
+    outcome: PublicVerificationOutcome,
+) {
+    log_public_verification_audit(&PublicVerificationAuditEvent::new(
+        PublicVerificationRequestType::CertificatePdf,
+        outcome,
+        metadata.rate_limit_action,
+        request_id,
+        metadata.client_ip_hash.clone(),
+    ));
+}
+
+/// Core verify path: validate → single registry lookup → response.
 pub async fn verify_by_hash(
     pool: &PgPool,
     raw_hash: Option<String>,
+    metadata: Option<&PublicRequestMetadata>,
 ) -> Result<Response, sqlx::Error> {
-    let normalized = match normalize_public_verify_hash(raw_hash) {
+    let request_id = Uuid::new_v4().to_string();
+
+    let normalized = match validate_public_file_hash(raw_hash) {
         Ok(hash) => hash,
-        Err(()) => return Ok(invalid_hash_response()),
+        Err(()) => {
+            if let Some(metadata) = metadata {
+                audit_verify(metadata, &request_id, PublicVerificationOutcome::InvalidRequest);
+            }
+            return Ok(invalid_request_response(request_id));
+        }
     };
 
     let entry = lookup_public_registry_entry(pool, &normalized).await?;
+    let outcome = if entry.is_some() {
+        PublicVerificationOutcome::Success
+    } else {
+        PublicVerificationOutcome::NotFound
+    };
+    if let Some(metadata) = metadata {
+        audit_verify(metadata, &request_id, outcome);
+    }
     Ok((
         StatusCode::OK,
         Json(response_from_entry(entry)),
@@ -119,11 +172,57 @@ pub async fn verify_by_hash(
         .into_response())
 }
 
+/// Test hook: same code path with injectable lookup for call-count assertions.
+#[doc(hidden)]
+pub async fn verify_by_hash_with_lookup(
+    raw_hash: Option<String>,
+    lookup: impl FnOnce(
+        &str,
+    ) -> std::pin::Pin<
+        Box<dyn std::future::Future<Output = Result<Option<PublicRegistryEntry>, sqlx::Error>> + Send>,
+    >,
+    metadata: Option<&PublicRequestMetadata>,
+) -> Result<(Response, u32), sqlx::Error> {
+    let request_id = Uuid::new_v4().to_string();
+    let normalized = match validate_public_file_hash(raw_hash) {
+        Ok(hash) => hash,
+        Err(()) => {
+            if let Some(metadata) = metadata {
+                audit_verify(metadata, &request_id, PublicVerificationOutcome::InvalidRequest);
+            }
+            return Ok((invalid_request_response(request_id), 0));
+        }
+    };
+
+    let mut calls = 0u32;
+    let entry = {
+        calls += 1;
+        lookup(&normalized).await?
+    };
+    let outcome = if entry.is_some() {
+        PublicVerificationOutcome::Success
+    } else {
+        PublicVerificationOutcome::NotFound
+    };
+    if let Some(metadata) = metadata {
+        audit_verify(metadata, &request_id, outcome);
+    }
+    Ok((
+        (
+            StatusCode::OK,
+            Json(response_from_entry(entry)),
+        )
+            .into_response(),
+        calls,
+    ))
+}
+
 pub async fn public_verify_handler(
     State(state): State<AppState>,
     Query(query): Query<PublicVerifyQuery>,
+    metadata: Option<Extension<PublicRequestMetadata>>,
 ) -> Result<Response, StatusCode> {
-    verify_by_hash(&state.db, query.file_hash)
+    verify_by_hash(&state.db, query.file_hash, metadata.as_deref())
         .await
         .map_err(|err| {
             tracing::error!(error = %err, "public verify lookup failed");
@@ -134,13 +233,15 @@ pub async fn public_verify_handler(
 pub async fn public_certificate_pdf_handler(
     State(state): State<AppState>,
     Path(public_proof_id): Path<String>,
+    metadata: Option<Extension<PublicRequestMetadata>>,
 ) -> Result<Response, StatusCode> {
-    if !public_proof_id.starts_with("pv_") {
-        return Ok((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "not_found" })),
-        )
-            .into_response());
+    let request_id = Uuid::new_v4().to_string();
+
+    if !validate_public_proof_id(&public_proof_id) {
+        if let Some(Extension(metadata)) = metadata.as_ref() {
+            audit_certificate(metadata, &request_id, PublicVerificationOutcome::InvalidRequest);
+        }
+        return Ok(invalid_request_response(request_id));
     }
 
     let entry = lookup_public_registry_by_id(&state.db, &public_proof_id)
@@ -151,12 +252,19 @@ pub async fn public_certificate_pdf_handler(
         })?;
 
     let Some(entry) = entry else {
+        if let Some(Extension(metadata)) = metadata.as_ref() {
+            audit_certificate(metadata, &request_id, PublicVerificationOutcome::NotFound);
+        }
         return Ok((
             StatusCode::NOT_FOUND,
             Json(json!({ "error": "not_found" })),
         )
             .into_response());
     };
+
+    if let Some(Extension(metadata)) = metadata.as_ref() {
+        audit_certificate(metadata, &request_id, PublicVerificationOutcome::Success);
+    }
 
     let pdf_bytes = render_public_certificate_pdf(&entry);
     Ok((
@@ -198,13 +306,12 @@ pub fn public_router(state: AppState, rate_limits: PublicRateLimitState) -> Rout
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::middleware::public_request::PublicRequestMetadata;
     use sqlx::postgres::PgPoolOptions;
-
-    #[test]
-    fn normalize_rejects_invalid_hash() {
-        assert!(normalize_public_verify_hash(Some("not-a-valid-hash".into())).is_err());
-        assert!(normalize_public_verify_hash(None).is_err());
-    }
+    use std::sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    };
 
     #[tokio::test]
     async fn invalid_hash_does_not_query_database() {
@@ -212,7 +319,7 @@ mod tests {
             .connect_lazy("postgres://127.0.0.1:1/unreachable")
             .expect("lazy pool");
 
-        let response = verify_by_hash(&pool, Some("not-a-valid-hash".into()))
+        let response = verify_by_hash(&pool, Some("not-a-valid-hash".into()), None)
             .await
             .expect("validation must not reach db");
 
@@ -244,6 +351,55 @@ mod tests {
             .is_none());
 
         cleanup(&pool, &file_hash).await;
+    }
+
+    #[tokio::test]
+    async fn unified_lookup_calls_repository_once_for_found_and_missing() {
+        let counter = Arc::new(AtomicUsize::new(0));
+        let hash = test_hash("unified-path-found");
+        let metadata = PublicRequestMetadata {
+            client_ip_hash: Some("aa".repeat(64)),
+            rate_limit_action: PublicVerificationRateLimitAction::Allowed,
+        };
+
+        let counter_missing = counter.clone();
+        let (resp_missing, calls_missing) = verify_by_hash_with_lookup(
+            Some(hash.clone()),
+            move |_| {
+                counter_missing.fetch_add(1, Ordering::SeqCst);
+                Box::pin(async move { Ok(None) })
+            },
+            Some(&metadata),
+        )
+        .await
+        .expect("missing");
+        assert_eq!(calls_missing, 1);
+        assert_eq!(resp_missing.status(), StatusCode::OK);
+
+        let counter_found = counter.clone();
+        let found_entry = PublicRegistryEntry {
+            public_proof_id: crate::public_proof::generate_public_id(),
+            file_hash: hash.clone(),
+            proof_status: "REGISTERED".into(),
+            registered_at: chrono::Utc::now(),
+            tsa_class: "basic".into(),
+            integrity_state: "VALID".into(),
+            enabled: true,
+        };
+        let (resp_found, calls_found) = verify_by_hash_with_lookup(
+            Some(hash),
+            move |_| {
+                counter_found.fetch_add(1, Ordering::SeqCst);
+                let entry = found_entry.clone();
+                Box::pin(async move { Ok(Some(entry)) })
+            },
+            Some(&metadata),
+        )
+        .await
+        .expect("found");
+        assert_eq!(calls_found, 1);
+        assert_eq!(resp_found.status(), StatusCode::OK);
+        assert_eq!(counter.load(Ordering::SeqCst), 2);
     }
 
     fn test_hash(label: &str) -> String {

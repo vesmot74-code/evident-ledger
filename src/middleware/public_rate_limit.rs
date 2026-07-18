@@ -1,4 +1,4 @@
-//! Axum middleware for public verification rate limiting (Stage 6.5).
+//! Axum middleware for public verification rate limiting (Stage 6.5 / 6.6).
 //!
 //! Rate limiting is IP-based and per-instance (in-memory).
 //! It is a mitigating control against casual abuse and scraping,
@@ -19,6 +19,11 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 use uuid::Uuid;
 
+use crate::middleware::public_request::PublicRequestMetadata;
+use crate::public_verification_audit::{
+    client_ip_hash_hex, log_public_verification_audit, PublicVerificationAuditEvent,
+    PublicVerificationOutcome, PublicVerificationRateLimitAction, PublicVerificationRequestType,
+};
 use crate::state::rate_limiter::{
     rate_limit_client_key, FixedWindowLimiter, PublicRateLimitState, RateLimitDecision,
 };
@@ -28,6 +33,7 @@ pub struct PublicRateLimitMiddlewareState {
     pub limiter: Arc<FixedWindowLimiter>,
     pub trust_proxy_headers: bool,
     pub include_user_agent_in_key: bool,
+    pub request_type: PublicVerificationRequestType,
 }
 
 impl PublicRateLimitMiddlewareState {
@@ -36,6 +42,7 @@ impl PublicRateLimitMiddlewareState {
             limiter: state.verify.clone(),
             trust_proxy_headers: state.trust_proxy_headers,
             include_user_agent_in_key: state.include_user_agent_in_key,
+            request_type: PublicVerificationRequestType::Verify,
         }
     }
 
@@ -44,6 +51,7 @@ impl PublicRateLimitMiddlewareState {
             limiter: state.certificate.clone(),
             trust_proxy_headers: state.trust_proxy_headers,
             include_user_agent_in_key: state.include_user_agent_in_key,
+            request_type: PublicVerificationRequestType::CertificatePdf,
         }
     }
 }
@@ -124,7 +132,7 @@ fn forwarded_client_ip(request: &Request<Body>) -> Option<IpAddr> {
 pub async fn public_rate_limit_middleware(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     State(state): State<PublicRateLimitMiddlewareState>,
-    request: Request<Body>,
+    mut request: Request<Body>,
     next: Next,
 ) -> Response {
     let user_agent = if state.include_user_agent_in_key {
@@ -137,11 +145,36 @@ pub async fn public_rate_limit_middleware(
     };
     let ip = client_ip_from_request(&request, peer, state.trust_proxy_headers);
     let client_key = rate_limit_client_key(ip, user_agent);
+    let client_ip_hash = client_ip_hash_hex(client_key);
     let decision = state.limiter.check(client_key, std::time::Instant::now());
 
     if !decision.allowed {
-        return rate_limited_response(decision);
+        let request_id = Uuid::new_v4().to_string();
+        log_public_verification_audit(&PublicVerificationAuditEvent::new(
+            state.request_type,
+            PublicVerificationOutcome::RateLimited,
+            PublicVerificationRateLimitAction::Blocked,
+            request_id.clone(),
+            Some(client_ip_hash),
+        ));
+        return (
+            StatusCode::TOO_MANY_REQUESTS,
+            [(header::RETRY_AFTER, decision.retry_after_secs.to_string())],
+            Json(RateLimitErrorEnvelope {
+                error: RateLimitErrorBody {
+                    code: "rate_limited".to_string(),
+                    message: "Too many requests. Please try again later.".to_string(),
+                    request_id,
+                },
+            }),
+        )
+            .into_response();
     }
+
+    request.extensions_mut().insert(PublicRequestMetadata {
+        client_ip_hash: Some(client_ip_hash),
+        rate_limit_action: PublicVerificationRateLimitAction::Allowed,
+    });
 
     let limit = state.limiter.config().max_requests;
     let mut response = next.run(request).await;

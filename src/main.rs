@@ -13,6 +13,8 @@ mod models;
 mod proof_format;
 mod public_certificate_pdf;
 mod public_proof;
+mod public_verification_audit;
+mod public_verify_validation;
 mod sac;
 mod sac_pdf;
 mod service;

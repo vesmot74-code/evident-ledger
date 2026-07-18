@@ -237,7 +237,9 @@ async fn public_certificate_pdf_has_no_private_fields() {
     let hash_pdf_url =
         format!("http://127.0.0.1:{port}/verify/{file_hash}/certificate.pdf");
     let hash_resp = client.get(&hash_pdf_url).send().await.expect("hash pdf");
-    assert_eq!(hash_resp.status(), StatusCode::NOT_FOUND);
+    assert_eq!(hash_resp.status(), StatusCode::BAD_REQUEST);
+    let hash_body: Value = hash_resp.json().await.expect("json");
+    assert_eq!(hash_body["error"]["code"], "invalid_request");
 
     cleanup(&pool, &file_hash).await;
 }
@@ -346,7 +348,7 @@ async fn invalid_hash_skips_database() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy pool");
-    let response = verify_by_hash(&pool, Some("not-a-valid-hash".into()))
+    let response = verify_by_hash(&pool, Some("not-a-valid-hash".into()), None)
         .await
         .expect("pre-db validation");
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);

@@ -149,6 +149,7 @@ async fn certificate_endpoint_allows_first_20_then_blocks() {
         limiter,
         trust_proxy_headers: false,
         include_user_agent_in_key: false,
+        request_type: evident_ledger::public_verification_audit::PublicVerificationRequestType::CertificatePdf,
     };
     let app = axum::Router::new()
         .route(
@@ -207,15 +208,15 @@ async fn rate_limit_isolates_different_peer_ips() {
         window_secs: 60,
         max_entries: 100,
     }));
-    let middleware_state = PublicRateLimitMiddlewareState {
-        limiter,
-        trust_proxy_headers: false,
-        include_user_agent_in_key: false,
-    };
     let app = axum::Router::new()
         .route("/verify", axum::routing::get(|| async { "ok" }))
         .layer(axum::middleware::from_fn_with_state(
-            middleware_state,
+            PublicRateLimitMiddlewareState {
+                limiter,
+                trust_proxy_headers: false,
+                include_user_agent_in_key: false,
+                request_type: evident_ledger::public_verification_audit::PublicVerificationRequestType::Verify,
+            },
             public_rate_limit_middleware,
         ));
 

@@ -38,7 +38,7 @@ async fn public_verify_rejects_invalid_hash_without_database_lookup() {
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy pool");
 
-    let response = verify_by_hash(&pool, Some("not-a-valid-hash".into()))
+    let response = verify_by_hash(&pool, Some("not-a-valid-hash".into()), None)
         .await
         .expect("invalid hash must fail before db access");
 
@@ -47,7 +47,9 @@ async fn public_verify_rejects_invalid_hash_without_database_lookup() {
         .await
         .expect("body");
     let parsed: Value = serde_json::from_slice(&body).expect("json");
-    assert_eq!(parsed, json!({ "error": "invalid_hash" }));
+    assert_eq!(parsed["error"]["code"], "invalid_request");
+    assert_eq!(parsed["error"]["message"], "Invalid request");
+    assert!(parsed["error"]["request_id"].is_string());
 }
 
 #[tokio::test]
@@ -78,7 +80,7 @@ async fn public_verify_hash_case_normalization_via_on_proof_anchored() {
     .expect("anchor");
 
     for hash in [canonical.clone(), canonical.to_uppercase(), mixed_case] {
-        let response = verify_by_hash(&pool, Some(hash))
+        let response = verify_by_hash(&pool, Some(hash), None)
             .await
             .expect("verify");
         assert_eq!(response.status(), StatusCode::OK);
@@ -98,7 +100,7 @@ async fn public_verify_not_found_returns_exists_false() {
     let missing = canonical_hash("public-verify-missing");
     cleanup(&pool, &missing).await;
 
-    let response = verify_by_hash(&pool, Some(missing))
+    let response = verify_by_hash(&pool, Some(missing), None)
         .await
         .expect("verify");
     assert_eq!(response.status(), StatusCode::OK);

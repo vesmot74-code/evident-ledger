@@ -14,6 +14,8 @@ pub mod product;
 pub mod proof_format;
 pub mod public_certificate_pdf;
 pub mod public_proof;
+pub mod public_verification_audit;
+pub mod public_verify_validation;
 pub mod sac;
 pub mod sac_pdf;
 pub mod service;
