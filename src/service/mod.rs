@@ -8,6 +8,7 @@ pub mod backup_snapshot;
 pub mod capabilities;
 pub mod chains;
 pub mod entitlements;
+pub mod identity_keys;
 pub mod ledger;
 pub mod subscription_enforcement;
 pub mod verification;
