@@ -1,5 +1,7 @@
 use askama::Template;
 
+use crate::service::tariff::PlanPreview;
+
 #[derive(Template)]
 #[template(path = "dashboard/index.html")]
 pub struct DashboardIndexTemplate {
@@ -8,6 +10,7 @@ pub struct DashboardIndexTemplate {
     pub usage_summary: String,
     pub percentage: String,
     pub can_upgrade: bool,
+    pub available_plans: Vec<PlanPreview>,
 }
 
 #[derive(Template)]
@@ -19,6 +22,7 @@ pub struct SubscriptionTemplate {
     pub current_period_end: String,
     pub pending_plan_display: String,
     pub can_upgrade: bool,
+    pub available_plans: Vec<PlanPreview>,
 }
 
 #[derive(Template)]

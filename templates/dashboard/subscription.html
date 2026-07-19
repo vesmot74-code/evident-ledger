@@ -24,10 +24,16 @@
   {% if can_upgrade %}
   <section class="card">
     <h2>Upgrade</h2>
-    <p class="value">Legal plan</p>
-    <p style="margin-top: 10px;">
-      <button class="btn upgrade-plan-btn" type="button">Upgrade plan</button>
-    </p>
+    {% for plan in available_plans %}
+    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+      <span>{{ plan.display_name }}</span>
+      <button class="btn upgrade-plan-btn" type="button" data-plan="{{ plan.name }}">
+        Upgrade to {{ plan.display_name }}
+      </button>
+    </div>
+    {% else %}
+    <p style="color: var(--text-secondary);">No upgrade options available.</p>
+    {% endfor %}
     <p class="upgrade-error error" aria-live="polite"></p>
   </section>
   {% endif %}
@@ -40,9 +46,12 @@
       if (errorEl) errorEl.textContent = '';
       button.disabled = true;
       try {
+        const plan = button.dataset.plan;
         const response = await fetch('/dashboard/upgrade', {
           method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
           credentials: 'same-origin',
+          body: JSON.stringify({ plan })
         });
         const body = await response.json().catch(() => ({}));
         if (response.ok && body.checkout_url) {
@@ -54,7 +63,7 @@
           return;
         }
         if (errorEl) {
-          errorEl.textContent = body.error?.message || 'Unable to start checkout';
+          errorEl.textContent = body.error?.message || body.error || 'Unable to start checkout';
         }
       } catch (_) {
         if (errorEl) errorEl.textContent = 'Unable to start checkout';

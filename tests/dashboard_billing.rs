@@ -10,6 +10,7 @@ use evident_ledger::paddle::client::MockPaddleClient;
 use evident_ledger::service::billing;
 use evident_ledger::state::rate_limiter::LoginRateLimitState;
 use evident_ledger::state::AppState;
+use evident_ledger::web::dashboard as dashboard_ui;
 use serde_json::{json, Value};
 use sqlx::postgres::PgPoolOptions;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
@@ -41,6 +42,18 @@ fn billing_app(state: AppState) -> axum::Router {
             auth::router(state.clone(), LoginRateLimitState::from_config(false)),
         )
         .nest("/dashboard", dashboard_billing::router(state))
+}
+
+fn full_dashboard_app(state: AppState) -> axum::Router {
+    axum::Router::new()
+        .nest(
+            "/auth",
+            auth::router(state.clone(), LoginRateLimitState::from_config(false)),
+        )
+        .nest(
+            "/dashboard",
+            dashboard_ui::router(state.clone()).merge(dashboard_billing::router(state)),
+        )
 }
 
 fn state_with_paddle(pool: sqlx::PgPool, paddle: Arc<MockPaddleClient>) -> AppState {
@@ -188,6 +201,40 @@ async fn create_unlinked_account(pool: &sqlx::PgPool, email: &str) -> Uuid {
     .await
     .expect("insert account");
     account_id
+}
+
+async fn set_all_paid_plan_prices(pool: &sqlx::PgPool) {
+    set_plan_price(pool, "legal", "pri_legal_test").await;
+    set_plan_price(pool, "vault", "pri_vault_test").await;
+    set_plan_price(pool, "identity", "price_identity_test").await;
+}
+
+async fn set_account_plan_by_email(pool: &sqlx::PgPool, email: &str, plan_name: &str) {
+    sqlx::query(
+        r#"
+        UPDATE accounts
+        SET tariff_plan_id = (SELECT plan_id FROM tariff_plans WHERE name = $1)
+        WHERE email = $2
+        "#,
+    )
+    .bind(plan_name)
+    .bind(email)
+    .execute(pool)
+    .await
+    .expect("set account plan");
+}
+
+async fn fetch_dashboard_html(app: axum::Router, cookie: &str) -> String {
+    let svc = app.into_service();
+    let response = svc
+        .oneshot(peer_request("GET", "/dashboard", Some(cookie), None))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::OK);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    String::from_utf8_lossy(&bytes).into_owned()
 }
 
 #[tokio::test]
@@ -401,6 +448,172 @@ async fn post_dashboard_upgrade_identity_plan_uses_configured_paddle_price() {
     assert!(customer_id.starts_with("ctm_mock_"));
     assert_eq!(price_id, "price_identity_test");
 
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn post_dashboard_upgrade_vault_plan_returns_checkout_url() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_plan_price(&pool, "vault", "pri_vault_test").await;
+    let email = format!("bill-vault-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let paddle = MockPaddleClient::new();
+    let app = billing_app(state_with_paddle(pool.clone(), paddle.clone()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/dashboard/upgrade",
+            Some(&cookie),
+            Some(json!({ "plan": "vault" })),
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body["checkout_url"].as_str().unwrap().contains("pri_vault_test"));
+    let (_, price_id) = paddle.last_checkout().expect("checkout");
+    assert_eq!(price_id, "pri_vault_test");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_free_account_shows_all_purchasable_upgrade_plans() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_all_paid_plan_prices(&pool).await;
+    let email = format!("ui-free-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_dashboard_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let html = fetch_dashboard_html(app, &cookie).await;
+    assert!(html.contains(r#"data-plan="legal""#));
+    assert!(html.contains(r#"data-plan="vault""#));
+    assert!(html.contains(r#"data-plan="identity""#));
+
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_legal_account_hides_legal_upgrade_button() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_all_paid_plan_prices(&pool).await;
+    let email = format!("ui-legal-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_dashboard_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+    set_account_plan_by_email(&pool, &email, "legal").await;
+
+    let html = fetch_dashboard_html(app, &cookie).await;
+    assert!(!html.contains(r#"data-plan="legal""#));
+    assert!(html.contains(r#"data-plan="vault""#));
+    assert!(html.contains(r#"data-plan="identity""#));
+
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_vault_account_shows_identity_upgrade_only() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_all_paid_plan_prices(&pool).await;
+    let email = format!("ui-vault-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_dashboard_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+    set_account_plan_by_email(&pool, &email, "vault").await;
+
+    let html = fetch_dashboard_html(app, &cookie).await;
+    assert!(!html.contains(r#"data-plan="legal""#));
+    assert!(!html.contains(r#"data-plan="vault""#));
+    assert!(html.contains(r#"data-plan="identity""#));
+
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_identity_account_hides_upgrade_section() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_all_paid_plan_prices(&pool).await;
+    let email = format!("ui-identity-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_dashboard_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+    set_account_plan_by_email(&pool, &email, "identity").await;
+
+    let html = fetch_dashboard_html(app, &cookie).await;
+    assert!(!html.contains("upgrade-plan-btn"));
+    assert!(!html.contains("No upgrade options available"));
+
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_ignores_pending_downgrade_for_upgrade_list() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_all_paid_plan_prices(&pool).await;
+    let email = format!("ui-pending-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_dashboard_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+    set_account_plan_by_email(&pool, &email, "legal").await;
+    sqlx::query(
+        r#"
+        UPDATE accounts
+        SET pending_tariff_plan_id = (SELECT plan_id FROM tariff_plans WHERE name = 'free')
+        WHERE email = $1
+        "#,
+    )
+    .bind(&email)
+    .execute(&pool)
+    .await
+    .expect("pending downgrade");
+
+    let html = fetch_dashboard_html(app, &cookie).await;
+    assert!(html.contains(r#"data-plan="vault""#));
+    assert!(html.contains(r#"data-plan="identity""#));
+
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_hides_plans_without_paddle_price() {
+    let _lock = tariff_plan_test_lock();
+    let pool = test_pool().await;
+    set_all_paid_plan_prices(&pool).await;
+    let original_vault: Option<String> = sqlx::query_scalar(
+        "SELECT paddle_price_id FROM tariff_plans WHERE name = 'vault'",
+    )
+    .fetch_one(&pool)
+    .await
+    .expect("vault price");
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = NULL WHERE name = 'vault'")
+        .execute(&pool)
+        .await
+        .expect("clear vault price");
+
+    let email = format!("ui-no-vault-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_dashboard_app(state_with_paddle(pool.clone(), MockPaddleClient::new()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let html = fetch_dashboard_html(app, &cookie).await;
+    assert!(html.contains(r#"data-plan="legal""#));
+    assert!(!html.contains(r#"data-plan="vault""#));
+    assert!(html.contains(r#"data-plan="identity""#));
+
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = 'vault'")
+        .bind(original_vault)
+        .execute(&pool)
+        .await
+        .expect("restore vault price");
     cleanup_email(&pool, &email).await;
 }
 

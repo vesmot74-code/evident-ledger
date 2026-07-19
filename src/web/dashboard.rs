@@ -15,7 +15,7 @@ use uuid::Uuid;
 use crate::auth::api_key;
 use crate::middleware::session_auth::{session_ui_auth_middleware, SessionUser};
 use crate::service::accounts::{self, RevokeApiKeyError};
-use crate::service::billing;
+use crate::service::tariff;
 use crate::state::AppState;
 use crate::web::templates::{
     format_optional_datetime, format_optional_text, format_percentage, format_usage_summary,
@@ -67,16 +67,17 @@ async fn index_handler(
         .monthly_commits_limit
         .map(|limit| usage.server_commits.saturating_mul(100) / limit.max(1));
 
-    let can_upgrade = !billing::has_active_subscription(&state.db, session.account_id)
+    let available_plans = tariff::list_upgradeable_plans(&state.db, session.account_id)
         .await
-        .unwrap_or(true);
+        .unwrap_or_default();
 
     render_template(DashboardIndexTemplate {
         email: profile.email,
         plan_display: profile.plan_display_name.to_uppercase(),
         usage_summary: format_usage_summary(usage.server_commits, usage.monthly_commits_limit),
         percentage: format_percentage(percentage),
-        can_upgrade,
+        can_upgrade: !available_plans.is_empty(),
+        available_plans,
     })
 }
 
@@ -90,9 +91,9 @@ async fn subscription_handler(
         return internal_error("Failed to load subscription");
     };
 
-    let can_upgrade = !billing::has_active_subscription(&state.db, session.account_id)
+    let available_plans = tariff::list_upgradeable_plans(&state.db, session.account_id)
         .await
-        .unwrap_or(true);
+        .unwrap_or_default();
 
     render_template(SubscriptionTemplate {
         plan_display: snapshot.plan_display_name.to_uppercase(),
@@ -100,7 +101,8 @@ async fn subscription_handler(
         subscription_status: snapshot.subscription_status,
         current_period_end: format_optional_datetime(snapshot.current_period_end),
         pending_plan_display: format_optional_text(snapshot.pending_plan_display_name.as_deref()),
-        can_upgrade,
+        can_upgrade: !available_plans.is_empty(),
+        available_plans,
     })
 }
 

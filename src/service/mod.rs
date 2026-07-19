@@ -16,5 +16,6 @@ pub mod identity_signing;
 pub mod identity_verification;
 pub mod ledger;
 pub mod subscription_enforcement;
+pub mod tariff;
 pub mod verification;
 pub mod verifier;
