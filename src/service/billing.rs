@@ -29,10 +29,7 @@ struct TariffPlanCheckoutRow {
 }
 
 /// Check whether the account already has an active paid subscription.
-pub async fn has_active_subscription(
-    db: &PgPool,
-    account_id: Uuid,
-) -> Result<bool, BillingError> {
+pub async fn has_active_subscription(db: &PgPool, account_id: Uuid) -> Result<bool, BillingError> {
     let status: Option<String> = sqlx::query_scalar(
         r#"
         SELECT subscription_status
@@ -239,7 +236,34 @@ async fn save_paddle_customer_id(
     }
 }
 
+fn paddle_error_type(err: &PaddleClientError) -> &'static str {
+    match err {
+        PaddleClientError::Timeout => "timeout",
+        PaddleClientError::NetworkError(_) => "network_error",
+        PaddleClientError::ApiError { .. } => "api_error",
+        PaddleClientError::InvalidResponse => "invalid_response",
+    }
+}
+
+fn paddle_error_text(err: &PaddleClientError) -> String {
+    match err {
+        PaddleClientError::Timeout => "paddle request timed out".into(),
+        PaddleClientError::NetworkError(message) => message.clone(),
+        PaddleClientError::ApiError { status, message } => {
+            format!("status={status} body={message}")
+        }
+        PaddleClientError::InvalidResponse => "paddle response missing expected fields".into(),
+    }
+}
+
 fn map_create_customer_error(err: PaddleClientError) -> BillingError {
+    tracing::error!(
+        error = ?err,
+        error_type = paddle_error_type(&err),
+        error_text = %paddle_error_text(&err),
+        operation = "create_customer",
+        "paddle api error"
+    );
     if paddle_client_error_is_unavailable(&err) {
         BillingError::PaddleUnavailable
     } else {
@@ -248,6 +272,13 @@ fn map_create_customer_error(err: PaddleClientError) -> BillingError {
 }
 
 fn map_checkout_error(err: PaddleClientError) -> BillingError {
+    tracing::error!(
+        error = ?err,
+        error_type = paddle_error_type(&err),
+        error_text = %paddle_error_text(&err),
+        operation = "create_checkout",
+        "paddle api error"
+    );
     if paddle_client_error_is_unavailable(&err) {
         BillingError::PaddleUnavailable
     } else {
@@ -299,12 +330,11 @@ mod tests {
     #[tokio::test]
     async fn resolve_purchasable_plan_rejects_missing_paddle_price() {
         let pool = test_pool().await;
-        let original: Option<String> = sqlx::query_scalar(
-            "SELECT paddle_price_id FROM tariff_plans WHERE name = 'identity'",
-        )
-        .fetch_one(&pool)
-        .await
-        .expect("identity price");
+        let original: Option<String> =
+            sqlx::query_scalar("SELECT paddle_price_id FROM tariff_plans WHERE name = 'identity'")
+                .fetch_one(&pool)
+                .await
+                .expect("identity price");
 
         sqlx::query("UPDATE tariff_plans SET paddle_price_id = NULL WHERE name = 'identity'")
             .execute(&pool)

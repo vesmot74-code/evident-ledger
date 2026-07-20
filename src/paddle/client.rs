@@ -5,7 +5,6 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use async_trait::async_trait;
-use reqwest::StatusCode as HttpStatus;
 use serde_json::json;
 
 use crate::config::AppConfig;
@@ -48,7 +47,10 @@ impl HttpPaddleClient {
 
     fn auth_request(&self, method: reqwest::Method, path: &str) -> reqwest::RequestBuilder {
         self.http
-            .request(method, format!("{}{path}", self.base_url.trim_end_matches('/')))
+            .request(
+                method,
+                format!("{}{path}", self.base_url.trim_end_matches('/')),
+            )
             .bearer_auth(&self.api_key)
             .header("Content-Type", "application/json")
     }
@@ -76,7 +78,8 @@ impl PaddleClient for HttpPaddleClient {
             .auth_request(reqwest::Method::POST, "/transactions")
             .json(&json!({
                 "customer_id": customer_id,
-                "items": [{ "price_id": price_id, "quantity": 1 }]
+                "items": [{ "price_id": price_id, "quantity": 1 }],
+                "collection_mode": "automatic"
             }))
             .send()
             .await
@@ -177,49 +180,103 @@ fn map_reqwest_error(err: reqwest::Error) -> PaddleClientError {
     }
 }
 
-async fn parse_customer_response(
-    response: reqwest::Response,
-) -> Result<String, PaddleClientError> {
+fn format_paddle_error_message(status: u16, body: &str) -> String {
+    if let Ok(json) = serde_json::from_str::<serde_json::Value>(body) {
+        let code = json.pointer("/error/code").and_then(|value| value.as_str());
+        let detail = json
+            .pointer("/error/detail")
+            .and_then(|value| value.as_str());
+        match (code, detail) {
+            (Some(code), Some(detail)) => {
+                return format!("status={status} code={code} detail={detail} body={body}");
+            }
+            (Some(code), None) => {
+                return format!("status={status} code={code} body={body}");
+            }
+            (None, Some(detail)) => {
+                return format!("status={status} detail={detail} body={body}");
+            }
+            (None, None) => {}
+        }
+    }
+    format!("status={status} body={body}")
+}
+
+async fn parse_customer_response(response: reqwest::Response) -> Result<String, PaddleClientError> {
     let status = response.status();
     let body = response
         .text()
         .await
         .map_err(|err| PaddleClientError::NetworkError(err.to_string()))?;
     if !status.is_success() {
+        let message = format_paddle_error_message(status.as_u16(), &body);
+        tracing::error!(
+            status = status.as_u16(),
+            body = %body,
+            message = %message,
+            "paddle api error"
+        );
         return Err(PaddleClientError::ApiError {
             status: status.as_u16(),
-            message: body,
+            message,
         });
     }
-    let json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|_| PaddleClientError::InvalidResponse)?;
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|_| PaddleClientError::InvalidResponse)?;
     json.pointer("/data/id")
         .and_then(|value| value.as_str())
         .map(str::to_string)
         .ok_or(PaddleClientError::InvalidResponse)
 }
 
-async fn parse_checkout_response(
-    response: reqwest::Response,
-) -> Result<String, PaddleClientError> {
+fn extract_checkout_url(json: &serde_json::Value) -> Option<String> {
+    const CANDIDATES: &[&str] = &[
+        "/data/checkout/url",
+        "/data/details/checkout/url",
+        "/checkout/url",
+    ];
+    for path in CANDIDATES {
+        if let Some(url) = json.pointer(path).and_then(|value| value.as_str()) {
+            if !url.is_empty() {
+                return Some(url.to_string());
+            }
+        }
+    }
+    None
+}
+
+async fn parse_checkout_response(response: reqwest::Response) -> Result<String, PaddleClientError> {
     let status = response.status();
     let body = response
         .text()
         .await
         .map_err(|err| PaddleClientError::NetworkError(err.to_string()))?;
     if !status.is_success() {
+        let message = format_paddle_error_message(status.as_u16(), &body);
+        tracing::error!(
+            status = status.as_u16(),
+            body = %body,
+            message = %message,
+            "paddle api error"
+        );
         return Err(PaddleClientError::ApiError {
             status: status.as_u16(),
-            message: body,
+            message,
         });
     }
-    let json: serde_json::Value = serde_json::from_str(&body)
-        .map_err(|_| PaddleClientError::InvalidResponse)?;
-    json.pointer("/data/checkout/url")
-        .or_else(|| json.pointer("/data/details/checkout/url"))
-        .and_then(|value| value.as_str())
-        .map(str::to_string)
-        .ok_or(PaddleClientError::InvalidResponse)
+    let json: serde_json::Value =
+        serde_json::from_str(&body).map_err(|_| PaddleClientError::InvalidResponse)?;
+    match extract_checkout_url(&json) {
+        Some(url) => Ok(url),
+        None => {
+            tracing::error!(
+                status = status.as_u16(),
+                body = %body,
+                "paddle api error"
+            );
+            Err(PaddleClientError::InvalidResponse)
+        }
+    }
 }
 
 pub fn paddle_client_error_is_unavailable(err: &PaddleClientError) -> bool {
