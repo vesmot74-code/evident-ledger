@@ -1,5 +1,6 @@
 //! Web dashboard UI routes (Stage 8.3.1b).
 
+use askama::Template;
 use axum::{
     body::Body,
     extract::{Path, State},
@@ -9,7 +10,6 @@ use axum::{
     routing::{delete, get, post},
     Router,
 };
-use askama::Template;
 use uuid::Uuid;
 
 use crate::auth::api_key;
@@ -19,8 +19,8 @@ use crate::service::tariff;
 use crate::state::AppState;
 use crate::web::templates::{
     format_optional_datetime, format_optional_text, format_percentage, format_usage_summary,
-    ApiKeyCreatedTemplate, ApiKeyRevokedTemplate, ApiKeysTemplate, ApiKeyRow,
-    DashboardIndexTemplate, LoginTemplate, SubscriptionTemplate, UsageTemplate,
+    ApiKeyCreatedTemplate, ApiKeyRevokedTemplate, ApiKeyRow, ApiKeysTemplate,
+    DashboardIndexTemplate, LoginTemplate, RegisterTemplate, SubscriptionTemplate, UsageTemplate,
 };
 
 const HX_REQUEST_HEADER: &str = "hx-request";
@@ -32,7 +32,7 @@ pub fn router(state: AppState) -> Router {
         .layer(middleware::from_fn(htmx_csrf_middleware));
 
     Router::new()
-        .route("/", get(index_handler))
+        .route("/ui", get(index_handler))
         .route("/ui/subscription", get(subscription_handler))
         .route("/ui/usage", get(usage_handler))
         .route("/ui/api-keys", get(api_keys_handler))
@@ -49,10 +49,11 @@ pub async fn login_page() -> impl IntoResponse {
     render_template(LoginTemplate)
 }
 
-async fn index_handler(
-    State(state): State<AppState>,
-    session: SessionUser,
-) -> Response {
+pub async fn register_page() -> impl IntoResponse {
+    render_template(RegisterTemplate)
+}
+
+async fn index_handler(State(state): State<AppState>, session: SessionUser) -> Response {
     let Ok(Some(profile)) = accounts::get_dashboard_profile(&state.db, session.account_id).await
     else {
         return internal_error("Failed to load account profile");
@@ -81,10 +82,7 @@ async fn index_handler(
     })
 }
 
-async fn subscription_handler(
-    State(state): State<AppState>,
-    session: SessionUser,
-) -> Response {
+async fn subscription_handler(State(state): State<AppState>, session: SessionUser) -> Response {
     let Ok(Some(snapshot)) =
         accounts::get_subscription_snapshot(&state.db, session.account_id).await
     else {
@@ -106,10 +104,7 @@ async fn subscription_handler(
     })
 }
 
-async fn usage_handler(
-    State(state): State<AppState>,
-    session: SessionUser,
-) -> Response {
+async fn usage_handler(State(state): State<AppState>, session: SessionUser) -> Response {
     let Ok(Some(usage)) = accounts::get_monthly_usage_snapshot(&state.db, session.account_id).await
     else {
         return internal_error("Failed to load usage");
@@ -126,10 +121,7 @@ async fn usage_handler(
     })
 }
 
-async fn api_keys_handler(
-    State(state): State<AppState>,
-    session: SessionUser,
-) -> Response {
+async fn api_keys_handler(State(state): State<AppState>, session: SessionUser) -> Response {
     let Ok(keys) = accounts::list_api_keys(&state.db, session.account_id).await else {
         return internal_error("Failed to load API keys");
     };
@@ -147,10 +139,7 @@ async fn api_keys_handler(
     render_template(ApiKeysTemplate { api_keys })
 }
 
-async fn create_api_key_handler(
-    State(state): State<AppState>,
-    session: SessionUser,
-) -> Response {
+async fn create_api_key_handler(State(state): State<AppState>, session: SessionUser) -> Response {
     let Ok((generated, _record)) =
         accounts::create_api_key(&state.db, session.account_id, "dashboard").await
     else {
@@ -219,15 +208,24 @@ fn referer_host_matches(referer: &str, host: &str) -> bool {
 }
 
 fn origin_matches_host(headers: &HeaderMap) -> bool {
-    let Some(host) = headers.get(header::HOST).and_then(|value| value.to_str().ok()) else {
+    let Some(host) = headers
+        .get(header::HOST)
+        .and_then(|value| value.to_str().ok())
+    else {
         return false;
     };
 
-    if let Some(origin) = headers.get(header::ORIGIN).and_then(|value| value.to_str().ok()) {
+    if let Some(origin) = headers
+        .get(header::ORIGIN)
+        .and_then(|value| value.to_str().ok())
+    {
         return origin_allows_host(origin, host);
     }
 
-    if let Some(referer) = headers.get(header::REFERER).and_then(|value| value.to_str().ok()) {
+    if let Some(referer) = headers
+        .get(header::REFERER)
+        .and_then(|value| value.to_str().ok())
+    {
         return referer_host_matches(referer, host);
     }
 
@@ -242,10 +240,7 @@ mod tests {
     fn origin_validation_accepts_matching_host() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, "localhost:3000".parse().unwrap());
-        headers.insert(
-            header::ORIGIN,
-            "http://localhost:3000".parse().unwrap(),
-        );
+        headers.insert(header::ORIGIN, "http://localhost:3000".parse().unwrap());
         headers.insert(HX_REQUEST_HEADER, "true".parse().unwrap());
         assert!(origin_matches_host(&headers));
     }
@@ -254,10 +249,7 @@ mod tests {
     fn origin_validation_rejects_foreign_host() {
         let mut headers = HeaderMap::new();
         headers.insert(header::HOST, "localhost:3000".parse().unwrap());
-        headers.insert(
-            header::ORIGIN,
-            "http://evil.example".parse().unwrap(),
-        );
+        headers.insert(header::ORIGIN, "http://evil.example".parse().unwrap());
         assert!(!origin_matches_host(&headers));
     }
 }

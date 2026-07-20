@@ -10,8 +10,8 @@ mod hash_attestation_pdf;
 mod merkle;
 mod middleware;
 mod models;
-mod proof_format;
 mod paddle;
+mod proof_format;
 mod public_certificate_pdf;
 mod public_proof;
 mod public_verification_audit;
@@ -89,6 +89,10 @@ async fn main() {
         )
         .route("/whitepaper.pdf", axum::routing::get(serve_whitepaper_pdf))
         .route("/login", axum::routing::get(web::dashboard::login_page))
+        .route(
+            "/register",
+            axum::routing::get(web::dashboard::register_page),
+        )
         .nest("/account", api::account::router(state.clone()))
         .nest("/backup", api::backup::router(state.clone()))
         .nest("/chains", api::chains::router(state.clone()))
@@ -100,9 +104,7 @@ async fn main() {
         .nest("/auth", auth_routes)
         .nest(
             "/dashboard",
-            dashboard_ui
-                .merge(dashboard_api)
-                .merge(dashboard_billing),
+            dashboard_ui.merge(dashboard_api).merge(dashboard_billing),
         )
         .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);

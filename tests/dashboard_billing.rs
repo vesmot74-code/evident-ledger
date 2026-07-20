@@ -20,7 +20,8 @@ use uuid::Uuid;
 
 fn tariff_plan_test_lock() -> std::sync::MutexGuard<'static, ()> {
     static LOCK: Mutex<()> = Mutex::new(());
-    LOCK.lock().unwrap_or_else(std::sync::PoisonError::into_inner)
+    LOCK.lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
 async fn test_pool() -> sqlx::PgPool {
@@ -60,15 +61,20 @@ fn state_with_paddle(pool: sqlx::PgPool, paddle: Arc<MockPaddleClient>) -> AppSt
     common::setup_test_env();
     AppState::with_paddle(
         pool,
-        Arc::new(
-            evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
-        ),
+        Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
+            "signing_key.bin",
+        )),
         evident_ledger::config::AppConfig::from_env(),
         paddle,
     )
 }
 
-fn peer_request(method: &str, uri: &str, cookie: Option<&str>, body: Option<Value>) -> Request<Body> {
+fn peer_request(
+    method: &str,
+    uri: &str,
+    cookie: Option<&str>,
+    body: Option<Value>,
+) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(cookie) = cookie {
         builder = builder.header(header::COOKIE, cookie);
@@ -227,7 +233,7 @@ async fn set_account_plan_by_email(pool: &sqlx::PgPool, email: &str, plan_name: 
 async fn fetch_dashboard_html(app: axum::Router, cookie: &str) -> String {
     let svc = app.into_service();
     let response = svc
-        .oneshot(peer_request("GET", "/dashboard", Some(cookie), None))
+        .oneshot(peer_request("GET", "/dashboard/ui", Some(cookie), None))
         .await
         .expect("response");
     assert_eq!(response.status(), StatusCode::OK);
@@ -377,12 +383,11 @@ async fn post_dashboard_upgrade_free_plan_returns_invalid_plan() {
 async fn post_dashboard_upgrade_identity_without_paddle_price_returns_not_purchasable() {
     let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
-    let original: Option<String> = sqlx::query_scalar(
-        "SELECT paddle_price_id FROM tariff_plans WHERE name = 'identity'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("identity price");
+    let original: Option<String> =
+        sqlx::query_scalar("SELECT paddle_price_id FROM tariff_plans WHERE name = 'identity'")
+            .fetch_one(&pool)
+            .await
+            .expect("identity price");
 
     sqlx::query("UPDATE tariff_plans SET paddle_price_id = NULL WHERE name = 'identity'")
         .execute(&pool)
@@ -474,7 +479,10 @@ async fn post_dashboard_upgrade_vault_plan_returns_checkout_url() {
     .await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(body["checkout_url"].as_str().unwrap().contains("pri_vault_test"));
+    assert!(body["checkout_url"]
+        .as_str()
+        .unwrap()
+        .contains("pri_vault_test"));
     let (_, price_id) = paddle.last_checkout().expect("checkout");
     assert_eq!(price_id, "pri_vault_test");
     cleanup_email(&pool, &email).await;
@@ -588,12 +596,11 @@ async fn dashboard_hides_plans_without_paddle_price() {
     let _lock = tariff_plan_test_lock();
     let pool = test_pool().await;
     set_all_paid_plan_prices(&pool).await;
-    let original_vault: Option<String> = sqlx::query_scalar(
-        "SELECT paddle_price_id FROM tariff_plans WHERE name = 'vault'",
-    )
-    .fetch_one(&pool)
-    .await
-    .expect("vault price");
+    let original_vault: Option<String> =
+        sqlx::query_scalar("SELECT paddle_price_id FROM tariff_plans WHERE name = 'vault'")
+            .fetch_one(&pool)
+            .await
+            .expect("vault price");
     sqlx::query("UPDATE tariff_plans SET paddle_price_id = NULL WHERE name = 'vault'")
         .execute(&pool)
         .await
@@ -631,13 +638,12 @@ async fn ensure_paddle_customer_creates_and_persists_customer_id() {
     assert!(customer_id.starts_with("ctm_mock_"));
     assert_eq!(paddle.create_customer_calls(), 1);
 
-    let stored: Option<String> = sqlx::query_scalar(
-        "SELECT paddle_customer_id FROM accounts WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_one(&pool)
-    .await
-    .expect("stored customer");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT paddle_customer_id FROM accounts WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("stored customer");
     assert_eq!(stored.as_deref(), Some(customer_id.as_str()));
 
     cleanup_email(&pool, &email).await;
@@ -678,13 +684,12 @@ async fn paddle_customer_id_saved_before_checkout_redirect() {
         .await
         .expect("upgrade");
 
-    let stored: Option<String> = sqlx::query_scalar(
-        "SELECT paddle_customer_id FROM accounts WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_one(&pool)
-    .await
-    .expect("stored customer");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT paddle_customer_id FROM accounts WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("stored customer");
     assert!(stored.as_deref().unwrap_or("").starts_with("ctm_mock_"));
     cleanup_email(&pool, &email).await;
 }
@@ -715,13 +720,12 @@ async fn paddle_api_timeout_returns_bad_gateway() {
     assert_eq!(status, StatusCode::BAD_GATEWAY);
     assert_eq!(body["error"]["code"], "paddle_unavailable");
 
-    let stored: Option<String> = sqlx::query_scalar(
-        "SELECT paddle_customer_id FROM accounts WHERE email = $1",
-    )
-    .bind(&email)
-    .fetch_one(&pool)
-    .await
-    .expect("customer id");
+    let stored: Option<String> =
+        sqlx::query_scalar("SELECT paddle_customer_id FROM accounts WHERE email = $1")
+            .bind(&email)
+            .fetch_one(&pool)
+            .await
+            .expect("customer id");
     assert!(stored.is_none());
     cleanup_email(&pool, &email).await;
 }

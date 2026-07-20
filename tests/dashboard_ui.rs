@@ -36,6 +36,7 @@ fn test_state(pool: sqlx::PgPool) -> AppState {
 fn full_app(state: AppState) -> axum::Router {
     axum::Router::new()
         .route("/login", axum::routing::get(dashboard_ui::login_page))
+        .route("/register", axum::routing::get(dashboard_ui::register_page))
         .nest(
             "/auth",
             auth::router(state.clone(), LoginRateLimitState::from_config(false)),
@@ -91,7 +92,11 @@ async fn call_text(app: axum::Router, req: Request<Body>) -> (StatusCode, String
     let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
         .await
         .expect("body");
-    (status, String::from_utf8_lossy(&bytes).into_owned(), cookies)
+    (
+        status,
+        String::from_utf8_lossy(&bytes).into_owned(),
+        cookies,
+    )
 }
 
 fn cookie_header_from_set_cookie(set_cookies: &[String]) -> Option<String> {
@@ -156,11 +161,8 @@ async fn dashboard_without_session_redirects_to_login() {
     let pool = test_pool().await;
     let app = full_app(test_state(pool));
 
-    let (status, body, _) = call_text(
-        app,
-        peer_request("GET", "/dashboard", None, None, &[]),
-    )
-    .await;
+    let (status, body, _) =
+        call_text(app, peer_request("GET", "/dashboard/ui", None, None, &[])).await;
 
     assert_eq!(status, StatusCode::SEE_OTHER);
     assert!(body.is_empty() || body.contains("/login"));
@@ -176,7 +178,7 @@ async fn dashboard_home_renders_profile_after_login() {
 
     let (status, body, _) = call_text(
         app,
-        peer_request("GET", "/dashboard", None, Some(&cookie), &[]),
+        peer_request("GET", "/dashboard/ui", None, Some(&cookie), &[]),
     )
     .await;
 
@@ -197,7 +199,13 @@ async fn dashboard_subscription_page_renders_plan() {
 
     let (status, body, _) = call_text(
         app,
-        peer_request("GET", "/dashboard/ui/subscription", None, Some(&cookie), &[]),
+        peer_request(
+            "GET",
+            "/dashboard/ui/subscription",
+            None,
+            Some(&cookie),
+            &[],
+        ),
     )
     .await;
 
@@ -271,10 +279,7 @@ async fn create_api_key_ui_requires_htmx_headers() {
             "/dashboard/ui/api-keys",
             None,
             Some(&cookie),
-            &[
-                ("hx-request", "true"),
-                ("origin", "http://localhost"),
-            ],
+            &[("hx-request", "true"), ("origin", "http://localhost")],
         ),
     )
     .await;
@@ -301,10 +306,7 @@ async fn revoke_api_key_ui_returns_revoked_fragment() {
             "/dashboard/ui/api-keys",
             None,
             Some(&cookie),
-            &[
-                ("hx-request", "true"),
-                ("origin", "http://localhost"),
-            ],
+            &[("hx-request", "true"), ("origin", "http://localhost")],
         ),
     )
     .await;
@@ -330,10 +332,7 @@ async fn revoke_api_key_ui_returns_revoked_fragment() {
             &format!("/dashboard/ui/api-keys/{key_id}"),
             None,
             Some(&cookie),
-            &[
-                ("hx-request", "true"),
-                ("origin", "http://localhost"),
-            ],
+            &[("hx-request", "true"), ("origin", "http://localhost")],
         ),
     )
     .await;
@@ -349,16 +348,77 @@ async fn login_page_renders_form() {
     let pool = test_pool().await;
     let app = full_app(test_state(pool));
 
-    let (status, body, _) = call_text(
-        app,
-        peer_request("GET", "/login", None, None, &[]),
-    )
-    .await;
+    let (status, body, _) = call_text(app, peer_request("GET", "/login", None, None, &[])).await;
 
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Sign in"));
     assert!(body.contains("/auth/login"));
+    assert!(body.contains("/register"));
+    assert!(body.contains("Create account"));
     assert!(!body.contains("password_hash"));
+}
+
+#[tokio::test]
+async fn register_page_renders_form() {
+    let pool = test_pool().await;
+    let app = full_app(test_state(pool));
+
+    let (status, body, _) = call_text(app, peer_request("GET", "/register", None, None, &[])).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Create your account"));
+    assert!(body.contains("id=\"email\""));
+    assert!(body.contains("id=\"password\""));
+    assert!(body.contains("type=\"submit\"") || body.contains("Create account"));
+    assert!(body.contains("/auth/register"));
+    assert!(!body.contains("password_hash"));
+}
+
+#[tokio::test]
+async fn register_flow_creates_account_and_duplicate_returns_conflict() {
+    let pool = test_pool().await;
+    let email = format!("ui-register-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_app(test_state(pool.clone()));
+
+    let (status, body, cookies) = call_text(
+        app.clone(),
+        peer_request(
+            "POST",
+            "/auth/register",
+            Some(json!({ "email": email, "password": "securepass1" })),
+            None,
+            &[],
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    let json: Value = serde_json::from_str(&body).expect("register json");
+    assert_eq!(json["email"], email);
+    assert_eq!(json["plan"], "free");
+    assert!(json.get("account_id").is_some());
+    assert!(
+        cookies.iter().all(|c| !c.contains("evident_session=")),
+        "registration must not set a session cookie"
+    );
+
+    let (status, body, _) = call_text(
+        app,
+        peer_request(
+            "POST",
+            "/auth/register",
+            Some(json!({ "email": email, "password": "securepass1" })),
+            None,
+            &[],
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CONFLICT);
+    let json: Value = serde_json::from_str(&body).expect("conflict json");
+    assert_eq!(json["error"]["code"], "conflict");
+    cleanup_email(&pool, &email).await;
 }
 
 #[tokio::test]
@@ -371,7 +431,7 @@ async fn dashboard_html_does_not_leak_session_token() {
     let token = cookie.split('=').nth(1).expect("token");
 
     for path in [
-        "/dashboard",
+        "/dashboard/ui",
         "/dashboard/ui/subscription",
         "/dashboard/ui/usage",
         "/dashboard/ui/api-keys",

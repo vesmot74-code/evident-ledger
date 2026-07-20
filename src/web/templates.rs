@@ -52,6 +52,10 @@ pub struct ApiKeyRow {
 pub struct LoginTemplate;
 
 #[derive(Template)]
+#[template(path = "dashboard/register.html")]
+pub struct RegisterTemplate;
+
+#[derive(Template)]
 #[template(path = "dashboard/api_key_created.html")]
 pub struct ApiKeyCreatedTemplate {
     pub api_key: String,
