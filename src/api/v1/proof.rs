@@ -27,7 +27,6 @@ async fn handler(
     Path(event_id): Path<Uuid>,
 ) -> Result<Json<serde_json::Value>, ApiError> {
     let event = verify_event_access(&state.db, auth.0.account_id, event_id).await?;
-    let response =
-        build_proof_response(&state.db, state.signer.as_ref(), &event).await?;
+    let response = build_proof_response(&state.db, state.signer.as_ref(), &event).await?;
     Ok(Json(response))
 }

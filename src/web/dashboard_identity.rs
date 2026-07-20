@@ -14,8 +14,8 @@ use crate::middleware::session_auth::SessionUser;
 use crate::service::identity_dashboard::{clamp_events_limit, IdentityDashboardService};
 use crate::state::AppState;
 use crate::web::templates::{
-    format_optional_datetime, IdentityKeyEventRow, IdentityKeyEventsTemplate, IdentityKeyRevokedTemplate,
-    IdentityKeyRow, IdentityKeysTemplate,
+    format_optional_datetime, IdentityKeyEventRow, IdentityKeyEventsTemplate,
+    IdentityKeyRevokedTemplate, IdentityKeyRow, IdentityKeysTemplate,
 };
 
 #[derive(Debug, serde::Deserialize)]
@@ -27,7 +27,10 @@ pub fn router(state: AppState) -> Router<AppState> {
     Router::new()
         .route("/identity", get(list_handler))
         .route("/identity/:key_id", get(events_handler))
-        .route("/identity/:key_id/revoke", post(revoke_identity_key_handler))
+        .route(
+            "/identity/:key_id/revoke",
+            post(revoke_identity_key_handler),
+        )
         .with_state(state)
 }
 

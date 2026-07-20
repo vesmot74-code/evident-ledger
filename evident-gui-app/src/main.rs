@@ -459,9 +459,9 @@ impl App {
     fn render_verify_details(&self) -> String {
         match &self.verify_details {
             VerifyDetailsState::Empty => String::new(),
-            VerifyDetailsState::NoProjectSelected => {
-                self.tr("Проект не выбран", "No project selected").to_string()
-            }
+            VerifyDetailsState::NoProjectSelected => self
+                .tr("Проект не выбран", "No project selected")
+                .to_string(),
             VerifyDetailsState::Verifying => {
                 self.tr("⏳ Проверка...", "⏳ Verifying...").to_string()
             }
@@ -1617,7 +1617,9 @@ impl App {
             return Err(UiText::InvalidProjectChain);
         }
 
-        let projects_dir = self.projects_dir().map_err(|_| UiText::InvalidProjectChain)?;
+        let projects_dir = self
+            .projects_dir()
+            .map_err(|_| UiText::InvalidProjectChain)?;
         let project_path = projects_dir.join(&self.selected_project);
         let project_file = project_path.join("project.json");
         let project_json = match fs::read_to_string(&project_file) {
@@ -1806,9 +1808,7 @@ impl App {
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
             let client = EvidentClient::new(server_url());
-            let result = client
-                .backup_create(chain_id)
-                .map_err(|e| e.to_string());
+            let result = client.backup_create(chain_id).map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::BackupCreateDone(result));
             ctx.request_repaint();
         });
@@ -1932,10 +1932,7 @@ impl eframe::App for App {
                     match res {
                         Ok(response) => {
                             self.dev_change_plan_error = None;
-                            self.dev_plan_change = Some((
-                                response.old_plan,
-                                response.new_plan,
-                            ));
+                            self.dev_plan_change = Some((response.old_plan, response.new_plan));
                             self.start_account_fetch(ui.ctx());
                         }
                         Err(e) => {
@@ -1977,8 +1974,7 @@ impl eframe::App for App {
                             match Self::write_backup_download_file(backup_id, &bytes) {
                                 Ok(path) => {
                                     self.backup_download_error = None;
-                                    self.backup_download_path =
-                                        Some(path.display().to_string());
+                                    self.backup_download_path = Some(path.display().to_string());
                                 }
                                 Err(e) => {
                                     self.backup_download_error = Some(UiText::Raw(e));

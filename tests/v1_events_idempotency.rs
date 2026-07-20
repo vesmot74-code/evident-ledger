@@ -18,7 +18,8 @@ fn evident_api_key() -> String {
         }
     }
     fs::read_to_string(
-        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".evident/api_key"),
+        PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into()))
+            .join(".evident/api_key"),
     )
     .expect("EVIDENT_API_KEY or ~/.evident/api_key required")
     .trim()
@@ -117,10 +118,11 @@ fn cleanup_chain(chain_id: Uuid) {
         let pool = sqlx::PgPool::connect(&database_url)
             .await
             .expect("db connect");
-        let _ = sqlx::query("DELETE FROM idempotency_records WHERE response_json->>'chain_id' = $1")
-            .bind(chain_id.to_string())
-            .execute(&pool)
-            .await;
+        let _ =
+            sqlx::query("DELETE FROM idempotency_records WHERE response_json->>'chain_id' = $1")
+                .bind(chain_id.to_string())
+                .execute(&pool)
+                .await;
         let _ = sqlx::query("DELETE FROM events WHERE chain_id = $1")
             .bind(chain_id)
             .execute(&pool)
@@ -160,7 +162,10 @@ fn v1_idempotency_replay_and_conflict() {
         .expect("event_id")
         .to_string();
     let count_after_first = event_count_for_chain(chain_id);
-    assert_eq!(count_after_first, 1, "first request should create one event");
+    assert_eq!(
+        count_after_first, 1,
+        "first request should create one event"
+    );
 
     let second = post_v1_event(
         &client,

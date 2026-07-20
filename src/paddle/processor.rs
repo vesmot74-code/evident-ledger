@@ -249,7 +249,9 @@ async fn apply_event(
         }
         "subscription_payment_failed" => subscription_payment_failed(tx, account.account_id).await,
         "subscription_canceled" => subscription_canceled(tx, account.account_id, event).await,
-        other => Err(WebhookError::Database(format!("unsupported event_type: {other}"))),
+        other => Err(WebhookError::Database(format!(
+            "unsupported event_type: {other}"
+        ))),
     }
 }
 
@@ -260,7 +262,9 @@ async fn subscription_created(
 ) -> Result<(), WebhookError> {
     let plan = load_plan_by_price_id(
         tx,
-        event.price_id().ok_or(WebhookError::MissingField("price_id"))?,
+        event
+            .price_id()
+            .ok_or(WebhookError::MissingField("price_id"))?,
     )
     .await?;
     let period_end = event
@@ -297,7 +301,9 @@ async fn subscription_updated(
 ) -> Result<(), WebhookError> {
     let new_plan = load_plan_by_price_id(
         tx,
-        event.price_id().ok_or(WebhookError::MissingField("price_id"))?,
+        event
+            .price_id()
+            .ok_or(WebhookError::MissingField("price_id"))?,
     )
     .await?;
     let current_plan = load_plan_by_id(tx, account.tariff_plan_id).await?;

@@ -7,11 +7,7 @@ type HmacSha256 = Hmac<Sha256>;
 
 /// Verify `Paddle-Signature` header against raw request body bytes.
 /// Signed payload format: `{ts}:{raw_body}` (UTF-8).
-pub fn verify_paddle_signature(
-    raw_body: &[u8],
-    signature_header: &str,
-    secret: &str,
-) -> bool {
+pub fn verify_paddle_signature(raw_body: &[u8], signature_header: &str, secret: &str) -> bool {
     let Some((timestamp, signatures)) = parse_signature_header(signature_header) else {
         return false;
     };
@@ -92,6 +88,10 @@ mod tests {
         let secret = "test-secret";
         let body = r#"{"event_id":"evt_1"}"#;
         let header = sign_payload_for_test(secret, body, 1_700_000_000);
-        assert!(!verify_paddle_signature(b"{\"event_id\":\"evt_2\"}", &header, secret));
+        assert!(!verify_paddle_signature(
+            b"{\"event_id\":\"evt_2\"}",
+            &header,
+            secret
+        ));
     }
 }

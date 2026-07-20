@@ -56,11 +56,10 @@ fn peer_request(uri: &str) -> Request<Body> {
         .uri(uri)
         .body(Body::empty())
         .expect("request");
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            0,
-        )));
+    req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        0,
+    )));
     req
 }
 
@@ -97,10 +96,7 @@ async fn verify_endpoint_allows_first_100_then_blocks() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let app = public_router(
-        test_state_with_pool(pool),
-        test_rate_limits(100, 20, 60),
-    );
+    let app = public_router(test_state_with_pool(pool), test_rate_limits(100, 20, 60));
     let uri = "/verify?file_hash=not-a-valid-hash";
 
     for i in 0..100 {
@@ -111,7 +107,10 @@ async fn verify_endpoint_allows_first_100_then_blocks() {
             "request {i} should not be rate limited"
         );
     }
-    assert_eq!(status_for(app, uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        status_for(app, uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -119,10 +118,7 @@ async fn verify_endpoint_429_has_retry_after_and_envelope() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let app = public_router(
-        test_state_with_pool(pool),
-        test_rate_limits(1, 20, 60),
-    );
+    let app = public_router(test_state_with_pool(pool), test_rate_limits(1, 20, 60));
     let uri = "/verify?file_hash=not-a-valid-hash";
     let _ = status_for(app.clone(), uri).await;
     let mut svc = app.into_service();
@@ -150,7 +146,8 @@ async fn certificate_endpoint_allows_first_20_then_blocks() {
         limiter,
         trust_proxy_headers: false,
         include_user_agent_in_key: false,
-        request_type: evident_ledger::public_verification_audit::PublicVerificationRequestType::CertificatePdf,
+        request_type:
+            evident_ledger::public_verification_audit::PublicVerificationRequestType::CertificatePdf,
         rate_limit_scope: None,
         rate_limit_message: "Too many requests. Please try again later.",
         audit_enabled: true,
@@ -174,7 +171,10 @@ async fn certificate_endpoint_allows_first_20_then_blocks() {
             "request {i} should not be rate limited"
         );
     }
-    assert_eq!(status_for(app, uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        status_for(app, uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -241,8 +241,14 @@ async fn rate_limit_isolates_different_peer_ips() {
     let ip_a = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 10));
     let ip_b = IpAddr::V4(Ipv4Addr::new(203, 0, 113, 11));
 
-    assert_eq!(request_with_peer(app.clone(), ip_a).await, HttpStatusCode::OK);
-    assert_eq!(request_with_peer(app.clone(), ip_a).await, HttpStatusCode::OK);
+    assert_eq!(
+        request_with_peer(app.clone(), ip_a).await,
+        HttpStatusCode::OK
+    );
+    assert_eq!(
+        request_with_peer(app.clone(), ip_a).await,
+        HttpStatusCode::OK
+    );
     assert_eq!(
         request_with_peer(app.clone(), ip_a).await,
         HttpStatusCode::TOO_MANY_REQUESTS
@@ -255,17 +261,10 @@ async fn rate_limit_is_hash_independent_for_same_ip() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let app = public_router(
-        test_state_with_pool(pool),
-        test_rate_limits(2, 20, 60),
-    );
+    let app = public_router(test_state_with_pool(pool), test_rate_limits(2, 20, 60));
 
     for _ in 0..2 {
-        let _ = status_for(
-            app.clone(),
-            "/verify?file_hash=not-a-valid-hash-x",
-        )
-        .await;
+        let _ = status_for(app.clone(), "/verify?file_hash=not-a-valid-hash-x").await;
     }
     assert_eq!(
         status_for(app, "/verify?file_hash=not-a-valid-hash-y").await,
@@ -278,15 +277,21 @@ async fn rate_limit_window_resets_after_elapsed_time() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let app = public_router(
-        test_state_with_pool(pool),
-        test_rate_limits(1, 20, 1),
-    );
+    let app = public_router(test_state_with_pool(pool), test_rate_limits(1, 20, 1));
     let uri = "/verify?file_hash=not-a-valid-hash";
-    assert_ne!(status_for(app.clone(), uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(status_for(app.clone(), uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_ne!(
+        status_for(app.clone(), uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        status_for(app.clone(), uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
     tokio::time::sleep(Duration::from_secs(2)).await;
-    assert_ne!(status_for(app, uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_ne!(
+        status_for(app, uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -294,10 +299,7 @@ async fn rate_limit_blocks_before_registry_lookup() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let app = public_router(
-        test_state_with_pool(pool),
-        test_rate_limits(1, 20, 60),
-    );
+    let app = public_router(test_state_with_pool(pool), test_rate_limits(1, 20, 60));
     let hash = canonical_hash("rate-limit-no-db");
     let uri = format!("/verify?file_hash={hash}");
     assert_ne!(

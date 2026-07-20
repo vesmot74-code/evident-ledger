@@ -4,7 +4,9 @@ mod common;
 
 use axum::Router;
 use evident_ledger::api::public_verify::verify_by_hash;
-use evident_ledger::state::rate_limiter::{FixedWindowLimiter, PublicRateLimitState, RateLimitConfig};
+use evident_ledger::state::rate_limiter::{
+    FixedWindowLimiter, PublicRateLimitState, RateLimitConfig,
+};
 use evident_ledger::state::AppState;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
@@ -128,7 +130,10 @@ async fn legacy_hash_attestation_pdf_returns_410() {
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
     ));
-    let config = { common::setup_test_env(); evident_ledger::config::AppConfig::from_env() };
+    let config = {
+        common::setup_test_env();
+        evident_ledger::config::AppConfig::from_env()
+    };
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
@@ -154,14 +159,9 @@ async fn public_verify_returns_existence_only_fields() {
     let file_hash = canonical_hash("public-disclosure-exists");
     cleanup(&pool, &file_hash).await;
 
-    evident_ledger::public_proof::on_proof_anchored(
-        &pool,
-        Uuid::new_v4(),
-        &file_hash,
-        "legal",
-    )
-    .await
-    .expect("anchor");
+    evident_ledger::public_proof::on_proof_anchored(&pool, Uuid::new_v4(), &file_hash, "legal")
+        .await
+        .expect("anchor");
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
@@ -200,14 +200,9 @@ async fn public_certificate_pdf_has_no_private_fields() {
     let file_hash = canonical_hash("public-disclosure-pdf");
     cleanup(&pool, &file_hash).await;
 
-    evident_ledger::public_proof::on_proof_anchored(
-        &pool,
-        Uuid::new_v4(),
-        &file_hash,
-        "legal",
-    )
-    .await
-    .expect("anchor");
+    evident_ledger::public_proof::on_proof_anchored(&pool, Uuid::new_v4(), &file_hash, "legal")
+        .await
+        .expect("anchor");
 
     let public_proof_id: String = sqlx::query_scalar(
         "SELECT public_proof_id FROM public_proof_registry WHERE file_hash = $1",
@@ -224,8 +219,7 @@ async fn public_certificate_pdf_has_no_private_fields() {
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
     let client = reqwest::Client::new();
-    let pdf_url =
-        format!("http://127.0.0.1:{port}/verify/{public_proof_id}/certificate.pdf");
+    let pdf_url = format!("http://127.0.0.1:{port}/verify/{public_proof_id}/certificate.pdf");
     let resp = client.get(&pdf_url).send().await.expect("pdf");
     assert_eq!(resp.status(), StatusCode::OK);
     assert_eq!(
@@ -253,8 +247,7 @@ async fn public_certificate_pdf_has_no_private_fields() {
         );
     }
 
-    let hash_pdf_url =
-        format!("http://127.0.0.1:{port}/verify/{file_hash}/certificate.pdf");
+    let hash_pdf_url = format!("http://127.0.0.1:{port}/verify/{file_hash}/certificate.pdf");
     let hash_resp = client.get(&hash_pdf_url).send().await.expect("hash pdf");
     assert_eq!(hash_resp.status(), StatusCode::BAD_REQUEST);
     let hash_body: Value = hash_resp.json().await.expect("json");
@@ -269,22 +262,12 @@ async fn cross_account_same_hash_reveals_no_multi_tenant_metadata() {
     let file_hash = canonical_hash("public-disclosure-cross-account");
     cleanup(&pool, &file_hash).await;
 
-    evident_ledger::public_proof::on_proof_anchored(
-        &pool,
-        Uuid::new_v4(),
-        &file_hash,
-        "basic",
-    )
-    .await
-    .expect("account A equivalent");
-    evident_ledger::public_proof::on_proof_anchored(
-        &pool,
-        Uuid::new_v4(),
-        &file_hash,
-        "legal",
-    )
-    .await
-    .expect("account B equivalent");
+    evident_ledger::public_proof::on_proof_anchored(&pool, Uuid::new_v4(), &file_hash, "basic")
+        .await
+        .expect("account A equivalent");
+    evident_ledger::public_proof::on_proof_anchored(&pool, Uuid::new_v4(), &file_hash, "legal")
+        .await
+        .expect("account B equivalent");
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",

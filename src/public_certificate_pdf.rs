@@ -98,10 +98,7 @@ pub fn render_public_certificate_pdf(entry: &PublicRegistryEntry) -> Vec<u8> {
     ctx.line(&format!("TSA Class: {}", entry.tsa_class), 10.0);
     ctx.line(&format!("Integrity: {}", entry.integrity_state), 10.0);
     ctx.line("", 10.0);
-    ctx.line(
-        "This certificate confirms that a file with this hash",
-        10.0,
-    );
+    ctx.line("This certificate confirms that a file with this hash", 10.0);
     ctx.line("was registered in the Evident Ledger system.", 10.0);
     ctx.line("No additional metadata is disclosed.", 10.0);
 

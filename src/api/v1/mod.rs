@@ -36,6 +36,9 @@ pub fn router(state: AppState) -> Router {
             state.clone(),
             subscription_enforcement_middleware,
         ))
-        .layer(middleware::from_fn_with_state(state.clone(), v1_auth_middleware))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            v1_auth_middleware,
+        ))
         .layer(middleware::from_fn(request_id_layer))
 }

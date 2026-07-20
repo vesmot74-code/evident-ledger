@@ -70,11 +70,9 @@ async fn upgrade_handler(
     )
     .await
     {
-        Ok(checkout_url) => (
-            StatusCode::OK,
-            Json(UpgradeResponse { checkout_url }),
-        )
-            .into_response(),
+        Ok(checkout_url) => {
+            (StatusCode::OK, Json(UpgradeResponse { checkout_url })).into_response()
+        }
         Err(BillingError::AlreadyActive) => (
             StatusCode::CONFLICT,
             Json(AlreadyActiveResponse {
@@ -89,9 +87,7 @@ async fn upgrade_handler(
             Json(json!({ "error": "plan_not_purchasable" })),
         )
             .into_response(),
-        Err(BillingError::PaddleUnavailable) => {
-            paddle_unavailable_response(ApiError::request_id())
-        }
+        Err(BillingError::PaddleUnavailable) => paddle_unavailable_response(ApiError::request_id()),
         Err(BillingError::AccountNotFound) => ApiError::NotFound.into_response(),
         Err(BillingError::CustomerCreationFailed)
         | Err(BillingError::CheckoutCreationFailed)

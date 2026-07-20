@@ -85,10 +85,7 @@ impl IdentityChallengeRepository {
     }
 
     /// Mark a challenge as used (fails if already consumed).
-    pub async fn mark_used(
-        db: &PgPool,
-        challenge_id: Uuid,
-    ) -> Result<(), IdentityChallengeError> {
+    pub async fn mark_used(db: &PgPool, challenge_id: Uuid) -> Result<(), IdentityChallengeError> {
         let updated = sqlx::query_scalar::<_, Uuid>(
             r#"
             UPDATE identity_challenges

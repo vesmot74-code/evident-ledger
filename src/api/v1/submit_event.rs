@@ -7,13 +7,13 @@ use uuid::Uuid;
 
 use crate::merkle::MerkleTree;
 use crate::models::event::SubmitEventRequest;
+use crate::public_proof::tsa_class_from_plan;
 use crate::service::capabilities::get_account_capabilities;
 use crate::service::entitlements::{require_feature, Feature};
 use crate::service::identity_signing::{IdentitySigningError, IdentitySigningService};
 use crate::service::ledger::{
     ensure_chain_access_in_tx, insert_event_in_tx, plan_next_event, LedgerError,
 };
-use crate::public_proof::tsa_class_from_plan;
 use crate::signing::ServerSigner;
 
 use super::errors::ApiError;
@@ -107,10 +107,7 @@ async fn proof_context_for_event(
     persist_event_signature(conn, event_id, &snapshot.signature)
         .await
         .map_err(|_| ApiError::Internal)?;
-    Ok((
-        derive_proof_status(&snapshot.context),
-        snapshot.signature,
-    ))
+    Ok((derive_proof_status(&snapshot.context), snapshot.signature))
 }
 
 fn map_ledger_error(err: LedgerError) -> ApiError {
@@ -119,7 +116,8 @@ fn map_ledger_error(err: LedgerError) -> ApiError {
         LedgerError::UsageLimitExceeded => ApiError::UsageLimitExceeded,
         LedgerError::TsaLimitExceeded => ApiError::Internal,
         LedgerError::QualifiedTsaUnavailable => ApiError::Internal,
-        LedgerError::ParentMismatch | LedgerError::DuplicateIdempotencyKey
+        LedgerError::ParentMismatch
+        | LedgerError::DuplicateIdempotencyKey
         | LedgerError::DuplicateChainSequence => ApiError::Conflict,
         LedgerError::DatabaseError(_) => ApiError::Internal,
     }
@@ -218,14 +216,17 @@ pub async fn submit_v1_event(
         parent_event_id: None,
         event_id: Some(planned.event_id),
         identity_key_id: identity_fields.as_ref().map(|(key_id, _, _)| *key_id),
-        identity_signature: identity_fields.as_ref().map(|(_, signature, _)| signature.clone()),
-        identity_fingerprint: identity_fields.as_ref().map(|(_, _, fingerprint)| fingerprint.clone()),
+        identity_signature: identity_fields
+            .as_ref()
+            .map(|(_, signature, _)| signature.clone()),
+        identity_fingerprint: identity_fields
+            .as_ref()
+            .map(|(_, _, fingerprint)| fingerprint.clone()),
     };
 
-    let (event_id, sequence) =
-        insert_event_in_tx(&mut *tx, pool, account_id, &ledger_req)
-            .await
-            .map_err(map_ledger_error)?;
+    let (event_id, sequence) = insert_event_in_tx(&mut *tx, pool, account_id, &ledger_req)
+        .await
+        .map_err(map_ledger_error)?;
 
     debug_assert_eq!(event_id, planned.event_id);
 
@@ -251,16 +252,14 @@ pub async fn submit_v1_event(
         expires_at: now + Duration::hours(IDEMPOTENCY_TTL_HOURS),
     };
 
-    insert_in_tx(&mut *tx, &record)
-        .await
-        .map_err(|err| {
-            if let sqlx::Error::Database(db_err) = &err {
-                if db_err.constraint() == Some("uniq_idempotency_account_key") {
-                    return ApiError::Conflict;
-                }
+    insert_in_tx(&mut *tx, &record).await.map_err(|err| {
+        if let sqlx::Error::Database(db_err) = &err {
+            if db_err.constraint() == Some("uniq_idempotency_account_key") {
+                return ApiError::Conflict;
             }
-            ApiError::Internal
-        })?;
+        }
+        ApiError::Internal
+    })?;
 
     tx.commit().await.map_err(|_| ApiError::Internal)?;
 
@@ -288,7 +287,9 @@ async fn materialize_public_proof_after_anchor(
     file_hash: &str,
     tsa_class: &str,
 ) {
-    if let Err(err) = crate::public_proof::on_proof_anchored(pool, proof_id, file_hash, tsa_class).await {
+    if let Err(err) =
+        crate::public_proof::on_proof_anchored(pool, proof_id, file_hash, tsa_class).await
+    {
         tracing::error!(
             proof_id = %proof_id,
             file_hash = %file_hash,
@@ -318,6 +319,7 @@ mod tests {
         let pool = PgPoolOptions::new()
             .connect_lazy("postgres://127.0.0.1:1/nonexistent")
             .expect("lazy pool");
-        materialize_public_proof_after_anchor(&pool, Uuid::new_v4(), &"a".repeat(64), "basic").await;
+        materialize_public_proof_after_anchor(&pool, Uuid::new_v4(), &"a".repeat(64), "basic")
+            .await;
     }
 }

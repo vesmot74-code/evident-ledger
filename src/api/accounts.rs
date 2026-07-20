@@ -12,14 +12,12 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use crate::auth::AuthedAccount;
 use crate::auth::api_key;
+use crate::auth::AuthedAccount;
 use crate::middleware::public_rate_limit::{
     public_rate_limit_middleware, PublicRateLimitMiddlewareState,
 };
-use crate::service::accounts::{
-    self, ApiKeyRecord, RegisterError, RevokeApiKeyError,
-};
+use crate::service::accounts::{self, ApiKeyRecord, RegisterError, RevokeApiKeyError};
 use crate::state::rate_limiter::PublicRateLimitState;
 use crate::state::AppState;
 
@@ -165,11 +163,9 @@ async fn register_handler(
             }),
         )
             .into_response(),
-        Err(RegisterError::EmailAlreadyRegistered) => error_response(
-            StatusCode::CONFLICT,
-            "conflict",
-            "Request conflict",
-        ),
+        Err(RegisterError::EmailAlreadyRegistered) => {
+            error_response(StatusCode::CONFLICT, "conflict", "Request conflict")
+        }
         Err(RegisterError::Database(_)) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,
             "internal_error",
@@ -178,10 +174,7 @@ async fn register_handler(
     }
 }
 
-async fn me_handler(
-    State(state): State<AppState>,
-    auth: AuthedAccount,
-) -> Response {
+async fn me_handler(State(state): State<AppState>, auth: AuthedAccount) -> Response {
     match accounts::get_account_profile(&state.db, auth.account_id).await {
         Ok(Some(profile)) => (
             StatusCode::OK,
@@ -204,18 +197,11 @@ async fn me_handler(
     }
 }
 
-async fn list_keys_handler(
-    State(state): State<AppState>,
-    auth: AuthedAccount,
-) -> Response {
+async fn list_keys_handler(State(state): State<AppState>, auth: AuthedAccount) -> Response {
     match accounts::list_api_keys(&state.db, auth.account_id).await {
         Ok(keys) => {
             let api_keys = keys.into_iter().map(map_key_record).collect();
-            (
-                StatusCode::OK,
-                Json(ApiKeyListResponse { api_keys }),
-            )
-                .into_response()
+            (StatusCode::OK, Json(ApiKeyListResponse { api_keys })).into_response()
         }
         Err(_) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,

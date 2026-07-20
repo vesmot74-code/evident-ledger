@@ -72,11 +72,7 @@ impl IdentitySigningService {
     }
 }
 
-fn verify_ed25519_signature(
-    public_key_hex: &str,
-    message: &[u8],
-    signature_hex: &str,
-) -> bool {
+fn verify_ed25519_signature(public_key_hex: &str, message: &[u8], signature_hex: &str) -> bool {
     let Ok(pk_bytes) = hex::decode(public_key_hex) else {
         return false;
     };

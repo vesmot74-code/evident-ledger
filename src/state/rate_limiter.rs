@@ -130,11 +130,7 @@ pub fn rate_limit_scoped_client_key(
     hasher.finalize().into()
 }
 
-fn check_at(
-    limiter: &FixedWindowLimiter,
-    client_key: [u8; 32],
-    now: Instant,
-) -> RateLimitDecision {
+fn check_at(limiter: &FixedWindowLimiter, client_key: [u8; 32], now: Instant) -> RateLimitDecision {
     let window = limiter.config.window();
     let mut entries = limiter.entries.lock().expect("rate limit mutex poisoned");
     evict_expired(&mut entries, window, now);
@@ -228,7 +224,9 @@ impl PublicRateLimitState {
     pub fn from_config(trust_proxy_headers: bool) -> Self {
         Self {
             verify: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::verify())),
-            certificate: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::certificate())),
+            certificate: std::sync::Arc::new(FixedWindowLimiter::new(
+                RateLimitConfig::certificate(),
+            )),
             register: std::sync::Arc::new(FixedWindowLimiter::new(RateLimitConfig::register())),
             trust_proxy_headers,
             include_user_agent_in_key: false,

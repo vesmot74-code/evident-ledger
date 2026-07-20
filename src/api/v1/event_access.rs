@@ -198,8 +198,8 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         dotenvy::dotenv().ok();
-        let database_url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL must be set for event_access tests");
+        let database_url =
+            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for event_access tests");
         PgPoolOptions::new()
             .max_connections(2)
             .connect(&database_url)
@@ -235,8 +235,7 @@ mod tests {
         let pool = test_pool().await;
         let fixture = EventOwnershipFixture::setup(&pool).await;
 
-        let result =
-            verify_event_access(&pool, fixture.account_a, Uuid::new_v4()).await;
+        let result = verify_event_access(&pool, fixture.account_a, Uuid::new_v4()).await;
         assert_eq!(result.unwrap_err(), ApiError::NotFound);
 
         EventOwnershipFixture::teardown(&pool, &fixture).await;

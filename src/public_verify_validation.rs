@@ -40,7 +40,10 @@ mod tests {
     fn generated_public_ids_match_validator() {
         for _ in 0..256 {
             let id = generate_public_id();
-            assert!(validate_public_proof_id(&id), "generator output must pass validator: {id}");
+            assert!(
+                validate_public_proof_id(&id),
+                "generator output must pass validator: {id}"
+            );
         }
     }
 

@@ -41,11 +41,7 @@ async fn setup_legal_price(pool: &sqlx::PgPool) {
         .expect("legal price");
 }
 
-async fn create_account(
-    pool: &sqlx::PgPool,
-    customer_id: &str,
-    subscription_status: &str,
-) -> Uuid {
+async fn create_account(pool: &sqlx::PgPool, customer_id: &str, subscription_status: &str) -> Uuid {
     let account_id = Uuid::new_v4();
     sqlx::query(
         r#"
@@ -181,10 +177,7 @@ async fn subscription_created_sets_active_and_plan() {
 
     let (status, period_end) = account_row(&pool, account_id).await;
     assert_eq!(status, "active");
-    assert_eq!(
-        account_tariff_plan_name(&pool, account_id).await,
-        "legal"
-    );
+    assert_eq!(account_tariff_plan_name(&pool, account_id).await, "legal");
     assert_period_end(period_end, "2026-08-18T10:00:00Z");
 }
 
@@ -298,13 +291,12 @@ async fn duplicate_event_is_idempotent() {
     assert_eq!(json["status"], "idempotent");
     assert_eq!(account_tariff_plan_name(&pool, account_id).await, "legal");
 
-    let rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1",
-    )
-    .bind(&event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event count");
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
     assert_eq!(rows, 1);
 }
 
@@ -338,13 +330,12 @@ async fn invalid_signature_rejected_without_db_changes() {
     assert_eq!(json["error"], "invalid_signature");
     assert_eq!(account_row(&pool, account_id).await, before);
 
-    let rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1",
-    )
-    .bind(&event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event count");
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
     assert_eq!(rows, 0);
 }
 
@@ -367,13 +358,12 @@ async fn unknown_customer_stored_as_waiting_for_account_link() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["status"], "waiting_for_account_link");
 
-    let webhook_status: String = sqlx::query_scalar(
-        "SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1",
-    )
-    .bind(&event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("webhook status");
+    let webhook_status: String =
+        sqlx::query_scalar("SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("webhook status");
     assert_eq!(webhook_status, "waiting_for_account_link");
 
     let pending: bool = sqlx::query_scalar(

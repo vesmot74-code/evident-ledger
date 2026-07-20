@@ -44,8 +44,8 @@ impl AppConfig {
             }
         });
 
-        let paddle_api_base_url = env::var("PADDLE_API_BASE_URL")
-            .unwrap_or_else(|_| "https://api.paddle.com".into());
+        let paddle_api_base_url =
+            env::var("PADDLE_API_BASE_URL").unwrap_or_else(|_| "https://api.paddle.com".into());
 
         Self {
             dev_mode,

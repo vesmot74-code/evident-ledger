@@ -58,7 +58,10 @@ pub fn hash_api_key_for_lookup(raw_key: &str) -> String {
 }
 
 pub fn display_prefix(full_key: &str) -> String {
-    let visible = full_key.chars().take(KEY_PREFIX_DISPLAY_LEN).collect::<String>();
+    let visible = full_key
+        .chars()
+        .take(KEY_PREFIX_DISPLAY_LEN)
+        .collect::<String>();
     format!("{visible}…")
 }
 
@@ -88,11 +91,11 @@ mod tests {
     fn generated_key_has_expected_shape() {
         let key = generate_api_key();
         assert!(key.full_key.starts_with(API_KEY_PREFIX));
+        assert_eq!(key.full_key.len(), API_KEY_PREFIX.len() + SECRET_HEX_LEN);
         assert_eq!(
-            key.full_key.len(),
-            API_KEY_PREFIX.len() + SECRET_HEX_LEN
+            key.key_hash,
+            hash_secret_hex(&key.full_key[API_KEY_PREFIX.len()..])
         );
-        assert_eq!(key.key_hash, hash_secret_hex(&key.full_key[API_KEY_PREFIX.len()..]));
         assert!(key.key_prefix.starts_with("ev_"));
     }
 

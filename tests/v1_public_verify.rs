@@ -70,14 +70,9 @@ async fn public_verify_hash_case_normalization_via_on_proof_anchored() {
         .collect::<String>();
     cleanup(&pool, &canonical).await;
 
-    evident_ledger::public_proof::on_proof_anchored(
-        &pool,
-        Uuid::new_v4(),
-        &mixed_case,
-        "basic",
-    )
-    .await
-    .expect("anchor");
+    evident_ledger::public_proof::on_proof_anchored(&pool, Uuid::new_v4(), &mixed_case, "basic")
+        .await
+        .expect("anchor");
 
     for hash in [canonical.clone(), canonical.to_uppercase(), mixed_case] {
         let response = verify_by_hash(&pool, Some(hash), None)

@@ -12,9 +12,7 @@ use super::errors::ApiError;
 use super::submit_event::{submit_v1_event, V1SubmitEventRequest};
 
 pub fn router(state: AppState) -> Router {
-    Router::new()
-        .route("/", post(handler))
-        .with_state(state)
+    Router::new().route("/", post(handler)).with_state(state)
 }
 
 async fn handler(

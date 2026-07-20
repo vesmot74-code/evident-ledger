@@ -75,13 +75,7 @@ fn valid_hash(label: &str) -> String {
     format!("{:x}", Sha256::digest(label.as_bytes()))
 }
 
-fn post_event(
-    client: &Client,
-    api_key: &str,
-    chain_id: Uuid,
-    file_hash: &str,
-    key: &str,
-) -> Value {
+fn post_event(client: &Client, api_key: &str, chain_id: Uuid, file_hash: &str, key: &str) -> Value {
     let resp = client
         .post(format!("{BASE}/v1/events"))
         .header("X-API-KEY", api_key)
@@ -210,13 +204,12 @@ fn v1_submit_idempotent_replay_does_not_duplicate_public_proof() {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
-        let registry_count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM public_proof_registry WHERE file_hash = $1",
-        )
-        .bind(&file_hash)
-        .fetch_one(&pool)
-        .await
-        .expect("registry count");
+        let registry_count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM public_proof_registry WHERE file_hash = $1")
+                .bind(&file_hash)
+                .fetch_one(&pool)
+                .await
+                .expect("registry count");
         assert_eq!(registry_count, 1);
     });
 

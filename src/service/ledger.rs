@@ -55,10 +55,9 @@ impl IntoResponse for LedgerError {
             LedgerError::DuplicateIdempotencyKey => {
                 (StatusCode::CONFLICT, "Duplicate idempotency key")
             }
-            LedgerError::DuplicateChainSequence => (
-                StatusCode::CONFLICT,
-                "Duplicate sequence for chain",
-            ),
+            LedgerError::DuplicateChainSequence => {
+                (StatusCode::CONFLICT, "Duplicate sequence for chain")
+            }
             LedgerError::UsageLimitExceeded => (
                 StatusCode::TOO_MANY_REQUESTS,
                 "Monthly commit limit exceeded for your tariff plan",
@@ -120,13 +119,11 @@ pub async fn ensure_chain_access_in_tx(
     match chain.account_id {
         Some(owner) if owner != account_id => Err(LedgerError::ChainAccessDenied),
         None => {
-            sqlx::query(
-                "UPDATE chains SET account_id = $1 WHERE chain_id = $2",
-            )
-            .bind(account_id)
-            .bind(chain_id)
-            .execute(&mut *conn)
-            .await?;
+            sqlx::query("UPDATE chains SET account_id = $1 WHERE chain_id = $2")
+                .bind(account_id)
+                .bind(chain_id)
+                .execute(&mut *conn)
+                .await?;
             Ok(())
         }
         _ => Ok(()),
@@ -139,13 +136,12 @@ pub async fn plan_next_event(
     chain_id: Uuid,
     event_id: Option<Uuid>,
 ) -> Result<PlannedEvent, LedgerError> {
-    let head_event_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT head_event_id FROM chains WHERE chain_id = $1",
-    )
-    .bind(chain_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(LedgerError::DatabaseError)?;
+    let head_event_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT head_event_id FROM chains WHERE chain_id = $1")
+            .bind(chain_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(LedgerError::DatabaseError)?;
 
     let parent_event_id = head_event_id.unwrap_or(Uuid::nil());
 
@@ -190,13 +186,12 @@ pub async fn submit_event(
     .fetch_optional(&mut *tx)
     .await?
     {
-        let head_event_id: Option<Uuid> = sqlx::query_scalar(
-            "SELECT head_event_id FROM chains WHERE chain_id = $1",
-        )
-        .bind(req.chain_id)
-        .fetch_one(&mut *tx)
-        .await
-        .map_err(LedgerError::DatabaseError)?;
+        let head_event_id: Option<Uuid> =
+            sqlx::query_scalar("SELECT head_event_id FROM chains WHERE chain_id = $1")
+                .bind(req.chain_id)
+                .fetch_one(&mut *tx)
+                .await
+                .map_err(LedgerError::DatabaseError)?;
 
         return Ok(json!({
             "event_id": existing.event_id,
@@ -266,13 +261,12 @@ pub async fn insert_event_in_tx(
         return Err(LedgerError::QualifiedTsaUnavailable);
     }
 
-    let head_event_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT head_event_id FROM chains WHERE chain_id = $1",
-    )
-    .bind(req.chain_id)
-    .fetch_one(&mut *conn)
-    .await
-    .map_err(LedgerError::DatabaseError)?;
+    let head_event_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT head_event_id FROM chains WHERE chain_id = $1")
+            .bind(req.chain_id)
+            .fetch_one(&mut *conn)
+            .await
+            .map_err(LedgerError::DatabaseError)?;
 
     let parent_event_id = head_event_id.unwrap_or(Uuid::nil());
 
@@ -545,10 +539,7 @@ mod sequence_constraint_tests {
         .expect_err("duplicate sequence must fail");
 
         assert!(
-            matches!(
-                LedgerError::from(err),
-                LedgerError::DuplicateChainSequence
-            ),
+            matches!(LedgerError::from(err), LedgerError::DuplicateChainSequence),
             "unique violation must map to DuplicateChainSequence"
         );
 

@@ -57,10 +57,7 @@ mod tests {
         let left = json!({ "b": 2, "a": 1, "nested": { "z": 9, "y": 8 } });
         let right = json!({ "a": 1, "nested": { "y": 8, "z": 9 }, "b": 2 });
 
-        assert_eq!(
-            canonical_json_sha256(&left),
-            canonical_json_sha256(&right)
-        );
+        assert_eq!(canonical_json_sha256(&left), canonical_json_sha256(&right));
     }
 
     #[test]
@@ -68,10 +65,7 @@ mod tests {
         let left = json!({ "items": [1, 2, 3] });
         let right = json!({ "items": [1, 3, 2] });
 
-        assert_ne!(
-            canonical_json_sha256(&left),
-            canonical_json_sha256(&right)
-        );
+        assert_ne!(canonical_json_sha256(&left), canonical_json_sha256(&right));
     }
 
     #[test]

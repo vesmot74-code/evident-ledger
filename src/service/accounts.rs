@@ -191,13 +191,10 @@ pub async fn register_web_account(
         .await
         .map_err(|e| WebRegisterError::Database(e.to_string()))?;
 
-    if email_exists(&mut tx, &email)
-        .await
-        .map_err(|e| match e {
-            RegisterError::Database(msg) => WebRegisterError::Database(msg),
-            RegisterError::EmailAlreadyRegistered => WebRegisterError::EmailAlreadyRegistered,
-        })?
-    {
+    if email_exists(&mut tx, &email).await.map_err(|e| match e {
+        RegisterError::Database(msg) => WebRegisterError::Database(msg),
+        RegisterError::EmailAlreadyRegistered => WebRegisterError::EmailAlreadyRegistered,
+    })? {
         return Err(WebRegisterError::EmailAlreadyRegistered);
     }
 
@@ -268,14 +265,13 @@ pub async fn set_account_password(
         return Ok(());
     }
 
-    let has_password: bool = sqlx::query_scalar(
-        "SELECT password_hash IS NOT NULL FROM accounts WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(|e| SetPasswordError::Database(e.to_string()))?
-    .ok_or(SetPasswordError::NotFound)?;
+    let has_password: bool =
+        sqlx::query_scalar("SELECT password_hash IS NOT NULL FROM accounts WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_optional(pool)
+            .await
+            .map_err(|e| SetPasswordError::Database(e.to_string()))?
+            .ok_or(SetPasswordError::NotFound)?;
 
     if has_password {
         Err(SetPasswordError::PasswordAlreadySet)

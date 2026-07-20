@@ -145,12 +145,10 @@ async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
         .bind(account_id)
         .execute(pool)
         .await;
-    let _ = sqlx::query(
-        "DELETE FROM paddle_webhook_events WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .execute(pool)
-    .await;
+    let _ = sqlx::query("DELETE FROM paddle_webhook_events WHERE account_id = $1")
+        .bind(account_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query("DELETE FROM api_keys WHERE account_id = $1")
         .bind(account_id)
         .execute(pool)
@@ -216,25 +214,23 @@ async fn webhook_before_linking_with_unverified_email_waits_for_account_link() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["status"], "waiting_for_account_link");
 
-    let webhook_status: String = sqlx::query_scalar(
-        "SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1",
-    )
-    .bind(&event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("webhook status");
+    let webhook_status: String =
+        sqlx::query_scalar("SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("webhook status");
     assert_eq!(webhook_status, "waiting_for_account_link");
 
     assert_eq!(account_row(&pool, account_id).await.0, "none");
     assert_eq!(account_tariff_plan_name(&pool, account_id).await, "free");
 
-    let verified: Option<DateTime<Utc>> = sqlx::query_scalar(
-        "SELECT email_verified_at FROM accounts WHERE account_id = $1",
-    )
-    .bind(account_id)
-    .fetch_one(&pool)
-    .await
-    .expect("verified");
+    let verified: Option<DateTime<Utc>> =
+        sqlx::query_scalar("SELECT email_verified_at FROM accounts WHERE account_id = $1")
+            .bind(account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("verified");
     assert!(verified.is_none());
 
     cleanup_account(&pool, account_id).await;
@@ -266,13 +262,12 @@ async fn duplicate_waiting_webhook_is_idempotent() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(json["status"], "idempotent");
 
-    let rows: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1",
-    )
-    .bind(&event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event count");
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
     assert_eq!(rows, 1);
 }
 
@@ -292,10 +287,7 @@ async fn linking_rejects_customer_already_bound_to_other_account() {
     let err = link_paddle_customer_to_account(&pool, account_b, &customer_id)
         .await
         .expect_err("second link must fail");
-    assert_eq!(
-        err,
-        LinkCustomerError::CustomerAlreadyLinkedToOtherAccount
-    );
+    assert_eq!(err, LinkCustomerError::CustomerAlreadyLinkedToOtherAccount);
 
     cleanup_account(&pool, account_a).await;
     cleanup_account(&pool, account_b).await;

@@ -11,8 +11,10 @@ use axum::{
 use serde_json::json;
 
 use crate::paddle::{
-    models::PaddleWebhookEvent, process_paddle_webhook, verify_paddle_signature,
+    models::PaddleWebhookEvent,
+    process_paddle_webhook,
     processor::{WebhookError, WebhookOutcome},
+    verify_paddle_signature,
 };
 use crate::state::AppState;
 
@@ -50,27 +52,25 @@ async fn webhook_handler(
     };
 
     match process_paddle_webhook(&state.db, &event, &body).await {
-        Ok(WebhookOutcome::Processed) => (
-            StatusCode::OK,
-            Json(json!({ "status": "processed" })),
-        )
-            .into_response(),
-        Ok(WebhookOutcome::Idempotent) => (
-            StatusCode::OK,
-            Json(json!({ "status": "idempotent" })),
-        )
-            .into_response(),
+        Ok(WebhookOutcome::Processed) => {
+            (StatusCode::OK, Json(json!({ "status": "processed" }))).into_response()
+        }
+        Ok(WebhookOutcome::Idempotent) => {
+            (StatusCode::OK, Json(json!({ "status": "idempotent" }))).into_response()
+        }
         Ok(WebhookOutcome::WaitingForAccountLink) => (
             StatusCode::OK,
             Json(json!({ "status": "waiting_for_account_link" })),
         )
             .into_response(),
-        Err(WebhookError::PayloadHashConflict) => error_response(
-            StatusCode::CONFLICT,
-            json!({ "error": "conflict" }),
-        ),
+        Err(WebhookError::PayloadHashConflict) => {
+            error_response(StatusCode::CONFLICT, json!({ "error": "conflict" }))
+        }
         Err(WebhookError::InvalidStatusTransition) | Err(WebhookError::PlanNotFound) => {
-            error_response(StatusCode::INTERNAL_SERVER_ERROR, json!({ "error": "internal_error" }))
+            error_response(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                json!({ "error": "internal_error" }),
+            )
         }
         Err(WebhookError::MissingField(_)) | Err(WebhookError::Database(_)) => error_response(
             StatusCode::INTERNAL_SERVER_ERROR,

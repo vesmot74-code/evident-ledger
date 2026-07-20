@@ -22,9 +22,9 @@ pub fn test_app_state(pool: sqlx::PgPool) -> AppState {
     setup_test_env();
     AppState::with_paddle(
         pool,
-        Arc::new(
-            evident_ledger::signing::ServerSigner::load_or_create("signing_key.bin"),
-        ),
+        Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
+            "signing_key.bin",
+        )),
         AppConfig::from_env(),
         MockPaddleClient::new(),
     )

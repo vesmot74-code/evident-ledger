@@ -150,7 +150,11 @@ pub async fn verify_by_hash(
         Ok(hash) => hash,
         Err(()) => {
             if let Some(metadata) = metadata {
-                audit_verify(metadata, &request_id, PublicVerificationOutcome::InvalidRequest);
+                audit_verify(
+                    metadata,
+                    &request_id,
+                    PublicVerificationOutcome::InvalidRequest,
+                );
             }
             return Ok(invalid_request_response(request_id));
         }
@@ -165,11 +169,7 @@ pub async fn verify_by_hash(
     if let Some(metadata) = metadata {
         audit_verify(metadata, &request_id, outcome);
     }
-    Ok((
-        StatusCode::OK,
-        Json(response_from_entry(entry)),
-    )
-        .into_response())
+    Ok((StatusCode::OK, Json(response_from_entry(entry))).into_response())
 }
 
 /// Test hook: same code path with injectable lookup for call-count assertions.
@@ -179,7 +179,10 @@ pub async fn verify_by_hash_with_lookup(
     lookup: impl FnOnce(
         &str,
     ) -> std::pin::Pin<
-        Box<dyn std::future::Future<Output = Result<Option<PublicRegistryEntry>, sqlx::Error>> + Send>,
+        Box<
+            dyn std::future::Future<Output = Result<Option<PublicRegistryEntry>, sqlx::Error>>
+                + Send,
+        >,
     >,
     metadata: Option<&PublicRequestMetadata>,
 ) -> Result<(Response, u32), sqlx::Error> {
@@ -188,7 +191,11 @@ pub async fn verify_by_hash_with_lookup(
         Ok(hash) => hash,
         Err(()) => {
             if let Some(metadata) = metadata {
-                audit_verify(metadata, &request_id, PublicVerificationOutcome::InvalidRequest);
+                audit_verify(
+                    metadata,
+                    &request_id,
+                    PublicVerificationOutcome::InvalidRequest,
+                );
             }
             return Ok((invalid_request_response(request_id), 0));
         }
@@ -208,11 +215,7 @@ pub async fn verify_by_hash_with_lookup(
         audit_verify(metadata, &request_id, outcome);
     }
     Ok((
-        (
-            StatusCode::OK,
-            Json(response_from_entry(entry)),
-        )
-            .into_response(),
+        (StatusCode::OK, Json(response_from_entry(entry))).into_response(),
         calls,
     ))
 }
@@ -239,7 +242,11 @@ pub async fn public_certificate_pdf_handler(
 
     if !validate_public_proof_id(&public_proof_id) {
         if let Some(Extension(metadata)) = metadata.as_ref() {
-            audit_certificate(metadata, &request_id, PublicVerificationOutcome::InvalidRequest);
+            audit_certificate(
+                metadata,
+                &request_id,
+                PublicVerificationOutcome::InvalidRequest,
+            );
         }
         return Ok(invalid_request_response(request_id));
     }
@@ -255,11 +262,7 @@ pub async fn public_certificate_pdf_handler(
         if let Some(Extension(metadata)) = metadata.as_ref() {
             audit_certificate(metadata, &request_id, PublicVerificationOutcome::NotFound);
         }
-        return Ok((
-            StatusCode::NOT_FOUND,
-            Json(json!({ "error": "not_found" })),
-        )
-            .into_response());
+        return Ok((StatusCode::NOT_FOUND, Json(json!({ "error": "not_found" }))).into_response());
     };
 
     if let Some(Extension(metadata)) = metadata.as_ref() {
@@ -332,14 +335,9 @@ mod tests {
         let file_hash = test_hash("public-verify-lookup-path");
         cleanup(&pool, &file_hash).await;
 
-        crate::public_proof::on_proof_anchored(
-            &pool,
-            uuid::Uuid::new_v4(),
-            &file_hash,
-            "basic",
-        )
-        .await
-        .expect("anchor");
+        crate::public_proof::on_proof_anchored(&pool, uuid::Uuid::new_v4(), &file_hash, "basic")
+            .await
+            .expect("anchor");
 
         assert!(lookup_public_registry_entry(&pool, &file_hash)
             .await
@@ -409,8 +407,8 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         dotenvy::dotenv().ok();
-        let database_url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for public_verify tests");
+        let database_url = std::env::var("DATABASE_URL")
+            .expect("DATABASE_URL must be set for public_verify tests");
         PgPoolOptions::new()
             .max_connections(5)
             .connect(&database_url)

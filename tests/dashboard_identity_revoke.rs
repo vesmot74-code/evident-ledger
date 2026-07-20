@@ -141,7 +141,11 @@ async fn create_test_account(pool: &sqlx::PgPool, label: &str) -> TestAccount {
     }
 }
 
-async fn create_identity_key(pool: &sqlx::PgPool, account_id: Uuid, signing_key: &SigningKey) -> Uuid {
+async fn create_identity_key(
+    pool: &sqlx::PgPool,
+    account_id: Uuid,
+    signing_key: &SigningKey,
+) -> Uuid {
     let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
     let fingerprint = IdentityKeyRepository::fingerprint_from_public_key_hex(&public_key_hex)
         .expect("fingerprint");
@@ -233,7 +237,10 @@ async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
         .await;
 }
 
-async fn setup_session_account(pool: &sqlx::PgPool, label: &str) -> (TestAccount, String, axum::Router) {
+async fn setup_session_account(
+    pool: &sqlx::PgPool,
+    label: &str,
+) -> (TestAccount, String, axum::Router) {
     let account = create_test_account(pool, label).await;
     set_web_password(pool, account.account_id, "dashboard-pass").await;
     let email = format!("{}@{label}.test", account.account_id);
@@ -351,7 +358,12 @@ async fn dashboard_revoke_without_session_redirects_to_login() {
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
-        response.headers().get(header::LOCATION).unwrap().to_str().unwrap(),
+        response
+            .headers()
+            .get(header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "/login"
     );
 

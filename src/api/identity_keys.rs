@@ -14,9 +14,7 @@ use uuid::Uuid;
 
 use crate::auth::AuthedAccount;
 use crate::service::entitlements::{require_feature, Feature};
-use crate::service::identity_challenge::{
-    IdentityChallengeError, IdentityChallengeRepository,
-};
+use crate::service::identity_challenge::{IdentityChallengeError, IdentityChallengeRepository};
 use crate::service::identity_keys::{IdentityKeyError, IdentityKeyRepository};
 use crate::state::AppState;
 
@@ -74,10 +72,7 @@ fn error_response(status: StatusCode, code: &str, message: &str) -> Response {
         .into_response()
 }
 
-async fn challenge_handler(
-    State(state): State<AppState>,
-    auth: AuthedAccount,
-) -> Response {
+async fn challenge_handler(State(state): State<AppState>, auth: AuthedAccount) -> Response {
     if let Err(response) = check_identity_entitlement(&state, auth.account_id).await {
         return response;
     }
@@ -242,11 +237,9 @@ async fn check_identity_entitlement(state: &AppState, account_id: Uuid) -> Resul
 
 fn map_challenge_error(err: IdentityChallengeError) -> Response {
     match err {
-        IdentityChallengeError::ChallengeExpired => error_response(
-            StatusCode::GONE,
-            "challenge_expired",
-            "Challenge expired",
-        ),
+        IdentityChallengeError::ChallengeExpired => {
+            error_response(StatusCode::GONE, "challenge_expired", "Challenge expired")
+        }
         IdentityChallengeError::ChallengeAlreadyUsed => error_response(
             StatusCode::CONFLICT,
             "challenge_already_used",
@@ -265,11 +258,7 @@ fn map_challenge_error(err: IdentityChallengeError) -> Response {
     }
 }
 
-fn verify_ed25519_signature(
-    public_key_hex: &str,
-    message: &[u8],
-    signature_hex: &str,
-) -> bool {
+fn verify_ed25519_signature(public_key_hex: &str, message: &[u8], signature_hex: &str) -> bool {
     let Ok(pk_bytes) = hex::decode(public_key_hex) else {
         return false;
     };

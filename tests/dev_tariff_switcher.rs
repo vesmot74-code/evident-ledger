@@ -27,9 +27,7 @@ fn evident_api_key() -> String {
 }
 
 fn account_id_from_capabilities(client: &EvidentClient) -> Uuid {
-    let caps = client
-        .fetch_capabilities()
-        .expect("fetch capabilities");
+    let caps = client.fetch_capabilities().expect("fetch capabilities");
     Uuid::parse_str(
         caps["account_id"]
             .as_str()
@@ -39,18 +37,14 @@ fn account_id_from_capabilities(client: &EvidentClient) -> Uuid {
 }
 
 fn plan_name_from_capabilities(client: &EvidentClient) -> String {
-    client
-        .fetch_capabilities()
-        .expect("fetch capabilities")["plan_name"]
+    client.fetch_capabilities().expect("fetch capabilities")["plan_name"]
         .as_str()
         .expect("plan_name")
         .to_string()
 }
 
 fn tsa_mode_from_capabilities(client: &EvidentClient) -> String {
-    client
-        .fetch_capabilities()
-        .expect("fetch capabilities")["tsa_mode"]
+    client.fetch_capabilities().expect("fetch capabilities")["tsa_mode"]
         .as_str()
         .expect("tsa_mode")
         .to_string()
@@ -148,8 +142,7 @@ fn dev_tariff_switcher_end_to_end() {
     assert_eq!(back_vault.new_plan, "vault");
     assert_eq!(tsa_mode_from_capabilities(&client), "qualified");
     assert_eq!(
-        status_vault,
-        503,
+        status_vault, 503,
         "vault plan commit should return 503 QualifiedTsaUnavailable"
     );
 }
@@ -172,6 +165,8 @@ fn dev_change_plan_forbidden_without_dev_mode() {
             "unexpected error: {msg}"
         );
     } else {
-        eprintln!("SKIP: set RUN_PROD_GATE_TEST=1 with server started without DEV_MODE to run Test 4");
+        eprintln!(
+            "SKIP: set RUN_PROD_GATE_TEST=1 with server started without DEV_MODE to run Test 4"
+        );
     }
 }

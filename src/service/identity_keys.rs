@@ -32,10 +32,7 @@ impl IdentityKeyRepository {
         fingerprint: &str,
         label: Option<&str>,
     ) -> Result<IdentityKey, IdentityKeyError> {
-        if Self::find_by_fingerprint(db, fingerprint)
-            .await?
-            .is_some()
-        {
+        if Self::find_by_fingerprint(db, fingerprint).await?.is_some() {
             return Err(IdentityKeyError::FingerprintAlreadyExists);
         }
 
@@ -96,7 +93,10 @@ impl IdentityKeyRepository {
         .map_err(IdentityKeyError::Database)
     }
 
-    pub async fn find_by_id(db: &PgPool, id: Uuid) -> Result<Option<IdentityKey>, IdentityKeyError> {
+    pub async fn find_by_id(
+        db: &PgPool,
+        id: Uuid,
+    ) -> Result<Option<IdentityKey>, IdentityKeyError> {
         sqlx::query_as::<_, IdentityKey>(
             r#"
             SELECT
@@ -175,10 +175,7 @@ impl IdentityKeyRepository {
         .ok_or(IdentityKeyError::KeyNotFound)
     }
 
-    pub async fn check_entitlement(
-        db: &PgPool,
-        account_id: Uuid,
-    ) -> Result<(), IdentityKeyError> {
+    pub async fn check_entitlement(db: &PgPool, account_id: Uuid) -> Result<(), IdentityKeyError> {
         require_feature(db, account_id, Feature::Identity)
             .await
             .map_err(|err| match err {

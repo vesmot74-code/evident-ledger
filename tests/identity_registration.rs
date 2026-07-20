@@ -52,7 +52,12 @@ fn rate_limits() -> PublicRateLimitState {
     }
 }
 
-fn peer_request(method: &str, uri: &str, body: Option<Value>, api_key: Option<&str>) -> Request<Body> {
+fn peer_request(
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    api_key: Option<&str>,
+) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(key) = api_key {
         builder = builder.header("X-API-KEY", key);
@@ -133,12 +138,7 @@ async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
 async fn request_challenge(app: &axum::Router, api_key: &str) -> (StatusCode, Value) {
     response_json(
         app.clone(),
-        peer_request(
-            "POST",
-            "/identity/keys/challenge",
-            None,
-            Some(api_key),
-        ),
+        peer_request("POST", "/identity/keys/challenge", None, Some(api_key)),
     )
     .await
 }
@@ -237,9 +237,7 @@ async fn register_with_valid_signature_creates_key() {
 
     let signing_key = SigningKey::generate(&mut OsRng);
     let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
-    let expected_fingerprint = hex::encode(Sha256::digest(
-        &hex::decode(&public_key_hex).unwrap(),
-    ));
+    let expected_fingerprint = hex::encode(Sha256::digest(&hex::decode(&public_key_hex).unwrap()));
 
     let (status, body) = register_key(
         &app,

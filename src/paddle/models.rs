@@ -79,10 +79,7 @@ impl PaddleWebhookEvent {
     }
 
     pub fn period_end(&self) -> Option<DateTime<Utc>> {
-        self.data
-            .current_billing_period
-            .as_ref()
-            .map(|p| p.ends_at)
+        self.data.current_billing_period.as_ref().map(|p| p.ends_at)
     }
 }
 

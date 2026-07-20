@@ -21,9 +21,7 @@ use crate::auth::session_store::{
     session_cookie_value,
 };
 use crate::middleware::login_rate_limit::login_rate_limit_middleware;
-use crate::service::accounts::{
-    self, SetPasswordError, WebRegisterError,
-};
+use crate::service::accounts::{self, SetPasswordError, WebRegisterError};
 use crate::state::rate_limiter::LoginRateLimitState;
 use crate::state::AppState;
 
@@ -69,12 +67,13 @@ pub struct SetPasswordResponse {
 }
 
 pub fn router(state: AppState, login_limits: LoginRateLimitState) -> Router {
-    let login = Router::new()
-        .route("/login", post(login_handler))
-        .layer(middleware::from_fn_with_state(
-            login_limits.clone(),
-            login_rate_limit_middleware,
-        ));
+    let login =
+        Router::new()
+            .route("/login", post(login_handler))
+            .layer(middleware::from_fn_with_state(
+                login_limits.clone(),
+                login_rate_limit_middleware,
+            ));
 
     Router::new()
         .route("/register", post(register_handler))
@@ -106,8 +105,7 @@ async fn register_handler(
         return Err(ApiError::InvalidRequest);
     }
 
-    let password_hash =
-        password::hash_password(&body.password).map_err(|_| ApiError::Internal)?;
+    let password_hash = password::hash_password(&body.password).map_err(|_| ApiError::Internal)?;
 
     let result = accounts::register_web_account(&state.db, &body.email, &password_hash)
         .await
@@ -158,12 +156,15 @@ async fn login_handler(
         return Err(ApiError::InvalidCredentials);
     };
 
-    let password_hash: Option<String> = row.try_get("password_hash").map_err(|_| ApiError::Internal)?;
+    let password_hash: Option<String> = row
+        .try_get("password_hash")
+        .map_err(|_| ApiError::Internal)?;
     let Some(stored_hash) = password_hash else {
         return Err(ApiError::InvalidCredentials);
     };
 
-    let valid = password::verify_password(&body.password, &stored_hash).map_err(|_| ApiError::Internal)?;
+    let valid =
+        password::verify_password(&body.password, &stored_hash).map_err(|_| ApiError::Internal)?;
     if !valid {
         return Err(ApiError::InvalidCredentials);
     }
@@ -185,7 +186,10 @@ async fn login_handler(
 
     Ok((
         StatusCode::OK,
-        [(header::SET_COOKIE, session_cookie_value(&token, secure_cookie))],
+        [(
+            header::SET_COOKIE,
+            session_cookie_value(&token, secure_cookie),
+        )],
         Json(body),
     )
         .into_response())
@@ -226,8 +230,7 @@ async fn set_password_handler(
         return Err(ApiError::InvalidRequest);
     }
 
-    let password_hash =
-        password::hash_password(&body.password).map_err(|_| ApiError::Internal)?;
+    let password_hash = password::hash_password(&body.password).map_err(|_| ApiError::Internal)?;
 
     accounts::set_account_password(&state.db, auth.account_id, &password_hash)
         .await

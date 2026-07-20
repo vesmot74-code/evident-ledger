@@ -303,13 +303,12 @@ async fn delete_dashboard_api_key_with_valid_session_revokes_key() {
 
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let revoked_at: Option<chrono::DateTime<chrono::Utc>> = sqlx::query_scalar(
-        "SELECT revoked_at FROM api_keys WHERE api_key_id = $1",
-    )
-    .bind(Uuid::parse_str(key_id).unwrap())
-    .fetch_one(&pool)
-    .await
-    .expect("revoked_at");
+    let revoked_at: Option<chrono::DateTime<chrono::Utc>> =
+        sqlx::query_scalar("SELECT revoked_at FROM api_keys WHERE api_key_id = $1")
+            .bind(Uuid::parse_str(key_id).unwrap())
+            .fetch_one(&pool)
+            .await
+            .expect("revoked_at");
     assert!(revoked_at.is_some());
     cleanup_email(&pool, &email).await;
 }
@@ -369,11 +368,7 @@ async fn dashboard_responses_do_not_leak_password_hash() {
         "/dashboard/usage",
         "/dashboard/api-keys",
     ] {
-        let (_, body, _) = call(
-            app.clone(),
-            peer_request("GET", path, None, Some(&cookie)),
-        )
-        .await;
+        let (_, body, _) = call(app.clone(), peer_request("GET", path, None, Some(&cookie))).await;
         let serialized = body.to_string().to_lowercase();
         assert!(
             !serialized.contains("password_hash"),
@@ -390,10 +385,7 @@ async fn dashboard_responses_do_not_leak_session_token() {
     cleanup_email(&pool, &email).await;
     let app = combined_app(test_state(pool.clone()));
     let cookie = register_and_login(&pool, &app, &email).await;
-    let token = cookie
-        .split('=')
-        .nth(1)
-        .expect("token in cookie header");
+    let token = cookie.split('=').nth(1).expect("token in cookie header");
 
     for path in [
         "/dashboard/me",
@@ -401,11 +393,7 @@ async fn dashboard_responses_do_not_leak_session_token() {
         "/dashboard/usage",
         "/dashboard/api-keys",
     ] {
-        let (_, body, _) = call(
-            app.clone(),
-            peer_request("GET", path, None, Some(&cookie)),
-        )
-        .await;
+        let (_, body, _) = call(app.clone(), peer_request("GET", path, None, Some(&cookie))).await;
         let serialized = body.to_string();
         assert!(
             !serialized.contains(token),

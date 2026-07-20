@@ -116,7 +116,9 @@ impl IdentityDashboardService {
         .ok_or(IdentityDashboardError::KeyNotFound)?;
 
         let (cursor_sequence, cursor_event_id) = match cursor {
-            Some(value) => decode_cursor(value).map_err(|_| IdentityDashboardError::InvalidCursor)?,
+            Some(value) => {
+                decode_cursor(value).map_err(|_| IdentityDashboardError::InvalidCursor)?
+            }
             None => (None, None),
         };
 
@@ -177,9 +179,10 @@ impl IdentityDashboardService {
                 &row.parent_event_id,
                 &row.file_hash,
             );
-            let verification = IdentityVerificationService::verify(db, &identity_event, &canonical_hash)
-                .await
-                .map_err(IdentityDashboardError::Verification)?;
+            let verification =
+                IdentityVerificationService::verify(db, &identity_event, &canonical_hash)
+                    .await
+                    .map_err(IdentityDashboardError::Verification)?;
             events.push(IdentityKeyEventRow {
                 event_id: row.event_id,
                 chain_id: row.chain_id,

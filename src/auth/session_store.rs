@@ -26,7 +26,10 @@ pub async fn cleanup_expired_sessions(pool: &PgPool) -> Result<(), sqlx::Error> 
     Ok(())
 }
 
-pub async fn delete_sessions_for_account(pool: &PgPool, account_id: Uuid) -> Result<(), sqlx::Error> {
+pub async fn delete_sessions_for_account(
+    pool: &PgPool,
+    account_id: Uuid,
+) -> Result<(), sqlx::Error> {
     sqlx::query("DELETE FROM sessions WHERE account_id = $1")
         .bind(account_id)
         .execute(pool)
@@ -108,9 +111,7 @@ pub fn session_cookie_value(token: &str, secure: bool) -> String {
 
 pub fn clear_session_cookie(secure: bool) -> String {
     let secure_flag = if secure { "; Secure" } else { "" };
-    format!(
-        "{SESSION_COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax{secure_flag}"
-    )
+    format!("{SESSION_COOKIE_NAME}=; HttpOnly; Path=/; Max-Age=0; SameSite=Lax{secure_flag}")
 }
 
 pub fn parse_session_cookie(cookie_header: &str) -> Option<String> {

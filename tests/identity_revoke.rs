@@ -98,7 +98,11 @@ async fn create_test_account(pool: &sqlx::PgPool, label: &str) -> TestAccount {
     }
 }
 
-async fn create_identity_key(pool: &sqlx::PgPool, account_id: Uuid, signing_key: &SigningKey) -> Uuid {
+async fn create_identity_key(
+    pool: &sqlx::PgPool,
+    account_id: Uuid,
+    signing_key: &SigningKey,
+) -> Uuid {
     let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
     let fingerprint = IdentityKeyRepository::fingerprint_from_public_key_hex(&public_key_hex)
         .expect("fingerprint");
@@ -139,7 +143,11 @@ fn revoke_request(api_key: Option<&str>, key_id: Uuid) -> Request<Body> {
     builder.body(Body::empty()).expect("request")
 }
 
-async fn post_revoke(app: axum::Router, api_key: Option<&str>, key_id: Uuid) -> (StatusCode, Value) {
+async fn post_revoke(
+    app: axum::Router,
+    api_key: Option<&str>,
+    key_id: Uuid,
+) -> (StatusCode, Value) {
     call(app, revoke_request(api_key, key_id)).await
 }
 
@@ -371,14 +379,8 @@ async fn signing_with_revoked_key_after_api_revoke_is_rejected() {
     let canonical_hash = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
     let signature = sign_event_hash(&signing_key, &canonical_hash);
 
-    let (status, body) = post_event_with_identity(
-        app,
-        &account,
-        "post-revoke-sign",
-        key_id,
-        &signature,
-    )
-    .await;
+    let (status, body) =
+        post_event_with_identity(app, &account, "post-revoke-sign", key_id, &signature).await;
 
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"]["code"], "identity_key_revoked");

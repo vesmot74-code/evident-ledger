@@ -105,7 +105,11 @@ async fn create_test_account(pool: &sqlx::PgPool, plan_name: &str) -> TestAccoun
     }
 }
 
-async fn create_identity_key(pool: &sqlx::PgPool, account_id: Uuid, signing_key: &SigningKey) -> Uuid {
+async fn create_identity_key(
+    pool: &sqlx::PgPool,
+    account_id: Uuid,
+    signing_key: &SigningKey,
+) -> Uuid {
     let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
     let fingerprint = IdentityKeyRepository::fingerprint_from_public_key_hex(&public_key_hex)
         .expect("fingerprint");
@@ -258,7 +262,8 @@ async fn verify_without_identity_signature_returns_null() {
     let account = create_test_account(&pool, "identity").await;
     let app = v1_app(test_state(pool.clone()));
 
-    let (post_status, post_body) = post_event(app.clone(), &account, "no-identity", None, None).await;
+    let (post_status, post_body) =
+        post_event(app.clone(), &account, "no-identity", None, None).await;
     assert!(post_status.is_success(), "{post_status} {post_body}");
     let event_id = Uuid::parse_str(post_body["event_id"].as_str().unwrap()).unwrap();
 
@@ -278,7 +283,8 @@ async fn verify_with_valid_identity_signature_returns_valid_true() {
     let account = create_test_account(&pool, "identity").await;
     let signing_key = SigningKey::generate(&mut OsRng);
     let key_id = create_identity_key(&pool, account.account_id, &signing_key).await;
-    let event_id = submit_signed_event(&pool, &account, "valid-identity", &signing_key, key_id).await;
+    let event_id =
+        submit_signed_event(&pool, &account, "valid-identity", &signing_key, key_id).await;
 
     let app = v1_app(test_state(pool.clone()));
     let (status, body) = get_verify(app, &account.api_key, event_id).await;
@@ -351,8 +357,14 @@ async fn verify_historical_signature_stays_valid_for_unverified_key() {
     let account = create_test_account(&pool, "identity").await;
     let signing_key = SigningKey::generate(&mut OsRng);
     let key_id = create_identity_key(&pool, account.account_id, &signing_key).await;
-    let event_id =
-        submit_signed_event(&pool, &account, "unverified-historical", &signing_key, key_id).await;
+    let event_id = submit_signed_event(
+        &pool,
+        &account,
+        "unverified-historical",
+        &signing_key,
+        key_id,
+    )
+    .await;
 
     sqlx::query("ALTER TABLE identity_keys ALTER COLUMN verified_at DROP NOT NULL")
         .execute(&pool)
@@ -370,11 +382,9 @@ async fn verify_historical_signature_stays_valid_for_unverified_key() {
     assert_eq!(body["identity_signature"]["valid"], true);
     assert!(body["identity_signature"]["reason"].is_null());
 
-    let _ = sqlx::query(
-        "ALTER TABLE identity_keys ALTER COLUMN verified_at SET NOT NULL",
-    )
-    .execute(&pool)
-    .await;
+    let _ = sqlx::query("ALTER TABLE identity_keys ALTER COLUMN verified_at SET NOT NULL")
+        .execute(&pool)
+        .await;
     cleanup_account(&pool, account.account_id).await;
 }
 
@@ -385,10 +395,20 @@ async fn verify_missing_identity_key_returns_key_not_found() {
     let account = create_test_account(&pool, "identity").await;
     let signing_key = SigningKey::generate(&mut OsRng);
     let key_id = create_identity_key(&pool, account.account_id, &signing_key).await;
-    let event_id =
-        submit_signed_event(&pool, &account, "missing-key", &signing_key, key_id).await;
+    let event_id = submit_signed_event(&pool, &account, "missing-key", &signing_key, key_id).await;
 
-    let row = sqlx::query_as::<_, (Uuid, Uuid, Uuid, String, i64, Option<String>, Option<String>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            i64,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT event_id, chain_id, parent_event_id, file_hash, sequence,
                identity_signature, identity_fingerprint
@@ -419,13 +439,14 @@ async fn verify_missing_identity_key_returns_key_not_found() {
         &identity_event.file_hash,
     );
 
-    let result = evident_ledger::service::identity_verification::IdentityVerificationService::verify(
-        &pool,
-        &identity_event,
-        &canonical_hash,
-    )
-    .await
-    .expect("verify");
+    let result =
+        evident_ledger::service::identity_verification::IdentityVerificationService::verify(
+            &pool,
+            &identity_event,
+            &canonical_hash,
+        )
+        .await
+        .expect("verify");
 
     assert!(result.present);
     assert!(!result.valid);
@@ -443,7 +464,8 @@ async fn verify_existing_chain_and_file_contracts_unchanged() {
     let app = v1_app(test_state(pool.clone()));
 
     let file_hash = valid_file_hash("contract-check");
-    let (post_status, post_body) = post_event(app.clone(), &account, "contract-check", None, None).await;
+    let (post_status, post_body) =
+        post_event(app.clone(), &account, "contract-check", None, None).await;
     assert!(post_status.is_success());
     let event_id = Uuid::parse_str(post_body["event_id"].as_str().unwrap()).unwrap();
 
@@ -451,10 +473,19 @@ async fn verify_existing_chain_and_file_contracts_unchanged() {
     assert!(status.is_success(), "{status} {body}");
 
     assert!(body.get("chain").and_then(|v| v.get("valid")).is_some());
-    assert!(body.get("chain").and_then(|v| v.get("merkle_valid")).is_some());
-    assert!(body.get("chain").and_then(|v| v.get("signature_valid")).is_some());
+    assert!(body
+        .get("chain")
+        .and_then(|v| v.get("merkle_valid"))
+        .is_some());
+    assert!(body
+        .get("chain")
+        .and_then(|v| v.get("signature_valid"))
+        .is_some());
     assert!(body.get("file").and_then(|v| v.get("provided")).is_some());
-    assert!(body.get("file").and_then(|v| v.get("is_valid_file_hash")).is_some());
+    assert!(body
+        .get("file")
+        .and_then(|v| v.get("is_valid_file_hash"))
+        .is_some());
     assert_eq!(body["proof_status"], "anchored");
     assert!(body["identity_signature"].is_null());
 

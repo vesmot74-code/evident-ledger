@@ -1,7 +1,5 @@
 use crate::auth::AuthedAccount;
-use crate::service::account::{
-    change_dev_plan, get_key_status, get_usage, DevChangePlanError,
-};
+use crate::service::account::{change_dev_plan, get_key_status, get_usage, DevChangePlanError};
 use crate::service::capabilities::get_account_capabilities;
 use crate::state::AppState;
 use axum::{
@@ -121,7 +119,7 @@ async fn dev_change_plan_handler(
             DevChangePlanError::Database(err) => DevAccountApiError::Database(err.to_string()),
         })?;
 
-    Ok(Json(
-        serde_json::to_value(result).map_err(|e| DevAccountApiError::Database(e.to_string()))?,
-    ))
+    Ok(Json(serde_json::to_value(result).map_err(|e| {
+        DevAccountApiError::Database(e.to_string())
+    })?))
 }

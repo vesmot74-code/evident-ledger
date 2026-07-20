@@ -79,16 +79,9 @@ pub async fn revoke_identity_key(
     .await
     .map_err(|_| ApiError::Internal)?;
 
-    IdentityAuditService::append(
-        &mut *tx,
-        key.id,
-        "account",
-        account_id,
-        "revoked",
-        None,
-    )
-    .await
-    .map_err(map_audit_error)?;
+    IdentityAuditService::append(&mut *tx, key.id, "account", account_id, "revoked", None)
+        .await
+        .map_err(map_audit_error)?;
 
     tx.commit().await.map_err(|_| ApiError::Internal)?;
 

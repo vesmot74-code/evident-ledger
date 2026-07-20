@@ -60,10 +60,7 @@ struct TestAccount {
     chain_id: Uuid,
 }
 
-async fn create_test_account(
-    pool: &sqlx::PgPool,
-    plan_name: &str,
-) -> TestAccount {
+async fn create_test_account(pool: &sqlx::PgPool, plan_name: &str) -> TestAccount {
     let account_id = Uuid::new_v4();
     let plan = plan_id(pool, plan_name).await;
     sqlx::query(
@@ -182,7 +179,11 @@ async fn post_event(
     if let Some(sig) = identity_signature {
         body["identity_signature"] = sig;
     }
-    call(app, authed_request("POST", "/events", &account.api_key, body)).await
+    call(
+        app,
+        authed_request("POST", "/events", &account.api_key, body),
+    )
+    .await
 }
 
 async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
@@ -229,27 +230,24 @@ async fn event_without_identity_signature_succeeds() {
 
     assert!(status.is_success(), "expected success, got {status} {body}");
     let event_id = Uuid::parse_str(body["event_id"].as_str().unwrap()).unwrap();
-    let identity_key_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT identity_key_id FROM events WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event row");
-    let identity_signature: Option<String> = sqlx::query_scalar(
-        "SELECT identity_signature FROM events WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event row");
-    let identity_fingerprint: Option<String> = sqlx::query_scalar(
-        "SELECT identity_fingerprint FROM events WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event row");
+    let identity_key_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT identity_key_id FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event row");
+    let identity_signature: Option<String> =
+        sqlx::query_scalar("SELECT identity_signature FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event row");
+    let identity_fingerprint: Option<String> =
+        sqlx::query_scalar("SELECT identity_fingerprint FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event row");
     assert!(identity_key_id.is_none());
     assert!(identity_signature.is_none());
     assert!(identity_fingerprint.is_none());
@@ -267,8 +265,7 @@ async fn event_with_valid_identity_signature_persists_fields() {
 
     let event_id = Uuid::new_v4();
     let file_hash = valid_file_hash("with-identity");
-    let canonical_hash =
-        MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
+    let canonical_hash = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
     let signature = sign_event_hash(&signing_key, &canonical_hash);
 
     let app = v1_app(test_state(pool.clone()));
@@ -287,27 +284,24 @@ async fn event_with_valid_identity_signature_persists_fields() {
     assert!(status.is_success(), "expected success, got {status} {body}");
     assert_eq!(body["event_id"], event_id.to_string());
 
-    let stored_key_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT identity_key_id FROM events WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event row");
-    let stored_signature: Option<String> = sqlx::query_scalar(
-        "SELECT identity_signature FROM events WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event row");
-    let stored_fingerprint: Option<String> = sqlx::query_scalar(
-        "SELECT identity_fingerprint FROM events WHERE event_id = $1",
-    )
-    .bind(event_id)
-    .fetch_one(&pool)
-    .await
-    .expect("event row");
+    let stored_key_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT identity_key_id FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event row");
+    let stored_signature: Option<String> =
+        sqlx::query_scalar("SELECT identity_signature FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event row");
+    let stored_fingerprint: Option<String> =
+        sqlx::query_scalar("SELECT identity_fingerprint FROM events WHERE event_id = $1")
+            .bind(event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event row");
     assert_eq!(stored_key_id, Some(key_id));
     assert_eq!(stored_signature.as_deref(), Some(signature.as_str()));
     assert!(stored_fingerprint.is_some());
@@ -356,8 +350,7 @@ async fn event_with_revoked_key_returns_forbidden() {
 
     let event_id = Uuid::new_v4();
     let file_hash = valid_file_hash("revoked-key");
-    let canonical_hash =
-        MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
+    let canonical_hash = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
     let signature = sign_event_hash(&signing_key, &canonical_hash);
 
     let app = v1_app(test_state(pool.clone()));
@@ -411,8 +404,7 @@ async fn event_with_unverified_key_returns_forbidden() {
 
     let event_id = Uuid::new_v4();
     let file_hash = valid_file_hash("unverified-key");
-    let canonical_hash =
-        MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
+    let canonical_hash = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
     let signature = sign_event_hash(&signing_key, &canonical_hash);
 
     let app = v1_app(test_state(pool.clone()));
@@ -435,11 +427,9 @@ async fn event_with_unverified_key_returns_forbidden() {
         .bind(key_id)
         .execute(&pool)
         .await;
-    let _ = sqlx::query(
-        "ALTER TABLE identity_keys ALTER COLUMN verified_at SET NOT NULL",
-    )
-    .execute(&pool)
-    .await;
+    let _ = sqlx::query("ALTER TABLE identity_keys ALTER COLUMN verified_at SET NOT NULL")
+        .execute(&pool)
+        .await;
 
     cleanup_account(&pool, account.account_id).await;
 }
@@ -455,8 +445,7 @@ async fn event_with_foreign_key_returns_not_found() {
 
     let event_id = Uuid::new_v4();
     let file_hash = valid_file_hash("foreign-key");
-    let canonical_hash =
-        MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
+    let canonical_hash = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
     let signature = sign_event_hash(&owner_key, &canonical_hash);
 
     let app = v1_app(test_state(pool.clone()));
@@ -583,9 +572,7 @@ async fn legacy_event_without_identity_remains_server_verifiable() {
     .expect("events");
 
     let root = evident_ledger::merkle::MerkleTree::recompute_root_from_events(&events);
-    let public_key = common::test_app_state(pool.clone())
-        .signer
-        .public_key_hex();
+    let public_key = common::test_app_state(pool.clone()).signer.public_key_hex();
 
     assert!(verify_root(
         &row.chain_id.to_string(),

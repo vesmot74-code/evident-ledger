@@ -93,7 +93,10 @@ mod tests {
 
     #[test]
     fn empty_context_is_pending() {
-        assert_eq!(derive_proof_status(&ProofContext::default()), ProofStatus::Pending);
+        assert_eq!(
+            derive_proof_status(&ProofContext::default()),
+            ProofStatus::Pending
+        );
     }
 
     #[test]

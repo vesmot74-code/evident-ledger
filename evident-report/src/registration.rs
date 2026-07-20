@@ -142,10 +142,7 @@ pub fn generate_registration_snapshot(proof: &ProofData, output_path: &Path) -> 
         "This document records what the system registered at creation time.",
         9.0,
     );
-    ctx.raw_line(
-        "It is not an independent verification report.",
-        9.0,
-    );
+    ctx.raw_line("It is not an independent verification report.", 9.0);
     ctx.gap();
 
     ctx.heading("1. LEDGER REGISTRATION");
@@ -186,7 +183,10 @@ pub fn generate_registration_snapshot(proof: &ProofData, output_path: &Path) -> 
     ctx.heading("3. CRYPTOGRAPHIC PROOF");
     ctx.raw_line(&format!("Merkle Root: {}", proof.root), 9.0);
     ctx.raw_line(
-        &format!("Digital Signature: {}", &proof.signature[..64.min(proof.signature.len())]),
+        &format!(
+            "Digital Signature: {}",
+            &proof.signature[..64.min(proof.signature.len())]
+        ),
         9.0,
     );
     ctx.raw_line(

@@ -353,13 +353,12 @@ async fn lazy_evaluation_canceled_after_period_end_moves_to_free_none() {
     let _ = call(app, req).await;
 
     assert_eq!(account_plan_name(&pool, account.account_id).await, "free");
-    let status: String = sqlx::query_scalar(
-        "SELECT subscription_status FROM accounts WHERE account_id = $1",
-    )
-    .bind(account.account_id)
-    .fetch_one(&pool)
-    .await
-    .expect("status");
+    let status: String =
+        sqlx::query_scalar("SELECT subscription_status FROM accounts WHERE account_id = $1")
+            .bind(account.account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("status");
     assert_eq!(status, "none");
     cleanup_account(&pool, account.account_id).await;
 }
@@ -402,13 +401,12 @@ async fn concurrent_lazy_evaluation_applies_transition_once() {
     let _ = result_b.expect("task b");
 
     assert_eq!(account_plan_name(&pool, account.account_id).await, "free");
-    let pending: Option<Uuid> = sqlx::query_scalar(
-        "SELECT pending_tariff_plan_id FROM accounts WHERE account_id = $1",
-    )
-    .bind(account.account_id)
-    .fetch_one(&pool)
-    .await
-    .expect("pending");
+    let pending: Option<Uuid> =
+        sqlx::query_scalar("SELECT pending_tariff_plan_id FROM accounts WHERE account_id = $1")
+            .bind(account.account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("pending");
     assert!(pending.is_none());
     cleanup_account(&pool, account.account_id).await;
 }

@@ -50,10 +50,7 @@ fn dashboard_app(state: AppState) -> axum::Router {
             "/auth",
             auth::router(state.clone(), LoginRateLimitState::from_config(false)),
         )
-        .nest(
-            "/dashboard",
-            dashboard_ui::router(state),
-        )
+        .nest("/dashboard", dashboard_ui::router(state))
 }
 
 fn peer_request(
@@ -159,7 +156,11 @@ async fn create_test_account(pool: &sqlx::PgPool, plan_name: &str, label: &str) 
     }
 }
 
-async fn create_identity_key(pool: &sqlx::PgPool, account_id: Uuid, signing_key: &SigningKey) -> Uuid {
+async fn create_identity_key(
+    pool: &sqlx::PgPool,
+    account_id: Uuid,
+    signing_key: &SigningKey,
+) -> Uuid {
     let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
     let fingerprint = IdentityKeyRepository::fingerprint_from_public_key_hex(&public_key_hex)
         .expect("fingerprint");
@@ -208,21 +209,19 @@ async fn submit_signed_event(
 ) -> Uuid {
     let event_id = Uuid::new_v4();
     let file_hash = valid_file_hash(label);
-    let sequence: i64 = sqlx::query_scalar(
-        "SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE chain_id = $1",
-    )
-    .bind(account.chain_id)
-    .fetch_one(pool)
-    .await
-    .expect("sequence");
+    let sequence: i64 =
+        sqlx::query_scalar("SELECT COALESCE(MAX(sequence), 0) + 1 FROM events WHERE chain_id = $1")
+            .bind(account.chain_id)
+            .fetch_one(pool)
+            .await
+            .expect("sequence");
 
-    let parent_event_id: Option<Uuid> = sqlx::query_scalar(
-        "SELECT head_event_id FROM chains WHERE chain_id = $1",
-    )
-    .bind(account.chain_id)
-    .fetch_one(pool)
-    .await
-    .expect("head");
+    let parent_event_id: Option<Uuid> =
+        sqlx::query_scalar("SELECT head_event_id FROM chains WHERE chain_id = $1")
+            .bind(account.chain_id)
+            .fetch_one(pool)
+            .await
+            .expect("head");
 
     let parent = parent_event_id.unwrap_or(Uuid::nil());
     let canonical_hash = MerkleTree::build_leaf(sequence, &event_id, &parent, &file_hash);
@@ -336,9 +335,11 @@ async fn list_identity_keys_returns_keys() {
     let (status, body) = call_json(app, req).await;
 
     assert_eq!(status, StatusCode::OK);
-    assert!(body["keys"].as_array().unwrap().iter().any(|k| {
-        k["key_id"].as_str() == Some(key_id.to_string().as_str())
-    }));
+    assert!(body["keys"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|k| { k["key_id"].as_str() == Some(key_id.to_string().as_str()) }));
 
     cleanup_account(&pool, account.account_id).await;
 }
@@ -433,13 +434,12 @@ async fn list_identity_keys_events_count_matches_database() {
     submit_signed_event(&pool, &account, "dash-count-1", &signing_key, key_id).await;
     submit_signed_event(&pool, &account, "dash-count-2", &signing_key, key_id).await;
 
-    let db_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM events WHERE identity_key_id = $1",
-    )
-    .bind(key_id)
-    .fetch_one(&pool)
-    .await
-    .expect("count");
+    let db_count: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM events WHERE identity_key_id = $1")
+            .bind(key_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
 
     let app = v1_app(test_state(pool.clone()));
     let req = Request::builder()
@@ -458,7 +458,19 @@ async fn list_identity_keys_events_count_matches_database() {
 }
 
 async fn expected_signature_valid(pool: &sqlx::PgPool, event_id: Uuid) -> bool {
-    let row = sqlx::query_as::<_, (Uuid, Uuid, Uuid, String, i64, Option<Uuid>, Option<String>, Option<String>)>(
+    let row = sqlx::query_as::<
+        _,
+        (
+            Uuid,
+            Uuid,
+            Uuid,
+            String,
+            i64,
+            Option<Uuid>,
+            Option<String>,
+            Option<String>,
+        ),
+    >(
         r#"
         SELECT event_id, chain_id, parent_event_id, file_hash, sequence,
                identity_key_id, identity_signature, identity_fingerprint
@@ -558,7 +570,12 @@ async fn dashboard_identity_page_requires_session() {
     let response = svc.oneshot(req).await.expect("response");
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
     assert_eq!(
-        response.headers().get(header::LOCATION).unwrap().to_str().unwrap(),
+        response
+            .headers()
+            .get(header::LOCATION)
+            .unwrap()
+            .to_str()
+            .unwrap(),
         "/login"
     );
 }
@@ -612,7 +629,9 @@ async fn list_key_events_pagination_cursor_works_at_boundary() {
 
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/identity/keys/{key_id}/events?limit=2&cursor={cursor}"))
+        .uri(format!(
+            "/identity/keys/{key_id}/events?limit=2&cursor={cursor}"
+        ))
         .header("X-API-KEY", &account.api_key)
         .body(Body::empty())
         .expect("request");
@@ -623,14 +642,14 @@ async fn list_key_events_pagination_cursor_works_at_boundary() {
 
     let last_event_id = Uuid::parse_str(page2["events"][0]["event_id"].as_str().unwrap()).unwrap();
     let last_sequence = page2["events"][0]["sequence"].as_i64().unwrap();
-    let tail_cursor = evident_ledger::service::identity_dashboard::encode_cursor(
-        last_sequence,
-        last_event_id,
-    );
+    let tail_cursor =
+        evident_ledger::service::identity_dashboard::encode_cursor(last_sequence, last_event_id);
 
     let req = Request::builder()
         .method("GET")
-        .uri(format!("/identity/keys/{key_id}/events?limit=2&cursor={tail_cursor}"))
+        .uri(format!(
+            "/identity/keys/{key_id}/events?limit=2&cursor={tail_cursor}"
+        ))
         .header("X-API-KEY", &account.api_key)
         .body(Body::empty())
         .expect("request");

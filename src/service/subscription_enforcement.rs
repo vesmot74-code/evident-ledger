@@ -92,10 +92,7 @@ pub fn write_blocked_by_subscription(state: &AccountBillingState) -> bool {
     state.subscription_status == "past_due"
 }
 
-pub async fn usage_limit_exceeded(
-    pool: &PgPool,
-    account_id: Uuid,
-) -> Result<bool, sqlx::Error> {
+pub async fn usage_limit_exceeded(pool: &PgPool, account_id: Uuid) -> Result<bool, sqlx::Error> {
     let row = sqlx::query(
         r#"
         SELECT

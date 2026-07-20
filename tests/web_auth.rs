@@ -140,13 +140,12 @@ async fn register_new_email_creates_account_with_password_hash() {
     assert_eq!(status, StatusCode::CREATED);
     assert_eq!(body["plan"], "free");
 
-    let hash: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash FROM accounts WHERE email = $1",
-    )
-    .bind(&email)
-    .fetch_one(&pool)
-    .await
-    .expect("hash");
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM accounts WHERE email = $1")
+            .bind(&email)
+            .fetch_one(&pool)
+            .await
+            .expect("hash");
     assert!(hash.is_some());
     cleanup_email(&pool, &email).await;
 }
@@ -236,13 +235,12 @@ async fn set_password_with_api_key_succeeds_for_api_only_account() {
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["message"], "Password set successfully");
 
-    let hash: Option<String> = sqlx::query_scalar(
-        "SELECT password_hash FROM accounts WHERE account_id = $1",
-    )
-    .bind(registered.account_id)
-    .fetch_one(&pool)
-    .await
-    .expect("hash");
+    let hash: Option<String> =
+        sqlx::query_scalar("SELECT password_hash FROM accounts WHERE account_id = $1")
+            .bind(registered.account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("hash");
     assert!(hash.is_some());
     cleanup_email(&pool, &email).await;
 }
@@ -337,7 +335,9 @@ async fn login_with_valid_password_sets_cookie() {
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["email"], email);
-    assert!(cookies.iter().any(|c| c.starts_with(&format!("{SESSION_COOKIE_NAME}="))));
+    assert!(cookies
+        .iter()
+        .any(|c| c.starts_with(&format!("{SESSION_COOKIE_NAME}="))));
     cleanup_email(&pool, &email).await;
 }
 
@@ -452,11 +452,7 @@ async fn me_with_valid_session_returns_profile() {
     .await;
     let cookie = cookie_header_from_set_cookie(&cookies).expect("cookie");
 
-    let (status, body, _) = call(
-        app,
-        peer_request("GET", "/me", None, None, Some(&cookie)),
-    )
-    .await;
+    let (status, body, _) = call(app, peer_request("GET", "/me", None, None, Some(&cookie))).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["email"], email);
@@ -509,11 +505,7 @@ async fn logout_deletes_session() {
     .await;
     assert_eq!(status, StatusCode::NO_CONTENT);
 
-    let (status, body, _) = call(
-        app,
-        peer_request("GET", "/me", None, None, Some(&cookie)),
-    )
-    .await;
+    let (status, body, _) = call(app, peer_request("GET", "/me", None, None, Some(&cookie))).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"]["code"], "unauthorized");
     cleanup_email(&pool, &email).await;
@@ -558,11 +550,7 @@ async fn me_with_expired_session_returns_unauthorized() {
         .await
         .expect("expire");
 
-    let (status, body, _) = call(
-        app,
-        peer_request("GET", "/me", None, None, Some(&cookie)),
-    )
-    .await;
+    let (status, body, _) = call(app, peer_request("GET", "/me", None, None, Some(&cookie))).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
     assert_eq!(body["error"]["code"], "unauthorized");
     cleanup_email(&pool, &email).await;

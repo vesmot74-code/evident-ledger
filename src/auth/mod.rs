@@ -6,6 +6,7 @@ pub mod web_me;
 
 pub use web_auth::router as web_auth_router;
 
+use crate::state::AppState;
 use axum::{
     async_trait,
     extract::FromRequestParts,
@@ -15,7 +16,6 @@ use axum::{
 };
 use serde_json::json;
 use sqlx::Row;
-use crate::state::AppState;
 
 #[derive(Clone)]
 pub struct AuthedAccount {

@@ -25,9 +25,7 @@ async fn resolve_session_user(
 ) -> Option<SessionUser> {
     let cookie_header = cookie_header?;
     let token = parse_session_cookie(cookie_header)?;
-    let account_id = resolve_session_account_id(&state.db, &token)
-        .await
-        .ok()??;
+    let account_id = resolve_session_account_id(&state.db, &token).await.ok()??;
     Some(SessionUser { account_id })
 }
 
@@ -73,7 +71,10 @@ pub async fn session_ui_auth_middleware(
 impl FromRequestParts<AppState> for SessionUser {
     type Rejection = ApiError;
 
-    async fn from_request_parts(parts: &mut Parts, _state: &AppState) -> Result<Self, Self::Rejection> {
+    async fn from_request_parts(
+        parts: &mut Parts,
+        _state: &AppState,
+    ) -> Result<Self, Self::Rejection> {
         parts
             .extensions
             .get::<SessionUser>()

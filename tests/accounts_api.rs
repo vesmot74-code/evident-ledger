@@ -48,7 +48,12 @@ fn rate_limits(register_max: u32) -> PublicRateLimitState {
     }
 }
 
-fn peer_request(method: &str, uri: &str, body: Option<Value>, api_key: Option<&str>) -> Request<Body> {
+fn peer_request(
+    method: &str,
+    uri: &str,
+    body: Option<Value>,
+    api_key: Option<&str>,
+) -> Request<Body> {
     let mut builder = Request::builder().method(method).uri(uri);
     if let Some(key) = api_key {
         builder = builder.header("X-API-KEY", key);
@@ -61,11 +66,10 @@ fn peer_request(method: &str, uri: &str, body: Option<Value>, api_key: Option<&s
         None => Body::empty(),
     };
     let mut req = builder.body(body).expect("request");
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(203, 0, 113, 50)),
-            0,
-        )));
+    req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(203, 0, 113, 50)),
+        0,
+    )));
     req
 }
 
@@ -96,12 +100,11 @@ async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
 }
 
 async fn cleanup_email(pool: &sqlx::PgPool, email: &str) {
-    if let Ok(Some(account_id)) = sqlx::query_scalar::<_, Uuid>(
-        "SELECT account_id FROM accounts WHERE email = $1",
-    )
-    .bind(email)
-    .fetch_optional(pool)
-    .await
+    if let Ok(Some(account_id)) =
+        sqlx::query_scalar::<_, Uuid>("SELECT account_id FROM accounts WHERE email = $1")
+            .bind(email)
+            .fetch_optional(pool)
+            .await
     {
         cleanup_account(pool, account_id).await;
     }
@@ -161,12 +164,11 @@ async fn register_duplicate_email_returns_conflict() {
     assert_eq!(second, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "conflict");
 
-    if let Ok(account_id) = sqlx::query_scalar::<_, Uuid>(
-        "SELECT account_id FROM accounts WHERE email = $1",
-    )
-    .bind(&email)
-    .fetch_one(&pool)
-    .await
+    if let Ok(account_id) =
+        sqlx::query_scalar::<_, Uuid>("SELECT account_id FROM accounts WHERE email = $1")
+            .bind(&email)
+            .fetch_one(&pool)
+            .await
     {
         cleanup_account(&pool, account_id).await;
     }
@@ -217,11 +219,7 @@ async fn accounts_me_requires_api_key() {
     let pool = test_pool().await;
     let app = accounts::router(test_state(pool), rate_limits(100));
 
-    let (status, _) = response_json(
-        app,
-        peer_request("GET", "/me", None, None),
-    )
-    .await;
+    let (status, _) = response_json(app, peer_request("GET", "/me", None, None)).await;
 
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 }
@@ -236,11 +234,8 @@ async fn accounts_me_returns_profile_with_valid_key() {
     let (_, registered) = register_account(&app, &email).await;
     let api_key = registered["api_key"].as_str().unwrap();
 
-    let (status, body) = response_json(
-        app.clone(),
-        peer_request("GET", "/me", None, Some(api_key)),
-    )
-    .await;
+    let (status, body) =
+        response_json(app.clone(), peer_request("GET", "/me", None, Some(api_key))).await;
 
     assert_eq!(status, StatusCode::OK);
     assert_eq!(body["email"], email);
@@ -275,7 +270,10 @@ async fn list_api_keys_returns_prefixes_only() {
     assert!(body["api_keys"].as_array().unwrap().len() >= 1);
     let serialized = body.to_string();
     assert!(!serialized.contains(&full_key[api_key::API_KEY_PREFIX.len()..]));
-    assert!(body["api_keys"][0]["key_prefix"].as_str().unwrap().starts_with("ev_"));
+    assert!(body["api_keys"][0]["key_prefix"]
+        .as_str()
+        .unwrap()
+        .starts_with("ev_"));
 
     cleanup_account(
         &pool,
@@ -350,16 +348,18 @@ async fn revoke_own_api_key_returns_no_content() {
 
     let (status, _) = response_json(
         app.clone(),
-        peer_request("GET", "/me", None, Some(created["api_key"].as_str().unwrap())),
+        peer_request(
+            "GET",
+            "/me",
+            None,
+            Some(created["api_key"].as_str().unwrap()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);
 
-    let (status, _) = response_json(
-        app,
-        peer_request("GET", "/me", None, Some(&primary_key)),
-    )
-    .await;
+    let (status, _) =
+        response_json(app, peer_request("GET", "/me", None, Some(&primary_key))).await;
     assert_eq!(status, StatusCode::OK);
 
     cleanup_account(
@@ -471,13 +471,12 @@ async fn revoked_api_key_is_rejected() {
     )
     .await;
 
-    let primary_key_id = sqlx::query_scalar::<_, Uuid>(
-        "SELECT api_key_id FROM api_keys WHERE key_hash = $1",
-    )
-    .bind(api_key::hash_api_key_for_lookup(&primary_key))
-    .fetch_one(&pool)
-    .await
-    .expect("primary key id");
+    let primary_key_id =
+        sqlx::query_scalar::<_, Uuid>("SELECT api_key_id FROM api_keys WHERE key_hash = $1")
+            .bind(api_key::hash_api_key_for_lookup(&primary_key))
+            .fetch_one(&pool)
+            .await
+            .expect("primary key id");
 
     let (status, _) = response_json(
         app.clone(),
@@ -500,7 +499,12 @@ async fn revoked_api_key_is_rejected() {
 
     let (status, _) = response_json(
         app,
-        peer_request("GET", "/me", None, Some(created["api_key"].as_str().unwrap())),
+        peer_request(
+            "GET",
+            "/me",
+            None,
+            Some(created["api_key"].as_str().unwrap()),
+        ),
     )
     .await;
     assert_eq!(status, StatusCode::OK);
@@ -552,7 +556,9 @@ async fn list_api_keys_shows_legacy_placeholder_for_pre_stage81_rows() {
         .map(|row| row["key_prefix"].as_str().unwrap())
         .collect();
     assert!(prefixes.contains(&api_key::LEGACY_KEY_PREFIX_DISPLAY));
-    assert!(!prefixes.iter().any(|p| *p == api_key::LEGACY_KEY_PREFIX_STORED));
+    assert!(!prefixes
+        .iter()
+        .any(|p| *p == api_key::LEGACY_KEY_PREFIX_STORED));
     assert!(!prefixes.iter().any(|p| p.starts_with("ev_legacy")));
 
     let (status, _) = response_json(
@@ -590,11 +596,8 @@ async fn list_api_keys_normalizes_ev_legacy_sentinel_from_first_migration() {
     .await
     .expect("simulate first migration backfill");
 
-    let (status, body) = response_json(
-        app,
-        peer_request("GET", "/api-keys", None, Some(new_key)),
-    )
-    .await;
+    let (status, body) =
+        response_json(app, peer_request("GET", "/api-keys", None, Some(new_key))).await;
     assert_eq!(status, StatusCode::OK);
     assert_eq!(
         body["api_keys"][0]["key_prefix"].as_str().unwrap(),

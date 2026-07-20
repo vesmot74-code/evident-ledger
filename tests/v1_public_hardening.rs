@@ -5,7 +5,9 @@ mod common;
 use axum::body::Body;
 use axum::extract::ConnectInfo;
 use axum::http::{Request, StatusCode as HttpStatusCode};
-use evident_ledger::api::public_verify::{public_router, verify_by_hash, verify_by_hash_with_lookup};
+use evident_ledger::api::public_verify::{
+    public_router, verify_by_hash, verify_by_hash_with_lookup,
+};
 use evident_ledger::middleware::public_rate_limit::{
     public_rate_limit_middleware, PublicRateLimitMiddlewareState,
 };
@@ -15,7 +17,9 @@ use evident_ledger::public_verification_audit::{
     enable_test_capture, take_test_events, PublicVerificationOutcome,
     PublicVerificationRateLimitAction, PublicVerificationRequestType,
 };
-use evident_ledger::public_verify_validation::{validate_public_file_hash, validate_public_proof_id};
+use evident_ledger::public_verify_validation::{
+    validate_public_file_hash, validate_public_proof_id,
+};
 use evident_ledger::state::rate_limiter::{
     FixedWindowLimiter, PublicRateLimitState, RateLimitConfig,
 };
@@ -62,11 +66,10 @@ fn peer_request(uri: &str) -> Request<Body> {
         .uri(uri)
         .body(Body::empty())
         .expect("request");
-    req.extensions_mut()
-        .insert(ConnectInfo(SocketAddr::new(
-            IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
-            0,
-        )));
+    req.extensions_mut().insert(ConnectInfo(SocketAddr::new(
+        IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)),
+        0,
+    )));
     req
 }
 
@@ -91,7 +94,10 @@ fn assert_invalid_request_envelope(body: &Value) {
     assert_eq!(body["error"]["code"], "invalid_request");
     assert_eq!(body["error"]["message"], "Invalid request");
     assert!(body["error"]["request_id"].is_string());
-    let message = body["error"]["message"].as_str().unwrap_or_default().to_lowercase();
+    let message = body["error"]["message"]
+        .as_str()
+        .unwrap_or_default()
+        .to_lowercase();
     for forbidden in ["hex", "64", "length", "format", "expected"] {
         assert!(
             !message.contains(forbidden),
@@ -100,7 +106,10 @@ fn assert_invalid_request_envelope(body: &Value) {
     }
 }
 
-fn assert_audit_forbidden_fields(events: &[evident_ledger::public_verification_audit::PublicVerificationAuditEvent], probe_hash: &str) {
+fn assert_audit_forbidden_fields(
+    events: &[evident_ledger::public_verification_audit::PublicVerificationAuditEvent],
+    probe_hash: &str,
+) {
     for event in events {
         let serialized = serde_json::to_string(event).expect("audit json");
         assert!(!serialized.contains("file_hash"));
@@ -122,24 +131,26 @@ async fn hash_format_validation_rejects_invalid_inputs() {
     let pool = PgPoolOptions::new()
         .connect_lazy("postgres://127.0.0.1:1/unreachable")
         .expect("lazy");
-    let app = public_router(test_state_with_pool(pool.clone()), test_rate_limits(100, 60));
+    let app = public_router(
+        test_state_with_pool(pool.clone()),
+        test_rate_limits(100, 60),
+    );
 
     for uri in [
         "/verify?file_hash=abc",
         &format!("/verify?file_hash={}", "a".repeat(63)),
         &format!("/verify?file_hash={}", "b".repeat(65)),
     ] {
-        assert_eq!(status_for(app.clone(), uri).await, HttpStatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_for(app.clone(), uri).await,
+            HttpStatusCode::BAD_REQUEST
+        );
         assert_invalid_request_envelope(&body_for(app.clone(), uri).await);
     }
 
-    let sql_injection = verify_by_hash(
-        &pool,
-        Some("'; DROP TABLE events;--".into()),
-        None,
-    )
-    .await
-    .expect("validation");
+    let sql_injection = verify_by_hash(&pool, Some("'; DROP TABLE events;--".into()), None)
+        .await
+        .expect("validation");
     assert_eq!(sql_injection.status(), HttpStatusCode::BAD_REQUEST);
     let bytes = axum::body::to_bytes(sql_injection.into_body(), usize::MAX)
         .await
@@ -174,9 +185,7 @@ async fn public_proof_id_format_validation_rejects_invalid() {
 
     let invalid = status_for(app.clone(), "/verify/not-a-valid-id/certificate.pdf").await;
     assert_eq!(invalid, HttpStatusCode::BAD_REQUEST);
-    assert_invalid_request_envelope(
-        &body_for(app, "/verify/not-a-valid-id/certificate.pdf").await,
-    );
+    assert_invalid_request_envelope(&body_for(app, "/verify/not-a-valid-id/certificate.pdf").await);
 }
 
 #[test]
@@ -204,8 +213,14 @@ async fn rate_limit_runs_before_format_validation() {
         .expect("lazy");
     let app = public_router(test_state_with_pool(pool), test_rate_limits(1, 60));
     let uri = "/verify?file_hash=not-a-valid-hash";
-    assert_ne!(status_for(app.clone(), uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
-    assert_eq!(status_for(app, uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_ne!(
+        status_for(app.clone(), uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
+    assert_eq!(
+        status_for(app, uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -216,9 +231,15 @@ async fn invalid_requests_count_toward_rate_limit() {
     let app = public_router(test_state_with_pool(pool), test_rate_limits(3, 60));
     let uri = "/verify?file_hash=bad";
     for _ in 0..3 {
-        assert_eq!(status_for(app.clone(), uri).await, HttpStatusCode::BAD_REQUEST);
+        assert_eq!(
+            status_for(app.clone(), uri).await,
+            HttpStatusCode::BAD_REQUEST
+        );
     }
-    assert_eq!(status_for(app, uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        status_for(app, uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
 }
 
 #[tokio::test]
@@ -252,8 +273,14 @@ async fn audit_log_presence_and_outcomes() {
     let app = public_router(test_state_with_pool(pool), test_rate_limits(1, 60));
     let uri = "/verify?file_hash=bad";
 
-    assert_eq!(status_for(app.clone(), uri).await, HttpStatusCode::BAD_REQUEST);
-    assert_eq!(status_for(app.clone(), uri).await, HttpStatusCode::TOO_MANY_REQUESTS);
+    assert_eq!(
+        status_for(app.clone(), uri).await,
+        HttpStatusCode::BAD_REQUEST
+    );
+    assert_eq!(
+        status_for(app.clone(), uri).await,
+        HttpStatusCode::TOO_MANY_REQUESTS
+    );
 
     let probe = canonical_hash("audit-not-found");
     let metadata = PublicRequestMetadata {
@@ -274,9 +301,9 @@ async fn audit_log_presence_and_outcomes() {
             && e.outcome == PublicVerificationOutcome::NotFound
             && e.rate_limit_action == PublicVerificationRateLimitAction::Allowed
     }));
-    assert!(events.iter().any(|e| {
-        e.outcome == PublicVerificationOutcome::InvalidRequest
-    }));
+    assert!(events
+        .iter()
+        .any(|e| { e.outcome == PublicVerificationOutcome::InvalidRequest }));
     assert!(events.iter().any(|e| {
         e.outcome == PublicVerificationOutcome::RateLimited
             && e.rate_limit_action == PublicVerificationRateLimitAction::Blocked
@@ -317,7 +344,9 @@ async fn audit_success_path_via_handler() {
     .expect("success");
 
     let events = take_test_events();
-    assert!(events.iter().any(|e| e.outcome == PublicVerificationOutcome::Success));
+    assert!(events
+        .iter()
+        .any(|e| e.outcome == PublicVerificationOutcome::Success));
     assert_audit_forbidden_fields(&events, &hash);
 }
 
