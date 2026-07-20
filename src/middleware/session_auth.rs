@@ -19,7 +19,8 @@ pub struct SessionUser {
     pub account_id: Uuid,
 }
 
-async fn resolve_session_user(
+/// Resolve a valid session from the Cookie header, if present.
+pub async fn optional_session_user(
     state: &AppState,
     cookie_header: Option<&str>,
 ) -> Option<SessionUser> {
@@ -39,7 +40,7 @@ pub async fn session_auth_middleware(
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok());
 
-    let Some(user) = resolve_session_user(&state, cookie_header).await else {
+    let Some(user) = optional_session_user(&state, cookie_header).await else {
         return ApiError::Unauthorized.into_response();
     };
 
@@ -59,7 +60,7 @@ pub async fn session_ui_auth_middleware(
         .get(header::COOKIE)
         .and_then(|value| value.to_str().ok());
 
-    let Some(user) = resolve_session_user(&state, cookie_header).await else {
+    let Some(user) = optional_session_user(&state, cookie_header).await else {
         return Redirect::to("/login").into_response();
     };
 

@@ -68,13 +68,12 @@ async fn main() {
     let dashboard_api = api::dashboard::router(state.clone());
     let dashboard_billing = api::dashboard_billing::router(state.clone());
 
+    let landing = axum::Router::new()
+        .route("/", axum::routing::get(web::landing::index))
+        .with_state(state.clone());
+
     let app = axum::Router::new()
-        .route(
-            "/",
-            axum::routing::get(|| async {
-                axum::response::Html(include_str!("../static/index.html"))
-            }),
-        )
+        .merge(landing)
         .route(
             "/verify-ui",
             axum::routing::get(|| async {
