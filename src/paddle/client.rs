@@ -54,6 +54,41 @@ impl HttpPaddleClient {
             .bearer_auth(&self.api_key)
             .header("Content-Type", "application/json")
     }
+
+    async fn find_customer_id_by_email(&self, email: &str) -> Result<String, PaddleClientError> {
+        let response = self
+            .auth_request(reqwest::Method::GET, "/customers")
+            .query(&[("email", email)])
+            .send()
+            .await
+            .map_err(map_reqwest_error)?;
+
+        let status = response.status();
+        let body = response
+            .text()
+            .await
+            .map_err(|err| PaddleClientError::NetworkError(err.to_string()))?;
+        if !status.is_success() {
+            let message = format_paddle_error_message(status.as_u16(), &body);
+            tracing::error!(
+                status = status.as_u16(),
+                body = %body,
+                message = %message,
+                "paddle api error"
+            );
+            return Err(PaddleClientError::ApiError {
+                status: status.as_u16(),
+                message,
+            });
+        }
+
+        let json: serde_json::Value =
+            serde_json::from_str(&body).map_err(|_| PaddleClientError::InvalidResponse)?;
+        json.pointer("/data/0/id")
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+            .ok_or(PaddleClientError::InvalidResponse)
+    }
 }
 
 #[async_trait]
@@ -66,7 +101,15 @@ impl PaddleClient for HttpPaddleClient {
             .await
             .map_err(map_reqwest_error)?;
 
-        parse_customer_response(response).await
+        match parse_customer_response(response).await {
+            Ok(id) => Ok(id),
+            Err(PaddleClientError::ApiError { status, message })
+                if status == 409 || message.contains("conflicts with customer") =>
+            {
+                self.find_customer_id_by_email(email).await
+            }
+            Err(err) => Err(err),
+        }
     }
 
     async fn create_checkout(

@@ -46,6 +46,8 @@ async-trait = "0.1"
 [dependencies.evident-report]
 path = "evident-report"
 
+[dev-dependencies]
+wiremock = "0.6"
 
 [[bin]]
 name = "evident-ledger"
