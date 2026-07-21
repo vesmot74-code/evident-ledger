@@ -79,6 +79,8 @@ async fn index_handler(State(state): State<AppState>, session: SessionUser) -> R
         percentage: format_percentage(percentage),
         can_upgrade: !available_plans.is_empty(),
         available_plans,
+        paddle_client_token: state.config.paddle_client_token.clone(),
+        paddle_environment: state.config.paddle_environment().to_string(),
     })
 }
 
@@ -101,6 +103,8 @@ async fn subscription_handler(State(state): State<AppState>, session: SessionUse
         pending_plan_display: format_optional_text(snapshot.pending_plan_display_name.as_deref()),
         can_upgrade: !available_plans.is_empty(),
         available_plans,
+        paddle_client_token: state.config.paddle_client_token.clone(),
+        paddle_environment: state.config.paddle_environment().to_string(),
     })
 }
 

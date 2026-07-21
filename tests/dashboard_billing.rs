@@ -12,7 +12,6 @@ use evident_ledger::state::rate_limiter::LoginRateLimitState;
 use evident_ledger::state::AppState;
 use evident_ledger::web::dashboard as dashboard_ui;
 use serde_json::{json, Value};
-use sqlx::postgres::PgPoolOptions;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::{Arc, Mutex};
 use tower::util::ServiceExt;
@@ -25,15 +24,7 @@ fn tariff_plan_test_lock() -> std::sync::MutexGuard<'static, ()> {
 }
 
 async fn test_pool() -> sqlx::PgPool {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(&database_url)
-        .await
-        .expect("db");
-    sqlx::migrate!().run(&pool).await.expect("migrate");
-    pool
+    common::test_pool().await
 }
 
 fn billing_app(state: AppState) -> axum::Router {
@@ -270,6 +261,10 @@ async fn post_dashboard_upgrade_with_session_returns_checkout_url() {
         .as_str()
         .unwrap()
         .starts_with("https://paddle.example/checkout/"));
+    assert_eq!(
+        body["transaction_id"].as_str().unwrap(),
+        "txn_mock_pri_legal_test"
+    );
     cleanup_email(&pool, &email).await;
 }
 
@@ -483,6 +478,10 @@ async fn post_dashboard_upgrade_vault_plan_returns_checkout_url() {
         .as_str()
         .unwrap()
         .contains("pri_vault_test"));
+    assert_eq!(
+        body["transaction_id"].as_str().unwrap(),
+        "txn_mock_pri_vault_test"
+    );
     let (_, price_id) = paddle.last_checkout().expect("checkout");
     assert_eq!(price_id, "pri_vault_test");
     cleanup_email(&pool, &email).await;

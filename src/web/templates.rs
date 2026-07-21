@@ -11,6 +11,8 @@ pub struct DashboardIndexTemplate {
     pub percentage: String,
     pub can_upgrade: bool,
     pub available_plans: Vec<PlanPreview>,
+    pub paddle_client_token: String,
+    pub paddle_environment: String,
 }
 
 #[derive(Template)]
@@ -23,6 +25,8 @@ pub struct SubscriptionTemplate {
     pub pending_plan_display: String,
     pub can_upgrade: bool,
     pub available_plans: Vec<PlanPreview>,
+    pub paddle_client_token: String,
+    pub paddle_environment: String,
 }
 
 #[derive(Template)]

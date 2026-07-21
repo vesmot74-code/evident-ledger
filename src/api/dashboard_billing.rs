@@ -37,6 +37,7 @@ struct UpgradeRequest {
 #[derive(Debug, Serialize)]
 struct UpgradeResponse {
     checkout_url: String,
+    transaction_id: String,
 }
 
 #[derive(Debug, Serialize)]
@@ -70,9 +71,14 @@ async fn upgrade_handler(
     )
     .await
     {
-        Ok(checkout_url) => {
-            (StatusCode::OK, Json(UpgradeResponse { checkout_url })).into_response()
-        }
+        Ok(session) => (
+            StatusCode::OK,
+            Json(UpgradeResponse {
+                checkout_url: session.checkout_url,
+                transaction_id: session.transaction_id,
+            }),
+        )
+            .into_response(),
         Err(BillingError::AlreadyActive) => (
             StatusCode::CONFLICT,
             Json(AlreadyActiveResponse {

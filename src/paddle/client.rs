@@ -17,6 +17,12 @@ pub enum PaddleClientError {
     InvalidResponse,
 }
 
+#[derive(Debug, Clone)]
+pub struct CheckoutSession {
+    pub checkout_url: String,
+    pub transaction_id: String,
+}
+
 #[async_trait]
 pub trait PaddleClient: Send + Sync {
     async fn create_customer(&self, email: &str) -> Result<String, PaddleClientError>;
@@ -24,7 +30,7 @@ pub trait PaddleClient: Send + Sync {
         &self,
         customer_id: &str,
         price_id: &str,
-    ) -> Result<String, PaddleClientError>;
+    ) -> Result<CheckoutSession, PaddleClientError>;
 }
 
 pub struct HttpPaddleClient {
@@ -116,7 +122,7 @@ impl PaddleClient for HttpPaddleClient {
         &self,
         customer_id: &str,
         price_id: &str,
-    ) -> Result<String, PaddleClientError> {
+    ) -> Result<CheckoutSession, PaddleClientError> {
         let response = self
             .auth_request(reqwest::Method::POST, "/transactions")
             .json(&json!({
@@ -196,7 +202,7 @@ impl PaddleClient for MockPaddleClient {
         &self,
         customer_id: &str,
         price_id: &str,
-    ) -> Result<String, PaddleClientError> {
+    ) -> Result<CheckoutSession, PaddleClientError> {
         if let Ok(mut last) = self.last_checkout.lock() {
             *last = Some((customer_id.to_string(), price_id.to_string()));
         }
@@ -209,9 +215,13 @@ impl PaddleClient for MockPaddleClient {
                 message: "checkout unavailable".into(),
             });
         }
-        Ok(format!(
-            "https://paddle.example/checkout/{customer_id}/{price_id}"
-        ))
+        let transaction_id = format!("txn_mock_{price_id}");
+        Ok(CheckoutSession {
+            checkout_url: format!(
+                "https://paddle.example/checkout/{customer_id}/{price_id}?_ptxn={transaction_id}"
+            ),
+            transaction_id,
+        })
     }
 }
 
@@ -288,7 +298,9 @@ fn extract_checkout_url(json: &serde_json::Value) -> Option<String> {
     None
 }
 
-async fn parse_checkout_response(response: reqwest::Response) -> Result<String, PaddleClientError> {
+async fn parse_checkout_response(
+    response: reqwest::Response,
+) -> Result<CheckoutSession, PaddleClientError> {
     let status = response.status();
     let body = response
         .text()
@@ -309,9 +321,18 @@ async fn parse_checkout_response(response: reqwest::Response) -> Result<String, 
     }
     let json: serde_json::Value =
         serde_json::from_str(&body).map_err(|_| PaddleClientError::InvalidResponse)?;
-    match extract_checkout_url(&json) {
-        Some(url) => Ok(url),
-        None => {
+    let transaction_id = json
+        .pointer("/data/id")
+        .and_then(|value| value.as_str())
+        .filter(|value| !value.is_empty())
+        .map(str::to_string);
+    let checkout_url = extract_checkout_url(&json);
+    match (checkout_url, transaction_id) {
+        (Some(checkout_url), Some(transaction_id)) => Ok(CheckoutSession {
+            checkout_url,
+            transaction_id,
+        }),
+        _ => {
             tracing::error!(
                 status = status.as_u16(),
                 body = %body,

@@ -3,7 +3,9 @@
 use sqlx::{PgPool, Postgres, Row, Transaction};
 use uuid::Uuid;
 
-use crate::paddle::client::{paddle_client_error_is_unavailable, PaddleClient, PaddleClientError};
+use crate::paddle::client::{
+    paddle_client_error_is_unavailable, CheckoutSession, PaddleClient, PaddleClientError,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BillingError {
@@ -108,7 +110,7 @@ pub async fn create_checkout(
     paddle: &dyn PaddleClient,
     account_id: Uuid,
     plan_name: &str,
-) -> Result<String, BillingError> {
+) -> Result<CheckoutSession, BillingError> {
     let price_id = resolve_purchasable_plan(db, plan_name).await?;
 
     let customer_id: Option<String> = sqlx::query_scalar(
@@ -141,7 +143,7 @@ pub async fn initiate_upgrade(
     account_id: Uuid,
     email: &str,
     plan_name: &str,
-) -> Result<String, BillingError> {
+) -> Result<CheckoutSession, BillingError> {
     if has_active_subscription(db, account_id).await? {
         return Err(BillingError::AlreadyActive);
     }
@@ -301,7 +303,7 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         dotenvy::dotenv().ok();
-        let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+        let database_url = crate::db::require_test_database_url();
         sqlx::postgres::PgPoolOptions::new()
             .max_connections(5)
             .connect(&database_url)
