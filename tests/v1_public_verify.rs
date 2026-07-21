@@ -1,5 +1,6 @@
 //! Integration tests for GET /public/verify (Stage 6.3 / 6.4).
 
+mod common;
 use evident_ledger::api::public_verify::verify_by_hash;
 use reqwest::StatusCode;
 use serde_json::{json, Value};
@@ -13,7 +14,7 @@ fn canonical_hash(label: &str) -> String {
 
 async fn test_pool() -> sqlx::PgPool {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::test_database_url();
     PgPoolOptions::new()
         .max_connections(5)
         .connect(&database_url)

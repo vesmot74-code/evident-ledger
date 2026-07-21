@@ -270,8 +270,7 @@ mod tests {
 
     async fn test_pool() -> PgPool {
         dotenvy::dotenv().ok();
-        let database_url =
-            std::env::var("DATABASE_URL").expect("DATABASE_URL must be set for public_proof tests");
+        let database_url = crate::db::require_test_database_url();
         PgPoolOptions::new()
             .max_connections(5)
             .connect(&database_url)

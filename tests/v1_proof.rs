@@ -1,5 +1,6 @@
 //! Integration tests for GET /v1/proof/{event_id} (Stage 2 §C).
 
+mod common;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -27,7 +28,7 @@ fn evident_api_key() -> String {
 
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let mut hasher = Sha256::new();
     hasher.update(api_key.as_bytes());
     let key_hash = format!("{:x}", hasher.finalize());
@@ -46,7 +47,7 @@ fn account_id_for_api_key(api_key: &str) -> Uuid {
 
 fn ensure_machine_plan(account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -90,7 +91,7 @@ fn get_proof(client: &Client, api_key: &str, event_id: Uuid) -> reqwest::blockin
 
 fn cleanup_chain(chain_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -116,7 +117,7 @@ fn cleanup_chain(chain_id: Uuid) {
 
 fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db connect");
@@ -147,7 +148,7 @@ fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
 /// Seeds a chain + event owned by `owner_account_id`; returns `(chain_id, event_id)`.
 fn seed_foreign_event(owner_account_id: Uuid) -> (Uuid, Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let chain_id = Uuid::new_v4();
     let event_id = Uuid::new_v4();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -226,7 +227,7 @@ fn v1_proof_historical_snapshot_stable_after_chain_grows() {
 
 fn signature_from_db(event_id: Uuid) -> String {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -316,7 +317,7 @@ fn v1_proof_foreign_event_returns_404() {
 
 fn set_event_signature(event_id: Uuid, signature: &str) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -331,7 +332,7 @@ fn set_event_signature(event_id: Uuid, signature: &str) {
 
 fn tamper_event_file_hash(event_id: Uuid, new_hash: &str) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -346,7 +347,7 @@ fn tamper_event_file_hash(event_id: Uuid, new_hash: &str) {
 
 fn seed_owned_event_empty_signature(owner_account_id: Uuid) -> (Uuid, Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let chain_id = Uuid::new_v4();
     let event_id = Uuid::new_v4();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -503,7 +504,7 @@ fn v1_get_proof_tampered_prefix_returns_failed() {
 
 fn delete_tsa_tokens_for_chain(chain_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -525,7 +526,7 @@ fn seed_valid_tsa_stub(chain_id: Uuid, event_id: Uuid, merkle_root: &str) {
         .expect("stub token bytes");
 
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -562,7 +563,7 @@ fn corrupt_tsa_token(chain_id: Uuid, merkle_root: &str) {
         .expect("corrupted token bytes");
 
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");

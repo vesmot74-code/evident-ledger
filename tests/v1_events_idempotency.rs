@@ -1,6 +1,7 @@
 //! Integration tests for POST /v1/events idempotency.
 //! Requires DATABASE_URL and EVIDENT_API_KEY (or ~/.evident/api_key).
 
+mod common;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -28,7 +29,7 @@ fn evident_api_key() -> String {
 
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let mut hasher = Sha256::new();
     hasher.update(api_key.as_bytes());
     let key_hash = format!("{:x}", hasher.finalize());
@@ -50,7 +51,7 @@ fn account_id_for_api_key(api_key: &str) -> Uuid {
 
 fn ensure_machine_plan(account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)
@@ -96,7 +97,7 @@ fn post_v1_event(
 
 fn event_count_for_chain(chain_id: Uuid) -> i64 {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)
@@ -112,7 +113,7 @@ fn event_count_for_chain(chain_id: Uuid) -> i64 {
 
 fn cleanup_chain(chain_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)

@@ -459,8 +459,7 @@ mod sequence_constraint_tests {
 
     async fn test_pool() -> PgPool {
         dotenvy::dotenv().ok();
-        let database_url = std::env::var("DATABASE_URL")
-            .expect("DATABASE_URL required for sequence constraint tests");
+        let database_url = crate::db::require_test_database_url();
         PgPoolOptions::new()
             .max_connections(4)
             .connect(&database_url)
@@ -468,11 +467,21 @@ mod sequence_constraint_tests {
             .expect("db connect")
     }
 
-    async fn dev_account_id(pool: &PgPool) -> Uuid {
-        sqlx::query_scalar("SELECT account_id FROM accounts LIMIT 1")
-            .fetch_one(pool)
-            .await
-            .expect("dev account")
+    async fn test_account_id(pool: &PgPool) -> Uuid {
+        let account_id = Uuid::new_v4();
+        let email = format!("seq-test-{account_id}@example.com");
+        sqlx::query(
+            r#"
+            INSERT INTO accounts (account_id, email, tariff_plan_id, subscription_status)
+            VALUES ($1, $2, (SELECT plan_id FROM tariff_plans WHERE name = 'free'), 'none')
+            "#,
+        )
+        .bind(account_id)
+        .bind(&email)
+        .execute(pool)
+        .await
+        .expect("test account");
+        account_id
     }
 
     async fn insert_event_row(
@@ -506,7 +515,7 @@ mod sequence_constraint_tests {
     #[tokio::test]
     async fn duplicate_chain_sequence_maps_to_ledger_error() {
         let pool = test_pool().await;
-        let account_id = dev_account_id(&pool).await;
+        let account_id = test_account_id(&pool).await;
         let chain_id = Uuid::new_v4();
 
         sqlx::query(
@@ -556,7 +565,7 @@ mod sequence_constraint_tests {
     #[tokio::test]
     async fn concurrent_duplicate_sequence_inserts_one_fails_with_mapped_error() {
         let pool = test_pool().await;
-        let account_id = dev_account_id(&pool).await;
+        let account_id = test_account_id(&pool).await;
         let chain_id = Uuid::new_v4();
 
         sqlx::query(

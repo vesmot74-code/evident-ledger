@@ -1,6 +1,7 @@
 //! Integration tests for POST /v1/events validation and response schema (Stage 2 §B).
 //! Requires server on :3000, DATABASE_URL, EVIDENT_API_KEY (or ~/.evident/api_key).
 
+mod common;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -28,7 +29,7 @@ fn evident_api_key() -> String {
 
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let mut hasher = Sha256::new();
     hasher.update(api_key.as_bytes());
     let key_hash = format!("{:x}", hasher.finalize());
@@ -50,7 +51,7 @@ fn account_id_for_api_key(api_key: &str) -> Uuid {
 
 fn ensure_machine_plan(account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)
@@ -100,7 +101,7 @@ fn post_v1_event(
 
 fn seed_foreign_chain(chain_id: Uuid, owner_account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)
@@ -119,7 +120,7 @@ fn seed_foreign_chain(chain_id: Uuid, owner_account_id: Uuid) {
 
 fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)
@@ -137,7 +138,7 @@ fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
 
 fn cleanup_chain(chain_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url)

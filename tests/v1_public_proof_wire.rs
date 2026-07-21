@@ -1,5 +1,6 @@
 //! Integration tests for public proof materialization wired to POST /v1/events (Stage 6.1.1).
 
+mod common;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -27,7 +28,7 @@ fn evident_api_key() -> String {
 
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let mut hasher = Sha256::new();
     hasher.update(api_key.as_bytes());
     let key_hash = format!("{:x}", hasher.finalize());
@@ -46,7 +47,7 @@ fn account_id_for_api_key(api_key: &str) -> Uuid {
 
 fn ensure_machine_plan(account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -93,7 +94,7 @@ fn post_event(client: &Client, api_key: &str, chain_id: Uuid, file_hash: &str, k
 
 fn cleanup_chain(chain_id: Uuid, file_hash: &str) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -145,7 +146,7 @@ fn v1_submit_anchored_event_materializes_public_proof() {
     let event_id = Uuid::parse_str(body["event_id"].as_str().unwrap()).unwrap();
 
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -200,7 +201,7 @@ fn v1_submit_idempotent_replay_does_not_duplicate_public_proof() {
     assert_eq!(second["event_id"], first["event_id"]);
 
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");

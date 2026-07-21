@@ -1,5 +1,6 @@
 //! Integration tests for `file{}` on GET /v1/verify/{event_id} (Stage 5.4).
 
+mod common;
 use reqwest::blocking::Client;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -27,7 +28,7 @@ fn evident_api_key() -> String {
 
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let mut hasher = Sha256::new();
     hasher.update(api_key.as_bytes());
     let key_hash = format!("{:x}", hasher.finalize());
@@ -46,7 +47,7 @@ fn account_id_for_api_key(api_key: &str) -> Uuid {
 
 fn ensure_machine_plan(account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -110,7 +111,7 @@ fn get_verify(
 
 fn cleanup_chain(chain_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -136,7 +137,7 @@ fn cleanup_chain(chain_id: Uuid) {
 
 fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db connect");
@@ -166,7 +167,7 @@ fn foreign_account_id(caller_account_id: Uuid) -> Uuid {
 
 fn seed_foreign_event(owner_account_id: Uuid) -> (Uuid, Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let chain_id = Uuid::new_v4();
     let event_id = Uuid::new_v4();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
@@ -204,7 +205,7 @@ fn seed_foreign_event(owner_account_id: Uuid) -> (Uuid, Uuid) {
 
 fn seed_owned_event_empty_signature(owner_account_id: Uuid) -> (Uuid, Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let chain_id = Uuid::new_v4();
     let event_id = Uuid::new_v4();
     let rt = tokio::runtime::Runtime::new().expect("runtime");

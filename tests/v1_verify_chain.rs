@@ -1,5 +1,6 @@
 //! Integration tests for `chain{}` on GET /v1/verify/{event_id} (Stage 5.3).
 
+mod common;
 use evident_ledger::api::v1::chain_verification::verify_chain_prefix;
 use evident_ledger::db::EventRow;
 use reqwest::blocking::Client;
@@ -29,7 +30,7 @@ fn evident_api_key() -> String {
 
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let mut hasher = Sha256::new();
     hasher.update(api_key.as_bytes());
     let key_hash = format!("{:x}", hasher.finalize());
@@ -48,7 +49,7 @@ fn account_id_for_api_key(api_key: &str) -> Uuid {
 
 fn ensure_machine_plan(account_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -113,7 +114,7 @@ fn get_verify(client: &Client, api_key: &str, event_id: Uuid) -> reqwest::blocki
 
 fn cleanup_chain(chain_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -139,7 +140,7 @@ fn cleanup_chain(chain_id: Uuid) {
 
 fn set_event_parent_event_id(event_id: Uuid, parent_event_id: Uuid) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -154,7 +155,7 @@ fn set_event_parent_event_id(event_id: Uuid, parent_event_id: Uuid) {
 
 fn set_event_file_hash(event_id: Uuid, file_hash: &str) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -169,7 +170,7 @@ fn set_event_file_hash(event_id: Uuid, file_hash: &str) {
 
 fn set_event_signature(event_id: Uuid, signature: &str) {
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
@@ -193,7 +194,7 @@ fn load_prefix_rows(chain_id: Uuid, target_sequence: i64) -> Vec<EventRow> {
     }
 
     dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
+    let database_url = common::live_server_database_url();
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");

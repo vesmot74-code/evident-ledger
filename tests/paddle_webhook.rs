@@ -9,7 +9,6 @@ use evident_ledger::api::paddle_webhook;
 use evident_ledger::paddle::sign_payload_for_test;
 use evident_ledger::state::AppState;
 use serde_json::{json, Value};
-use sqlx::postgres::PgPoolOptions;
 use sqlx::Row;
 use std::sync::Arc;
 use tower::util::ServiceExt;
@@ -18,15 +17,7 @@ use uuid::Uuid;
 const WEBHOOK_SECRET: &str = common::TEST_PADDLE_WEBHOOK_SECRET;
 
 async fn test_pool() -> sqlx::PgPool {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .expect("db");
-    sqlx::migrate!().run(&pool).await.expect("migrate");
-    pool
+    common::test_pool().await
 }
 
 fn test_state(pool: sqlx::PgPool) -> AppState {

@@ -8,20 +8,11 @@ use evident_ledger::auth::session_store::{create_session, SESSION_COOKIE_NAME};
 use evident_ledger::service::accounts;
 use evident_ledger::state::AppState;
 use evident_ledger::web::landing;
-use sqlx::postgres::PgPoolOptions;
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
 async fn test_pool() -> sqlx::PgPool {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .expect("db");
-    sqlx::migrate!().run(&pool).await.expect("migrate");
-    pool
+    common::test_pool().await
 }
 
 fn landing_app(state: AppState) -> axum::Router {

@@ -11,22 +11,13 @@ use evident_ledger::config::AppConfig;
 use evident_ledger::state::rate_limiter::LoginRateLimitState;
 use evident_ledger::state::AppState;
 use serde_json::{json, Value};
-use sqlx::postgres::PgPoolOptions;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::sync::Arc;
 use tower::util::ServiceExt;
 use uuid::Uuid;
 
 async fn test_pool() -> sqlx::PgPool {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-    let pool = PgPoolOptions::new()
-        .max_connections(10)
-        .connect(&database_url)
-        .await
-        .expect("db");
-    sqlx::migrate!().run(&pool).await.expect("migrate");
-    pool
+    common::test_pool().await
 }
 
 fn test_state(pool: sqlx::PgPool) -> AppState {

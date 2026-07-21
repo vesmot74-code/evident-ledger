@@ -1,20 +1,12 @@
 //! Stage 9.1 — identity key storage tests.
 
+mod common;
 use evident_ledger::models::identity_key::IdentityKey;
 use evident_ledger::service::identity_keys::{IdentityKeyError, IdentityKeyRepository};
-use sqlx::postgres::PgPoolOptions;
 use uuid::Uuid;
 
 async fn test_pool() -> sqlx::PgPool {
-    dotenvy::dotenv().ok();
-    let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL");
-    let pool = PgPoolOptions::new()
-        .max_connections(5)
-        .connect(&database_url)
-        .await
-        .expect("db");
-    sqlx::migrate!().run(&pool).await.expect("migrate");
-    pool
+    common::test_pool().await
 }
 
 async fn create_account(pool: &sqlx::PgPool, plan_name: &str) -> Uuid {
