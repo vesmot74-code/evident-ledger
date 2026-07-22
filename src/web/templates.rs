@@ -7,6 +7,8 @@ use crate::service::tariff::PlanPreview;
 pub struct DashboardIndexTemplate {
     pub email: String,
     pub plan_display: String,
+    pub subscription_status: String,
+    pub trust_level: String,
     pub usage_summary: String,
     pub percentage: String,
     pub can_upgrade: bool,
@@ -130,4 +132,13 @@ pub fn format_optional_datetime(value: Option<chrono::DateTime<chrono::Utc>>) ->
 
 pub fn format_optional_text(value: Option<&str>) -> String {
     value.unwrap_or("—").to_string()
+}
+
+pub fn trust_level_label(plan_name: &str) -> &'static str {
+    match plan_name {
+        "identity" => "IDENTITY",
+        "vault" => "VAULT",
+        "legal" => "ENHANCED",
+        _ => "BASIC",
+    }
 }

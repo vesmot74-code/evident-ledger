@@ -1,43 +1,75 @@
 {% extends "dashboard/layout.html" %}
-{% block title %}Dashboard{% endblock %}
+{% block title %}Account{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
 {% block head_extra %}
 <meta name="paddle-client-token" content="{{ paddle_client_token }}">
 <meta name="paddle-environment" content="{{ paddle_environment }}">
-<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js" data-paddle-sdk></script>
+{% endblock %}
+{% block header_meta %}
+<span class="plan-chip">{{ plan_display }} · {{ subscription_status }}</span>
+<span>{{ email }}</span>
 {% endblock %}
 {% block content %}
-<h2 style="margin-bottom: 16px;">Dashboard</h2>
-<div class="grid">
+<h2 class="page-title">Account</h2>
+<p class="page-subtitle">Overview of your account, plan, and usage.</p>
+
+<div class="section-stack">
   <section class="card">
     <h2>Account</h2>
     <p class="value">{{ email }}</p>
+    <p class="muted">Trust level: {{ trust_level }}</p>
   </section>
-  <section class="card">
-    <h2>Current plan</h2>
-    <p class="value">{{ plan_display }}</p>
-  </section>
-  <section class="card">
-    <h2>Usage</h2>
-    <p class="value">{{ usage_summary }}</p>
-    <p style="margin-top: 6px; color: var(--text-secondary); font-size: 0.9rem;">{{ percentage }} of monthly limit</p>
-  </section>
-  <section class="card">
-    <h2>API Keys</h2>
-    <p class="value"><a href="/dashboard/ui/api-keys">Manage</a></p>
-  </section>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Current plan</h2>
+      <p class="value">{{ plan_display }}</p>
+      <p class="muted">Subscription: {{ subscription_status }}</p>
+      <div class="card-actions">
+        <a class="btn" href="/dashboard/ui/subscription">Manage subscription</a>
+      </div>
+    </section>
+    <section class="card">
+      <h2>Usage</h2>
+      <p class="value">{{ usage_summary }}</p>
+      <p class="muted">{{ percentage }} of monthly limit</p>
+      <div class="card-actions">
+        <a class="btn" href="/dashboard/ui/usage">View usage</a>
+      </div>
+    </section>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>Identity</h2>
+      <p class="muted">Register and manage user identity keys for signed events.</p>
+      <div class="card-actions">
+        <a class="btn" href="/dashboard/identity">Open identity keys</a>
+      </div>
+    </section>
+    <section class="card">
+      <h2>API Keys</h2>
+      <p class="muted">Create and revoke API keys for CLI and integrations.</p>
+      <div class="card-actions">
+        <a class="btn" href="/dashboard/ui/api-keys">Manage API keys</a>
+      </div>
+    </section>
+  </div>
+
   {% if can_upgrade %}
   <section class="card">
     <h2>Upgrade</h2>
+    <p class="muted">Move from Free to a paid plan. Checkout opens in Paddle overlay.</p>
     {% for plan in available_plans %}
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <div class="upgrade-row">
       <span>{{ plan.display_name }}</span>
-      <button class="btn upgrade-plan-btn" type="button" data-plan="{{ plan.name }}">
+      <button class="btn btn-primary upgrade-plan-btn" type="button" data-plan="{{ plan.name }}">
         Upgrade to {{ plan.display_name }}
       </button>
     </div>
     {% else %}
-    <p style="color: var(--text-secondary);">No upgrade options available.</p>
+    <p class="muted">No upgrade options available.</p>
     {% endfor %}
     <p class="upgrade-error error" aria-live="polite"></p>
   </section>
@@ -45,37 +77,12 @@
 </div>
 {% endblock %}
 {% block body_scripts %}
-<script>
-(function () {
-  var tokenMeta = document.querySelector('meta[name="paddle-client-token"]');
-  var envMeta = document.querySelector('meta[name="paddle-environment"]');
-  var token = tokenMeta && tokenMeta.content;
-  var env = envMeta && envMeta.content;
-  if (window.Paddle && token) {
-    if (env === 'sandbox') {
-      Paddle.Environment.set('sandbox');
-    }
-    Paddle.Setup({
-      token: token,
-      eventCallback: function (data) {
-        if (data && data.name === 'checkout.completed') {
-          window.location.href = '/dashboard/ui';
-        }
-      }
-    });
-    var ptxn = new URLSearchParams(window.location.search).get('_ptxn');
-    if (ptxn) {
-      Paddle.Checkout.open({ transactionId: ptxn });
-    }
-  }
-})();
-</script>
 {% if can_upgrade %}
 <script>
 (function () {
   document.querySelectorAll('.upgrade-plan-btn').forEach(function (button) {
     button.addEventListener('click', async function () {
-      var errorEl = button.parentElement.parentElement.querySelector('.upgrade-error');
+      var errorEl = document.querySelector('.upgrade-error');
       if (errorEl) errorEl.textContent = '';
       button.disabled = true;
       try {
@@ -87,12 +94,11 @@
           body: JSON.stringify({ plan: plan })
         });
         var body = await response.json().catch(function () { return {}; });
-        if (response.ok && body.transaction_id && window.Paddle) {
-          Paddle.Checkout.open({ transactionId: body.transaction_id });
-          return;
-        }
-        if (response.ok && body.checkout_url) {
-          window.location.href = body.checkout_url;
+        if (response.ok && (body.transaction_id || body.checkout_url)) {
+          var opened = await window.EvidentPaddle.openCheckout(body.transaction_id, body.checkout_url);
+          if (!opened && errorEl) {
+            errorEl.textContent = 'Unable to start checkout';
+          }
           return;
         }
         if (response.status === 409) {

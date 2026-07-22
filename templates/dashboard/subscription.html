@@ -4,40 +4,50 @@
 {% block head_extra %}
 <meta name="paddle-client-token" content="{{ paddle_client_token }}">
 <meta name="paddle-environment" content="{{ paddle_environment }}">
-<script src="https://cdn.paddle.com/paddle/v2/paddle.js"></script>
+<script src="https://cdn.paddle.com/paddle/v2/paddle.js" data-paddle-sdk></script>
+{% endblock %}
+{% block header_meta %}
+<span class="plan-chip">{{ plan_display }} · {{ subscription_status }}</span>
 {% endblock %}
 {% block content %}
-<h2 style="margin-bottom: 16px;">Subscription</h2>
-<div class="grid">
-  <section class="card">
-    <h2>Plan</h2>
-    <p class="value">{{ plan_display }}</p>
-    <p style="margin-top: 6px; color: var(--text-secondary); font-size: 0.9rem;">Internal name: {{ plan }}</p>
-  </section>
-  <section class="card">
-    <h2>Status</h2>
-    <p class="value">{{ subscription_status }}</p>
-  </section>
-  <section class="card">
-    <h2>Current period end</h2>
-    <p class="value">{{ current_period_end }}</p>
-  </section>
-  <section class="card">
-    <h2>Pending</h2>
-    <p class="value">{{ pending_plan_display }}</p>
-  </section>
+<h2 class="page-title">Subscription</h2>
+<p class="page-subtitle">Active tariff, billing status, and upgrade options.</p>
+
+<div class="section-stack">
+  <div class="grid">
+    <section class="card">
+      <h2>Active tariff</h2>
+      <p class="value">{{ plan_display }}</p>
+      <p class="muted">Internal name: {{ plan }}</p>
+    </section>
+    <section class="card">
+      <h2>Subscription status</h2>
+      <p class="value">{{ subscription_status }}</p>
+    </section>
+    <section class="card">
+      <h2>Current period end</h2>
+      <p class="value">{{ current_period_end }}</p>
+    </section>
+    <section class="card">
+      <h2>Pending change</h2>
+      <p class="value">{{ pending_plan_display }}</p>
+      <p class="muted">Deferred downgrades appear here until period end.</p>
+    </section>
+  </div>
+
   {% if can_upgrade %}
   <section class="card">
     <h2>Upgrade</h2>
+    <p class="muted">Start a paid plan with Paddle checkout. Plan changes for active paid subscriptions are handled by support.</p>
     {% for plan in available_plans %}
-    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+    <div class="upgrade-row">
       <span>{{ plan.display_name }}</span>
-      <button class="btn upgrade-plan-btn" type="button" data-plan="{{ plan.name }}">
+      <button class="btn btn-primary upgrade-plan-btn" type="button" data-plan="{{ plan.name }}">
         Upgrade to {{ plan.display_name }}
       </button>
     </div>
     {% else %}
-    <p style="color: var(--text-secondary);">No upgrade options available.</p>
+    <p class="muted">No upgrade options available.</p>
     {% endfor %}
     <p class="upgrade-error error" aria-live="polite"></p>
   </section>
@@ -45,37 +55,12 @@
 </div>
 {% endblock %}
 {% block body_scripts %}
-<script>
-(function () {
-  var tokenMeta = document.querySelector('meta[name="paddle-client-token"]');
-  var envMeta = document.querySelector('meta[name="paddle-environment"]');
-  var token = tokenMeta && tokenMeta.content;
-  var env = envMeta && envMeta.content;
-  if (window.Paddle && token) {
-    if (env === 'sandbox') {
-      Paddle.Environment.set('sandbox');
-    }
-    Paddle.Setup({
-      token: token,
-      eventCallback: function (data) {
-        if (data && data.name === 'checkout.completed') {
-          window.location.href = '/dashboard/ui';
-        }
-      }
-    });
-    var ptxn = new URLSearchParams(window.location.search).get('_ptxn');
-    if (ptxn) {
-      Paddle.Checkout.open({ transactionId: ptxn });
-    }
-  }
-})();
-</script>
 {% if can_upgrade %}
 <script>
 (function () {
   document.querySelectorAll('.upgrade-plan-btn').forEach(function (button) {
     button.addEventListener('click', async function () {
-      var errorEl = button.parentElement.parentElement.querySelector('.upgrade-error');
+      var errorEl = document.querySelector('.upgrade-error');
       if (errorEl) errorEl.textContent = '';
       button.disabled = true;
       try {
@@ -87,12 +72,11 @@
           body: JSON.stringify({ plan: plan })
         });
         var body = await response.json().catch(function () { return {}; });
-        if (response.ok && body.transaction_id && window.Paddle) {
-          Paddle.Checkout.open({ transactionId: body.transaction_id });
-          return;
-        }
-        if (response.ok && body.checkout_url) {
-          window.location.href = body.checkout_url;
+        if (response.ok && (body.transaction_id || body.checkout_url)) {
+          var opened = await window.EvidentPaddle.openCheckout(body.transaction_id, body.checkout_url);
+          if (!opened && errorEl) {
+            errorEl.textContent = 'Unable to start checkout';
+          }
           return;
         }
         if (response.status === 409) {

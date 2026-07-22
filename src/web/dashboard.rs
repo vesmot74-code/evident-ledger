@@ -19,7 +19,7 @@ use crate::service::tariff;
 use crate::state::AppState;
 use crate::web::templates::{
     format_optional_datetime, format_optional_text, format_percentage, format_usage_summary,
-    ApiKeyCreatedTemplate, ApiKeyRevokedTemplate, ApiKeyRow, ApiKeysTemplate,
+    trust_level_label, ApiKeyCreatedTemplate, ApiKeyRevokedTemplate, ApiKeyRow, ApiKeysTemplate,
     DashboardIndexTemplate, LoginTemplate, RegisterTemplate, SubscriptionTemplate, UsageTemplate,
 };
 
@@ -75,6 +75,8 @@ async fn index_handler(State(state): State<AppState>, session: SessionUser) -> R
     render_template(DashboardIndexTemplate {
         email: profile.email,
         plan_display: profile.plan_display_name.to_uppercase(),
+        subscription_status: profile.subscription_status,
+        trust_level: trust_level_label(&profile.plan_name).to_string(),
         usage_summary: format_usage_summary(usage.server_commits, usage.monthly_commits_limit),
         percentage: format_percentage(percentage),
         can_upgrade: !available_plans.is_empty(),

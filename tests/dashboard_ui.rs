@@ -176,13 +176,16 @@ async fn dashboard_home_renders_profile_after_login() {
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(&email));
     assert!(body.contains("FREE"));
-    assert!(body.contains("Manage"));
+    assert!(body.contains("Manage subscription") || body.contains("Manage API keys"));
     assert!(body.contains("cdn.paddle.com/paddle/v2/paddle.js"));
     assert!(body.contains(r#"name="paddle-client-token""#));
-    assert!(body.contains("Paddle.Setup"));
+    assert!(body.contains("data-paddle-sdk"));
+    assert!(body.contains("EvidentPaddle"));
+    assert!(body.contains("Paddle.Initialize") || body.contains("Paddle.Setup"));
     assert!(!body.contains("pdl_sdbx_apikey_"));
     assert!(body.contains("Logout"));
     assert!(body.contains(r#"action="/auth/logout""#));
+    assert!(body.contains("Trust level"));
     cleanup_email(&pool, &email).await;
 }
 
@@ -212,7 +215,9 @@ async fn dashboard_subscription_page_renders_plan() {
     assert!(body.contains("none"));
     assert!(body.contains("cdn.paddle.com/paddle/v2/paddle.js"));
     assert!(body.contains(r#"name="paddle-client-token""#));
-    assert!(body.contains("Paddle.Setup"));
+    assert!(body.contains("data-paddle-sdk"));
+    assert!(body.contains("EvidentPaddle"));
+    assert!(body.contains("Paddle.Initialize") || body.contains("Paddle.Setup"));
     cleanup_email(&pool, &email).await;
 }
 
