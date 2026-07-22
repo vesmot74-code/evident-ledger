@@ -321,6 +321,10 @@ async fn post_dashboard_upgrade_with_active_subscription_returns_conflict() {
 
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["status"], "already_active");
+    assert_eq!(
+        body["message"],
+        "You already have an active subscription. To change your plan, please contact support."
+    );
     cleanup_email(&pool, &email).await;
 }
 

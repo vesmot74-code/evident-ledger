@@ -83,7 +83,7 @@ async fn upgrade_handler(
             StatusCode::CONFLICT,
             Json(AlreadyActiveResponse {
                 status: "already_active",
-                message: "Subscription already active",
+                message: "You already have an active subscription. To change your plan, please contact support.",
             }),
         )
             .into_response(),

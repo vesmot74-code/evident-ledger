@@ -183,6 +183,16 @@ Concurrent requests must apply the transition **at most once** (conditional upda
 
 ---
 
+## Subscription Changes
+
+- **New paid subscriptions** (`FREE` → `PAID`) are created automatically through Paddle checkout and activated by webhooks (`subscription.created` / `subscription.updated`).
+- **Changing an active paid plan** (`PAID` → `PAID`) is **not** self-service in early access. Dashboard upgrade for accounts with `subscription_status = active` is rejected; customers change plans via support.
+- Automatic self-service plan switching (subscription replacement / update in Paddle) may be added later when needed. Until then, do not implement cancel+recreate or in-place subscription replacement flows.
+
+Webhook handling of `subscription.updated` (upgrade/downgrade semantics in §3) remains valid when plan changes are applied externally (e.g. by support or a future self-service flow).
+
+---
+
 ## 4. Webhook Handling (Paddle) — Stage 8.2b
 
 **Source of truth:**

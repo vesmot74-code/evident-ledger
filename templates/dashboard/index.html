@@ -96,7 +96,10 @@
           return;
         }
         if (response.status === 409) {
-          if (errorEl) errorEl.textContent = body.message || 'Subscription already active';
+          if (errorEl) {
+            errorEl.textContent = body.message ||
+              'You already have an active subscription. To change your plan, please contact support.';
+          }
           return;
         }
         if (errorEl) {
