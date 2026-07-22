@@ -63,6 +63,9 @@ async fn webhook_handler(
             Json(json!({ "status": "waiting_for_account_link" })),
         )
             .into_response(),
+        Ok(WebhookOutcome::Ignored) => {
+            (StatusCode::OK, Json(json!({ "status": "ignored" }))).into_response()
+        }
         Err(WebhookError::PayloadHashConflict) => {
             error_response(StatusCode::CONFLICT, json!({ "error": "conflict" }))
         }

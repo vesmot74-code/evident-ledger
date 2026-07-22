@@ -16,6 +16,8 @@ pub enum WebhookOutcome {
     Processed,
     Idempotent,
     WaitingForAccountLink,
+    /// Event type is recognized as intentionally unhandled (ack with 200, no retry).
+    Ignored,
 }
 
 #[derive(Debug)]
@@ -57,11 +59,26 @@ pub async fn resolve_account_by_paddle_customer(
     .await
 }
 
+fn is_handled_event_type(normalized: &str) -> bool {
+    matches!(
+        normalized,
+        "subscription_created"
+            | "subscription_updated"
+            | "subscription_past_due"
+            | "subscription_canceled"
+    )
+}
+
 pub async fn process_paddle_webhook(
     pool: &PgPool,
     event: &PaddleWebhookEvent,
     raw_body: &[u8],
 ) -> Result<WebhookOutcome, WebhookError> {
+    // Unknown / unsubscribed event types must not 500 — Paddle retries forever.
+    if !is_handled_event_type(&event.normalized_event_type()) {
+        return Ok(WebhookOutcome::Ignored);
+    }
+
     let hash = payload_hash(raw_body);
 
     if let Some(existing) = find_by_paddle_event_id(pool, &event.event_id)
@@ -241,14 +258,15 @@ async fn apply_event(
     account: &AccountBillingRow,
     event: &PaddleWebhookEvent,
 ) -> Result<(), WebhookError> {
+    // Renewal / recovery after past_due is covered by `subscription.updated`
+    // (same-plan branch refreshes status + current_period_end). There is no
+    // `subscription.payment_succeeded` in Paddle Billing.
     match event.normalized_event_type().as_str() {
         "subscription_created" => subscription_created(tx, account.account_id, event).await,
         "subscription_updated" => subscription_updated(tx, account, event).await,
-        "subscription_payment_succeeded" => {
-            subscription_payment_succeeded(tx, account.account_id, event).await
-        }
-        "subscription_payment_failed" => subscription_payment_failed(tx, account.account_id).await,
+        "subscription_past_due" => subscription_past_due(tx, account.account_id).await,
         "subscription_canceled" => subscription_canceled(tx, account.account_id, event).await,
+        // Defensive: process_paddle_webhook filters unknown types before apply.
         other => Err(WebhookError::Database(format!(
             "unsupported event_type: {other}"
         ))),
@@ -366,32 +384,7 @@ async fn subscription_updated(
     Ok(())
 }
 
-async fn subscription_payment_succeeded(
-    tx: &mut Transaction<'_, Postgres>,
-    account_id: Uuid,
-    event: &PaddleWebhookEvent,
-) -> Result<(), WebhookError> {
-    let period_end = event
-        .period_end()
-        .ok_or(WebhookError::MissingField("current_period_end"))?;
-
-    sqlx::query(
-        r#"
-        UPDATE accounts
-        SET subscription_status = 'active', current_period_end = $2
-        WHERE account_id = $1
-        "#,
-    )
-    .bind(account_id)
-    .bind(period_end)
-    .execute(&mut **tx)
-    .await
-    .map_err(|e| WebhookError::Database(e.to_string()))?;
-
-    Ok(())
-}
-
-async fn subscription_payment_failed(
+async fn subscription_past_due(
     tx: &mut Transaction<'_, Postgres>,
     account_id: Uuid,
 ) -> Result<(), WebhookError> {
