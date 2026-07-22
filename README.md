@@ -158,7 +158,9 @@ Optional report:
 ./target/release/evident report generate <chain_id>
 ```
 
-Other CLI commands: `status`, `backup`, `account`, `account info`, `key status`, `key info`.
+Other CLI commands: `status`, `backup`, `account`, `account info`, `key status`, `key info`, `hash`, `version`.
+
+Run `evident --help` for the full command list.
 
 ---
 
@@ -203,12 +205,13 @@ User identity keys are generated on the client. Private keys never leave the dev
 
 Supported flows:
 
-- Local key generation (`evident init` / CLI key helpers)
-- Challenge + register (proof-of-possession) via API
-- Optional user signatures on events
+- Local key generation: `evident init` → `~/.evident/identity.key` / `identity.pub`
+- Register / revoke keys via Dashboard → Identity (or HTTP `/accounts/identity/keys/*`)
+- Optional user signatures on events (API / identity-enabled plans)
 - Verification of historical identity signatures
 - Permanent revoke (does not invalidate existing proofs)
-- Dashboard identity UI (`/dashboard/identity`)
+
+Note: there is no `evident identity` subcommand. API key helpers are `evident key status` / `evident key info`.
 
 Details: [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md).
 

@@ -52,10 +52,28 @@ impl From<reqwest::Error> for CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CliError::Io(e) => write!(f, "I/O error: {e}"),
-            CliError::Json(e) => write!(f, "JSON error: {e}"),
-            CliError::Http(e) => write!(f, "HTTP error: {e}"),
-            CliError::Server(m) => write!(f, "{m}"),
+            CliError::Io(e) => {
+                if e.kind() == std::io::ErrorKind::NotFound {
+                    write!(f, "Error: file not found ({e})")
+                } else {
+                    write!(f, "Error: I/O failure ({e})")
+                }
+            }
+            CliError::Json(e) => write!(f, "Error: invalid JSON ({e})"),
+            CliError::Http(e) => {
+                if e.is_connect() {
+                    write!(
+                        f,
+                        "Error: cannot connect to Evident Ledger server at http://127.0.0.1:3000.\n\
+                         Is the server running?"
+                    )
+                } else if e.is_timeout() {
+                    write!(f, "Error: request to the server timed out.")
+                } else {
+                    write!(f, "Error: network request failed ({e})")
+                }
+            }
+            CliError::Server(m) => write!(f, "Error: {m}"),
             CliError::Usage(m) => write!(f, "{m}"),
         }
     }
@@ -90,7 +108,10 @@ fn load_api_key_with_source() -> Result<(String, KeySource), CliError> {
     }
 
     Err(CliError::Usage(
-        "No API key found. Set EVIDENT_API_KEY or create ~/.evident/api_key".into(),
+        "Error: API key missing.\n\
+         Create one in Dashboard: Account → API Keys\n\
+         Then set EVIDENT_API_KEY or save it to ~/.evident/api_key"
+            .into(),
     ))
 }
 
@@ -103,6 +124,48 @@ fn api_key_fingerprint(raw: &str) -> String {
     hasher.update(raw.as_bytes());
     let hash = format!("{:x}", hasher.finalize());
     hash[..12.min(hash.len())].to_string()
+}
+
+fn map_client_error(e: evident_ledger::client::ClientError) -> CliError {
+    match e {
+        evident_ledger::client::ClientError::Http(err) => CliError::Http(err),
+        evident_ledger::client::ClientError::Io(err) => CliError::Io(err),
+        evident_ledger::client::ClientError::Json(err) => CliError::Json(err),
+        evident_ledger::client::ClientError::Server(s) => {
+            CliError::Server(friendly_server_message(&s))
+        }
+    }
+}
+
+fn friendly_server_message(raw: &str) -> String {
+    let lower = raw.to_lowercase();
+    if lower.contains("unauthorized")
+        || lower.contains("\"code\":\"unauthorized\"")
+        || lower.contains("invalid api key")
+        || lower.contains("missing api key")
+    {
+        return "API key rejected by the server.\n\
+                Check Dashboard → Account → API Keys, then update EVIDENT_API_KEY or ~/.evident/api_key"
+            .into();
+    }
+    if lower.contains("payment_required") || lower.contains("402") {
+        return "subscription does not allow this action (payment required or past due).\n\
+                Check Dashboard → Subscription"
+            .into();
+    }
+    raw.trim().to_string()
+}
+
+fn map_http_status_error(status: reqwest::StatusCode, body: &str) -> CliError {
+    if status == reqwest::StatusCode::UNAUTHORIZED {
+        return CliError::Server(friendly_server_message("unauthorized"));
+    }
+    let detail = if body.trim().is_empty() {
+        status.to_string()
+    } else {
+        format!("{status}: {body}")
+    };
+    CliError::Server(friendly_server_message(&detail))
 }
 
 #[derive(Debug, Deserialize)]
@@ -148,72 +211,206 @@ fn main() {
     }
 }
 
+fn print_global_help() {
+    println!(
+        "\
+Evident Ledger CLI
+
+Usage:
+  evident <command> [options]
+
+Commands:
+  init                 Create local identity keypair (~/.evident/identity.key)
+  new-chain            Create a new evidence chain (requires API key)
+  commit <file> --chain <id>
+                       Commit a file hash into a chain (requires API key)
+  verify <proof.json>  Verify a local proof artifact offline
+  verify --chain <id>  Verify using the latest local proof for a chain
+  status <chain_id>    Query chain verification status from the server
+  account [info]       Show account plan / capabilities (requires API key)
+  key status|info      Show API key status / local key configuration
+  backup <subcommand>  Create, list, download, or restore backups
+  report generate <chain_id>
+                       Generate a PDF report for a chain
+  hash <file>          Print SHA-256 of a file
+  help, --help, -h     Show this help
+  version, --version   Show CLI version
+
+API key:
+  Set EVIDENT_API_KEY or create ~/.evident/api_key
+  Create keys in Dashboard: Account → API Keys
+
+Notes:
+  Identity key registration and revoke are available via Dashboard / HTTP API.
+  There is no 'evident identity' subcommand in this CLI.
+"
+    );
+}
+
+fn print_commit_help() {
+    println!(
+        "\
+Usage: evident commit <file> --chain <chain_id>
+
+Commit a file into an evidence chain. Requires a configured API key and a
+running Evident Ledger server.
+
+Example:
+  evident commit document.pdf --chain 11111111-1111-1111-1111-111111111111
+"
+    );
+}
+
+fn print_verify_help() {
+    println!(
+        "\
+Usage:
+  evident verify <proof.json>
+  evident verify --chain <chain_id>
+
+Verify a proof artifact offline (signature + Merkle structure).
+
+Examples:
+  evident verify ~/.evident/proofs/<chain_id>/<event_id>.json
+  evident verify --chain 11111111-1111-1111-1111-111111111111
+"
+    );
+}
+
+fn print_account_help() {
+    println!(
+        "\
+Usage:
+  evident account
+  evident account info
+
+Show plan, capabilities, and (for 'info') feature entitlements.
+Requires a configured API key.
+"
+    );
+}
+
+fn print_key_help() {
+    println!(
+        "\
+Usage:
+  evident key status
+  evident key info
+
+API key helpers (not identity keys):
+  status  Ask the server whether the configured API key is active
+  info    Show whether a local/env API key is configured (fingerprint only)
+"
+    );
+}
+
+fn is_help_flag(arg: &str) -> bool {
+    matches!(arg, "help" | "--help" | "-h")
+}
+
 fn run() -> Result<(), CliError> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("init") => cmd_init(),
-        Some("help") | Some("--help") | Some("-h") => {
-            println!(
-                "usage: evident <init|new-chain|commit|verify|status|backup|account|account info|key status|key info|report generate>"
-            );
+        Some("help") | Some("--help") | Some("-h") | None => {
+            print_global_help();
+            Ok(())
+        }
+        Some("version") | Some("--version") | Some("-V") => {
+            println!("evident {}", env!("CARGO_PKG_VERSION"));
             Ok(())
         }
         Some("new-chain") => cmd_new_chain(),
         Some("report") => {
             let subcommand = args.next().ok_or_else(|| {
-                CliError::Usage("usage: evident report generate <chain_id>".into())
+                CliError::Usage("Error: missing subcommand.\nUsage: evident report generate <chain_id>".into())
             })?;
+            if is_help_flag(&subcommand) {
+                println!("Usage: evident report generate <chain_id>");
+                return Ok(());
+            }
             if subcommand != "generate" {
                 return Err(CliError::Usage(
-                    "usage: evident report generate <chain_id>".into(),
+                    "Error: unknown report subcommand.\nUsage: evident report generate <chain_id>"
+                        .into(),
                 ));
             }
             let chain_id = args.next().ok_or_else(|| {
-                CliError::Usage("usage: evident report generate <chain_id>".into())
+                CliError::Usage("Error: missing chain id.\nUsage: evident report generate <chain_id>".into())
             })?;
             cmd_report_generate(&chain_id)
         }
         Some("status") => {
-            let chain_id = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident status <chain_id>".into()))?;
+            let chain_id = args.next().ok_or_else(|| {
+                CliError::Usage("Error: missing chain id.\nUsage: evident status <chain_id>".into())
+            })?;
+            if is_help_flag(&chain_id) {
+                println!("Usage: evident status <chain_id>");
+                return Ok(());
+            }
             cmd_status(&chain_id)
         }
         Some("hash") => {
-            let path = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident hash <file>".into()))?;
+            let path = args.next().ok_or_else(|| {
+                CliError::Usage("Error: missing file path.\nUsage: evident hash <file>".into())
+            })?;
+            if is_help_flag(&path) {
+                println!("Usage: evident hash <file>");
+                return Ok(());
+            }
             cmd_hash(&path)
         }
         Some("commit") => {
             let path = args.next().ok_or_else(|| {
-                CliError::Usage("usage: evident commit <file> --chain <id>".into())
+                CliError::Usage(
+                    "Error: missing file path.\nUsage: evident commit <file> --chain <chain_id>"
+                        .into(),
+                )
             })?;
+            if is_help_flag(&path) {
+                print_commit_help();
+                return Ok(());
+            }
             let mut chain_id = None;
             while let Some(arg) = args.next() {
+                if is_help_flag(&arg) {
+                    print_commit_help();
+                    return Ok(());
+                }
                 if arg == "--chain" {
                     chain_id = args.next();
                 }
             }
-            let chain_id = chain_id.ok_or_else(|| CliError::Usage("missing --chain".into()))?;
+            let chain_id = chain_id.ok_or_else(|| {
+                CliError::Usage(
+                    "Error: missing --chain.\nUsage: evident commit <file> --chain <chain_id>"
+                        .into(),
+                )
+            })?;
             cmd_commit(&path, &chain_id)
         }
         Some("verify") => {
             let first = args.next().ok_or_else(|| {
                 CliError::Usage(
-                    "usage: evident verify <proof.json> | evident verify --chain <chain_id>"
+                    "Error: missing proof path or --chain.\n\
+                     Usage: evident verify <proof.json> | evident verify --chain <chain_id>"
                         .into(),
                 )
             })?;
+            if is_help_flag(&first) {
+                print_verify_help();
+                return Ok(());
+            }
             if first == "--chain" {
                 let chain_id = args.next().ok_or_else(|| {
                     CliError::Usage(
-                        "usage: evident verify <proof.json> | evident verify --chain <chain_id>"
+                        "Error: missing chain id.\nUsage: evident verify --chain <chain_id>"
                             .into(),
                     )
                 })?;
-                Uuid::parse_str(&chain_id)
-                    .map_err(|_| CliError::Usage("invalid chain id".into()))?;
+                Uuid::parse_str(&chain_id).map_err(|_| {
+                    CliError::Usage("Error: invalid chain id. Expected a UUID.".into())
+                })?;
                 let proof_path = find_latest_proof_artifact(&chain_id)?;
                 cmd_verify(&proof_path.to_string_lossy())
             } else {
@@ -222,24 +419,42 @@ fn run() -> Result<(), CliError> {
         }
         Some("account") => match args.next().as_deref() {
             None => cmd_account(),
+            Some(arg) if is_help_flag(arg) => {
+                print_account_help();
+                Ok(())
+            }
             Some("info") => cmd_account_info(),
-            Some(_) => Err(CliError::Usage("usage: evident account [info]".into())),
+            Some(_) => Err(CliError::Usage(
+                "Error: unknown account subcommand.\nUsage: evident account [info]".into(),
+            )),
         },
         Some("key") => {
-            let subcommand = args
-                .next()
-                .ok_or_else(|| CliError::Usage("usage: evident key <status|info>".into()))?;
+            let subcommand = args.next().ok_or_else(|| {
+                CliError::Usage("Error: missing subcommand.\nUsage: evident key <status|info>".into())
+            })?;
+            if is_help_flag(&subcommand) {
+                print_key_help();
+                return Ok(());
+            }
             match subcommand.as_str() {
                 "status" => cmd_key_status(),
                 "info" => cmd_key_info(),
-                _ => Err(CliError::Usage("usage: evident key <status|info>".into())),
+                _ => Err(CliError::Usage(
+                    "Error: unknown key subcommand.\nUsage: evident key <status|info>".into(),
+                )),
             }
         }
-        Some("backup") => cmd_backup(&mut args),
-        _ => Err(CliError::Usage(
-            "usage: evident <init|new-chain|commit|verify|status|backup|account|account info|key status|key info|report generate>"
+        Some("identity") => Err(CliError::Usage(
+            "Error: 'evident identity' is not a CLI command.\n\
+             Local key generation:  evident init\n\
+             Register / revoke keys: Dashboard → Identity  (or HTTP /accounts/identity/keys/*)\n\
+             API key helpers:        evident key status | evident key info"
                 .into(),
         )),
+        Some("backup") => cmd_backup(&mut args),
+        Some(other) => Err(CliError::Usage(format!(
+            "Error: unknown command '{other}'.\nRun: evident --help"
+        ))),
     }
 }
 
@@ -250,12 +465,25 @@ fn evident_client() -> Result<EvidentClient, CliError> {
 
 fn cmd_backup(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
     match args.next().as_deref() {
+        Some(arg) if is_help_flag(arg) => {
+            println!(
+                "Usage: evident backup <create|list|download|restore>\n\
+                 \n\
+                 create --chain <uuid>              Create a backup\n\
+                 list                               List backups\n\
+                 download <backup_id> [--output p]  Download backup JSON\n\
+                 restore <backup_id> [--force]      Restore a backup locally"
+            );
+            Ok(())
+        }
         Some("create") => cmd_backup_create(args),
         Some("list") => cmd_backup_list(),
         Some("download") => cmd_backup_download(args),
         Some("restore") => cmd_backup_restore(args),
         _ => Err(CliError::Usage(
-            "usage: evident backup <create|list|download|restore>".into(),
+            "Error: unknown or missing backup subcommand.\n\
+             Usage: evident backup <create|list|download|restore>"
+                .into(),
         )),
     }
 }
@@ -397,20 +625,21 @@ fn cmd_hash(path: &str) -> Result<(), CliError> {
 }
 
 fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
-    let bytes = fs::read(path)?;
-    let chain_uuid =
-        Uuid::parse_str(chain_id).map_err(|_| CliError::Usage("invalid chain id".into()))?;
+    let bytes = fs::read(path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            CliError::Usage(format!("Error: file not found: {path}"))
+        } else {
+            CliError::Io(e)
+        }
+    })?;
+    let chain_uuid = Uuid::parse_str(chain_id).map_err(|_| {
+        CliError::Usage("Error: invalid chain id. Expected a UUID.".into())
+    })?;
 
     let client = evident_ledger::client::EvidentClient::new("http://127.0.0.1:3000");
-    let (commit, proof_path, file_hash) =
-        client
-            .submit_event(chain_uuid, &bytes)
-            .map_err(|e| match e {
-                evident_ledger::client::ClientError::Http(err) => CliError::Http(err),
-                evident_ledger::client::ClientError::Io(err) => CliError::Io(err),
-                evident_ledger::client::ClientError::Json(err) => CliError::Json(err),
-                evident_ledger::client::ClientError::Server(s) => CliError::Server(s),
-            })?;
+    let (commit, proof_path, file_hash) = client
+        .submit_event(chain_uuid, &bytes)
+        .map_err(map_client_error)?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");
     let event_log = evident_dir().join("events.jsonl");
@@ -489,17 +718,52 @@ fn print_commit_success(
     }
 }
 
+fn resolve_verifier() -> Result<PathBuf, CliError> {
+    if let Ok(current) = env::current_exe() {
+        if let Some(dir) = current.parent() {
+            let sibling = dir.join("evident-verify");
+            if sibling.is_file() {
+                return Ok(sibling);
+            }
+        }
+    }
+
+    let manifest_target = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("target");
+    for profile in ["release", "debug"] {
+        let candidate = manifest_target.join(profile).join("evident-verify");
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+
+    Err(CliError::Server(
+        "evident-verify binary not found.\n\
+         Build it with: cargo build --release --bin evident-verify"
+            .into(),
+    ))
+}
+
 fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
-    let verifier = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-        .join("target")
-        .join("debug")
-        .join("evident-verify");
-    let status = ProcessCommand::new(verifier)
+    if !Path::new(proof_path).is_file() {
+        return Err(CliError::Usage(format!(
+            "Error: proof file not found: {proof_path}\n\
+             Usage: evident verify <proof.json> | evident verify --chain <chain_id>"
+        )));
+    }
+    let verifier = resolve_verifier()?;
+    let status = ProcessCommand::new(&verifier)
         .arg(proof_path)
         .status()
-        .map_err(|e| CliError::Server(format!("failed to run verifier: {e}")))?;
+        .map_err(|e| {
+            CliError::Server(format!(
+                "failed to run verifier at {}: {e}",
+                verifier.display()
+            ))
+        })?;
     if !status.success() {
-        return Err(CliError::Server("verification failed".into()));
+        return Err(CliError::Server(format!(
+            "verification failed for {proof_path}"
+        )));
     }
     Ok(())
 }
@@ -514,22 +778,32 @@ fn report_artifact_paths(base_dir: &Path, chain_id: &str) -> (PathBuf, PathBuf) 
 fn find_latest_proof_artifact(chain_id: &str) -> Result<PathBuf, CliError> {
     let proof_dir = evident_dir().join("proofs").join(chain_id);
 
-    let mut paths: Vec<PathBuf> = fs::read_dir(&proof_dir)?
-        .filter_map(Result::ok)
-        .map(|entry| entry.path())
-        .filter(|path| {
-            path.extension().and_then(|ext| ext.to_str()) == Some("json")
-                && path
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .map(|s| s != "proof.json")
-                    .unwrap_or(true)
-        })
-        .collect();
+    let mut paths: Vec<PathBuf> = match fs::read_dir(&proof_dir) {
+        Ok(entries) => entries
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| {
+                path.extension().and_then(|ext| ext.to_str()) == Some("json")
+                    && path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .map(|s| s != "proof.json")
+                        .unwrap_or(true)
+            })
+            .collect(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(CliError::Usage(format!(
+                "Error: no local proofs found for chain {chain_id}.\n\
+                 Commit a file first: evident commit <file> --chain {chain_id}"
+            )));
+        }
+        Err(e) => return Err(CliError::Io(e)),
+    };
 
     if paths.is_empty() {
         return Err(CliError::Usage(format!(
-            "no proof found for chain {chain_id}"
+            "Error: no local proofs found for chain {chain_id}.\n\
+             Commit a file first: evident commit <file> --chain {chain_id}"
         )));
     }
 
@@ -541,7 +815,11 @@ fn find_latest_proof_artifact(chain_id: &str) -> Result<PathBuf, CliError> {
 
     paths
         .pop()
-        .ok_or_else(|| CliError::Usage(format!("no proof found for chain {chain_id}")))
+        .ok_or_else(|| {
+            CliError::Usage(format!(
+                "Error: no local proofs found for chain {chain_id}."
+            ))
+        })
 }
 
 fn cmd_report_generate(chain_id: &str) -> Result<(), CliError> {
@@ -574,7 +852,7 @@ fn cmd_new_chain() -> Result<(), CliError> {
     let status = response.status();
     let body = response.text()?;
     if !status.is_success() {
-        return Err(CliError::Server(format!("server error {status}: {body}")));
+        return Err(map_http_status_error(status, &body));
     }
     let json: serde_json::Value = serde_json::from_str(&body)?;
     println!("chain created");
@@ -651,8 +929,9 @@ fn cmd_account_info() -> Result<(), CliError> {
         Err(_) => {
             println!("Account");
             println!("Status: NOT CONFIGURED");
-            println!("Set EVIDENT_API_KEY or create:");
-            println!("~/.evident/api_key");
+            println!("Error: API key missing.");
+            println!("Create one in Dashboard: Account → API Keys");
+            println!("Then set EVIDENT_API_KEY or save it to ~/.evident/api_key");
             return Ok(());
         }
     };
@@ -741,13 +1020,13 @@ fn cmd_key_status() -> Result<(), CliError> {
         .send()?;
 
     if response.status() == reqwest::StatusCode::UNAUTHORIZED {
-        return Err(CliError::Server("API key rejected by server".into()));
+        return Err(CliError::Server(friendly_server_message("unauthorized")));
     }
 
     if !response.status().is_success() {
         let status = response.status();
         let body = response.text().unwrap_or_default();
-        return Err(CliError::Server(format!("server error {status}: {body}")));
+        return Err(map_http_status_error(status, &body));
     }
 
     let json: serde_json::Value = response.json()?;
@@ -782,8 +1061,9 @@ fn cmd_key_info() -> Result<(), CliError> {
         }
         Err(_) => {
             println!("Status: NOT CONFIGURED");
-            println!("Set EVIDENT_API_KEY or create:");
-            println!("~/.evident/api_key");
+            println!("Error: API key missing.");
+            println!("Create one in Dashboard: Account → API Keys");
+            println!("Then set EVIDENT_API_KEY or save it to ~/.evident/api_key");
         }
     }
 
