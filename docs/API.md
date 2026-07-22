@@ -1,19 +1,33 @@
 # API.md — Evident Ledger Public API
 
-Version: 0.1-draft  
-Status: Draft — not yet implemented
+Version: 0.1  
+Status: **Implemented contract**
 
 Companion document: [SYSTEM_CONTRACT.md](../SYSTEM_CONTRACT.md)
 
 SYSTEM_CONTRACT.md is the source of truth for verification scope, trust model, and trust_level enum.
 
-This document defines HTTP API exposure only.
+This document defines HTTP API exposure. Related models: [AUTH_MODEL.md](AUTH_MODEL.md), [BILLING_MODEL.md](BILLING_MODEL.md), [IDENTITY_MODEL.md](IDENTITY_MODEL.md), [VERIFY_MODEL.md](VERIFY_MODEL.md).
+
+---
+
+## API Areas
+
+| Area | Surface | Purpose |
+|------|---------|---------|
+| **Evidence API** | `POST /v1/events`, chain ownership | Submit tamper-evident events |
+| **Verification API** | `GET /v1/proof/{event_id}`, `GET /v1/verify/{event_id}`, `/public/verify` | Retrieve proofs; private and public verification |
+| **Account API** | `/accounts/*`, `/v1/account/capabilities`, `/account/*` | Registration, API keys, usage, capabilities |
+| **Identity API** | `/accounts/identity/keys/*`, `/v1/identity/keys/*` | Challenge/register, list, revoke, key events |
+| **Dashboard API** | `/dashboard/*`, `/auth/*`, `/paddle/webhook` | Session UI, billing upgrade, Paddle webhooks |
+
+Evidence and private verification endpoints below remain the normative `/v1` contract. Account, identity, dashboard, and public verify surfaces are implemented; see the model documents for ownership, billing, and trust rules.
 
 ---
 
 ## API Versioning
 
-All endpoints use the `/v1` prefix:
+All evidence endpoints use the `/v1` prefix:
 
 ```http
 POST /v1/events
@@ -25,7 +39,7 @@ GET  /v1/backup/*
 
 Breaking changes require a new version prefix (`/v2/`).
 
-The v1 contract is frozen for backward compatibility after implementation.
+The v1 evidence contract is implemented and treated as frozen for backward compatibility.
 
 ---
 

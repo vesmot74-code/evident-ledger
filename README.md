@@ -125,13 +125,19 @@ evident verify proof.json
 Build the client:
 
 ```bash
-cargo build --release
+cargo build --release --bin evident
 ```
 
-Initialize identity:
+Initialize local identity:
 
 ```bash
 ./target/release/evident init
+```
+
+Create a chain:
+
+```bash
+./target/release/evident new-chain
 ```
 
 Protect a document:
@@ -146,12 +152,88 @@ Verify independently:
 ./target/release/evident verify ~/.evident/proofs/<chain_id>/proof.json
 ```
 
+Optional report:
+
+```bash
+./target/release/evident report generate <chain_id>
+```
+
+Other CLI commands: `status`, `backup`, `account`, `account info`, `key status`, `key info`.
+
+---
+
+# 🧩 Platform Components
+
+| Component | Role |
+| --- | --- |
+| **CLI** | Local-first commit, chain management, offline verify, account/key helpers (`evident`) |
+| **Verification** | Private `/v1/verify` and public `/public/verify` pipelines; offline proof verification |
+| **API** | HTTP `/v1` evidence API, account APIs, identity key registration |
+| **Dashboard** | Session-based web UI for subscription, usage, API keys, and identity |
+| **Identity Layer** | User-owned Ed25519 keys: generate locally, register with proof-of-possession, sign, verify, revoke |
+| **Billing Layer** | Tariff plans, Paddle checkout/webhooks, subscription lifecycle and enforcement |
+
+Normative models:
+
+- [API](docs/API.md)
+- [Authentication](docs/AUTH_MODEL.md)
+- [Billing](docs/BILLING_MODEL.md)
+- [Identity](docs/IDENTITY_MODEL.md)
+- [Verification](docs/VERIFY_MODEL.md)
+
+---
+
+# 👤 Account and Subscription
+
+Accounts authenticate with API keys (`X-API-KEY`) or Dashboard sessions.
+
+Subscription state is orthogonal to the active tariff:
+
+- Plans: `free`, `legal`, `vault`, `identity`
+- Statuses: `none`, `active`, `past_due`, `canceled`
+- Paid upgrades via Paddle (Dashboard overlay checkout); state updates from signed webhooks
+
+Details: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md), [docs/BILLING_MODEL.md](docs/BILLING_MODEL.md).
+
+---
+
+# 🔑 Identity
+
+User identity keys are generated on the client. Private keys never leave the device.
+
+Supported flows:
+
+- Local key generation (`evident init` / CLI key helpers)
+- Challenge + register (proof-of-possession) via API
+- Optional user signatures on events
+- Verification of historical identity signatures
+- Permanent revoke (does not invalidate existing proofs)
+- Dashboard identity UI (`/dashboard/identity`)
+
+Details: [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md).
+
+---
+
+# 📦 Release Artifacts
+
+| Artifact | Description |
+| --- | --- |
+| `evident` | Primary CLI (init, commit, verify, account, keys, report) |
+| `evident-ledger` | HTTP API / Dashboard server |
+| `evident-verify` | Standalone verification binary |
+| Sample PDFs | [Evidence Snapshot](docs/samples/evidence_snapshot.pdf), [Hash Attestation](docs/samples/hash-attestation-66d244d59319785d.pdf) |
+
+Build release binaries:
+
+```bash
+cargo build --release --bin evident --bin evident-ledger --bin evident-verify
+```
+
 ---
 
 # 📚 Documentation
 
 Technical, security, evidence, and legal documentation:
-
 
 ## Technical Documentation
 
@@ -163,6 +245,15 @@ Technical, security, evidence, and legal documentation:
 
 - [Security Policy](SECURITY.md)
 
+- [API Contract](docs/API.md)
+
+- [Authentication Model](docs/AUTH_MODEL.md)
+
+- [Billing Model](docs/BILLING_MODEL.md)
+
+- [Identity Model](docs/IDENTITY_MODEL.md)
+
+- [Verification Model](docs/VERIFY_MODEL.md)
 
 ## Evidence & Legal Documentation
 

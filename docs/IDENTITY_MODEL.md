@@ -1,8 +1,17 @@
 # Evident Ledger — Identity Model
 
-**Status:** Frozen at Stage 9.0 (Identity Contract Freeze).
+**Status:** Implemented (Stages 9.0–9.5 + Dashboard identity UI).
 
-This document defines user-owned cryptographic identity: key lifecycle, registration, proof extensions, revocation, entitlement, and API boundaries. **No implementation code is specified here** — this is the contract for Stages 9.1–9.5.
+This document defines user-owned cryptographic identity: key lifecycle, registration, proof extensions, revocation, entitlement, and API boundaries. The contract is normative; the surfaces below are implemented.
+
+**Implementation summary:**
+
+- **Key generation** — client-side Ed25519 (`evident init` / local identity files); server never generates user private keys
+- **Registration** — `POST /accounts/identity/keys/challenge` + `register` with proof-of-possession
+- **Signing** — optional `identity_signature` on event submit when `identity_enabled`
+- **Verification** — `/v1/verify` and offline verifier resolve `key_id` → public key for historical proofs
+- **Revoke** — permanent `revoked_at`; blocks new signatures; historical proofs remain verifiable
+- **Dashboard support** — `/dashboard/identity` list, events, revoke (session auth; same service layer as API)
 
 **Related documents:**
 
@@ -14,7 +23,7 @@ This document defines user-owned cryptographic identity: key lifecycle, registra
 **Existing (unchanged by this contract):**
 
 - **Server identity** — `GET /identity` returns the ledger’s Ed25519 signer public key (`src/signing`, `src/api/identity.rs`). This is **not** user identity.
-- **CLI local keys** — `~/.evident/identity.key` / `identity.pub` for client-side generation today; Stage 9 registers the **public** key with the account after proof-of-possession.
+- **CLI local keys** — `~/.evident/identity.key` / `identity.pub` for client-side generation; public keys register with the account after proof-of-possession.
 
 ---
 
@@ -121,11 +130,11 @@ Identity registration **MUST** be available through the API. Dashboard is a **pr
 
 **Rule:** Handlers for `/accounts/identity/keys/*` delegate to a shared **service layer**. No duplicate business logic in Dashboard.
 
-### Dashboard (secondary — Stage 9.5)
+### Dashboard (secondary)
 
 | Surface | Auth |
 |---------|------|
-| `/dashboard/identity/keys` (UI) | Session cookie |
+| `/dashboard/identity` (UI) | Session cookie |
 
 Dashboard **MUST NOT** be the only path to register keys. Any Dashboard action **MUST** call the same service functions as the API routes above — never a parallel HTTP call to `/accounts/*` from the browser for identity operations (same pattern as Dashboard API keys in Stage 8.3.1a).
 
@@ -212,30 +221,30 @@ Feature::Identity (service layer)
 
 ---
 
-## 8. Roadmap — Stage 9
+## 8. Implementation Status — Stage 9
 
 ```
-Stage 9.0 — Identity Contract Freeze          ← this document
+Stage 9.0 — Identity Contract Freeze          ✓
         |
         v
-Stage 9.1 — Identity Key Storage
+Stage 9.1 — Identity Key Storage              ✓
         (migration + models + repository)
         |
         v
-Stage 9.2 — Challenge Registration
+Stage 9.2 — Challenge Registration            ✓
         (POST /accounts/identity/keys/challenge + register)
         |
         v
-Stage 9.3 — User Signed Events
+Stage 9.3 — User Signed Events                ✓
         (identity_signature in submit pipeline)
         |
         v
-Stage 9.4 — Verification Extension
+Stage 9.4 — Verification Extension            ✓
         (/v1/verify + verifier CLI)
         |
         v
-Stage 9.5 — Identity Dashboard
-        (/dashboard/identity/keys UI)
+Stage 9.5 — Identity Dashboard                ✓
+        (/dashboard/identity UI)
 ```
 
 ---
@@ -255,9 +264,8 @@ Normative invariants: [SECURITY.md](../SECURITY.md) §2.5 items 30–35.
 
 ---
 
-## 10. Explicit Non-Goals (Stage 9.0)
+## 10. Explicit Non-Goals
 
-- Implementation code, migrations, or tests (Stages 9.1+)
 - Email-based identity linking
 - Server-side key generation or escrow
 - Changes to `GET /identity` (server signer)

@@ -1,8 +1,14 @@
 # Evident Ledger — Billing Model
 
-**Status:** Frozen at Stage 8.2a (Billing Model Freeze).
+**Status:** Implemented (Billing E2E complete — Stages 8.2a–8.2c + Paddle checkout).
 
-This document defines subscription state, tariff change policy, Paddle webhook contract, and access control **before** Paddle integration (Stage 8.2b) and enforcement middleware (Stage 8.2c).
+This document defines subscription state, tariff change policy, Paddle webhook contract, and access control. Paddle Billing integration, webhook processing, subscription enforcement, and Dashboard checkout are implemented.
+
+**Implementation summary:**
+
+- **Paddle integration completed** — sandbox/live API client, customer linking, transaction checkout, Dashboard overlay (`Paddle.js`)
+- **Webhook processing** — signed `POST /paddle/webhook`, idempotent event store, account linking for unknown customers
+- **Subscription lifecycle** — create → active; update (upgrade immediate / downgrade deferred); past_due; canceled + lazy expiry to free
 
 **Related documents:**
 
@@ -65,23 +71,23 @@ Migration: `migrations/20260718120000_add_billing_period_and_pending_plan.sql`.
 ```
 none
   |
-  | subscription_created / first payment succeeded
+  | subscription.created
   v
 active
   |
   +----------------------+
   |                      |
-  | payment_failed       | cancellation requested
+  | subscription.past_due| cancellation requested
   v                      v
 past_due              canceled
   |                      |
-  | payment succeeded    | current_period_end reached (lazy)
-  |                      |
+  | subscription.updated | current_period_end reached (lazy)
+  | (renewal / recovery) |
   +-----------> active   v
                       none (+ tariff → free)
 past_due
   |
-  | subscription canceled
+  | subscription.canceled
   v
 canceled
   |
@@ -186,22 +192,26 @@ Paddle is the external payment authority.
 Local DB stores the last verified billing state.
 ```
 
-| Event | Local action |
+Handled Paddle Billing event types (normalized `.` → `_` in the processor):
+
+| Paddle `event_type` | Local action |
 |-------|----------------|
-| `subscription_created` | `subscription_status = active`; set `current_period_end` |
-| `subscription_updated` (upgrade) | Update `tariff_plan_id`, `current_period_end`; clear `pending_tariff_plan_id` |
-| `subscription_updated` (downgrade) | Set `pending_tariff_plan_id`; do **not** change `tariff_plan_id` |
-| `subscription_payment_succeeded` | `subscription_status = active`; refresh `current_period_end` |
-| `subscription_payment_failed` | `subscription_status = past_due` |
-| `subscription_canceled` | `subscription_status = canceled`; retain `current_period_end` |
+| `subscription.created` | `subscription_status = active`; set plan + `current_period_end` |
+| `subscription.updated` (upgrade) | Update `tariff_plan_id`, `current_period_end`; clear `pending_tariff_plan_id` |
+| `subscription.updated` (downgrade) | Set `pending_tariff_plan_id`; do **not** change `tariff_plan_id` |
+| `subscription.updated` (same plan / renewal) | `subscription_status = active`; refresh `current_period_end` |
+| `subscription.past_due` | `subscription_status = past_due` |
+| `subscription.canceled` | `subscription_status = canceled`; retain `current_period_end` |
+
+Unrecognized event types are acknowledged with HTTP 200 (`ignored`) so Paddle does not retry forever. There is no `subscription.payment_succeeded` / `subscription.payment_failed` in Paddle Billing — renewals and recovery after `past_due` arrive as `subscription.updated`.
 
 ### Idempotency
 
-Webhook processing **must** be idempotent. Repeated delivery of the same event **must not** apply state twice. Use Paddle `event_id` or an equivalent idempotency key (dedicated table or existing idempotency infrastructure).
+Webhook processing **must** be idempotent. Repeated delivery of the same event **must not** apply state twice. Use Paddle `event_id` (table `paddle_webhook_events`).
 
 ### Signature verification
 
-All webhook payloads **must** be signature-verified with Paddle's signing secret **before** any account mutation.
+All webhook payloads **must** be signature-verified with Paddle's signing secret **before** any account mutation (`Paddle-Signature`: `{ts}:{raw_body}` HMAC-SHA256).
 
 ### Replay / out-of-order events
 
@@ -239,11 +249,6 @@ Normatively listed as items **17–24** in [SECURITY.md](../SECURITY.md) §2.5.
 
 ## Document status
 
-**Frozen at Stage 8.2a.**
+**Implemented** — model freeze (8.2a), Paddle webhooks (8.2b), enforcement + lazy evaluation (8.2c), Dashboard checkout / Billing E2E.
 
 Changes to subscription semantics, Paddle contract, or billing invariants require an explicit stage and updates to this document, [SECURITY.md](../SECURITY.md) §2.5–2.7, and [SYSTEM_CONTRACT.md](../SYSTEM_CONTRACT.md) §17 where lifecycle rules are affected — per Security Invariant 11.
-
-**Next stages:**
-
-- **8.2b** — Paddle webhook implementation
-- **8.2c** — subscription enforcement + lazy evaluation middleware
