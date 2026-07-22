@@ -23,9 +23,11 @@
     .shell { max-width: 880px; margin: 0 auto; padding: 32px 24px; }
     .header { border-bottom: 1px solid var(--border); padding-bottom: 16px; margin-bottom: 24px; }
     .header h1 { font-size: 1.25rem; font-weight: 700; }
-    .nav { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; }
+    .nav { display: flex; gap: 16px; margin-top: 12px; flex-wrap: wrap; align-items: center; }
     .nav a { color: var(--text-secondary); font-size: 0.95rem; }
     .nav a.active { color: var(--text); font-weight: 600; text-decoration: none; }
+    .nav-logout { margin-left: auto; }
+    .nav-logout .btn { font-size: 0.9rem; background: var(--bg); }
     .card { border: 1px solid var(--border); border-radius: 8px; padding: 20px; margin-bottom: 16px; background: var(--bg); }
     .card h2 { font-size: 0.85rem; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-secondary); margin-bottom: 8px; }
     .card .value { font-size: 1.1rem; font-weight: 600; }
@@ -55,6 +57,9 @@
         <a href="/dashboard/ui/usage" class="{% block nav_usage %}{% endblock %}">Usage</a>
         <a href="/dashboard/ui/api-keys" class="{% block nav_api_keys %}{% endblock %}">API Keys</a>
         <a href="/dashboard/identity" class="{% block nav_identity %}{% endblock %}">Identity</a>
+        <form class="nav-logout" method="post" action="/auth/logout">
+          <button class="btn" type="submit">Logout</button>
+        </form>
       </nav>
     </header>
     <main>

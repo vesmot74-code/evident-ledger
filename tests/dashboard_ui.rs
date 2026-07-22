@@ -181,6 +181,8 @@ async fn dashboard_home_renders_profile_after_login() {
     assert!(body.contains(r#"name="paddle-client-token""#));
     assert!(body.contains("Paddle.Setup"));
     assert!(!body.contains("pdl_sdbx_apikey_"));
+    assert!(body.contains("Logout"));
+    assert!(body.contains(r#"action="/auth/logout""#));
     cleanup_email(&pool, &email).await;
 }
 
@@ -445,5 +447,76 @@ async fn dashboard_html_does_not_leak_session_token() {
             "password_hash leaked on {path}"
         );
     }
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn logout_redirects_to_login_and_blocks_dashboard() {
+    let pool = test_pool().await;
+    let email = format!("ui-logout-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_app(test_state(pool.clone()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let svc = app.clone().into_service();
+    let response = svc
+        .oneshot(peer_request(
+            "POST",
+            "/auth/logout",
+            None,
+            Some(&cookie),
+            &[],
+        ))
+        .await
+        .expect("logout response");
+    let status = response.status();
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .and_then(|v| v.to_str().ok())
+        .map(str::to_string);
+    let cookies: Vec<String> = response
+        .headers()
+        .get_all(header::SET_COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok().map(str::to_string))
+        .collect();
+
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert_eq!(location.as_deref(), Some("/login"));
+    assert!(
+        cookies
+            .iter()
+            .any(|c| c.contains("evident_session=") && c.contains("Max-Age=0")),
+        "logout must clear session cookie"
+    );
+
+    let (status, _, _) = call_text(
+        app.clone(),
+        peer_request("GET", "/dashboard/ui", None, Some(&cookie), &[]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::SEE_OTHER);
+
+    // Re-login with the same credentials must work.
+    let (_, _, login_cookies) = call_text(
+        app.clone(),
+        peer_request(
+            "POST",
+            "/auth/login",
+            Some(json!({ "email": email, "password": "securepass1" })),
+            None,
+            &[],
+        ),
+    )
+    .await;
+    let new_cookie = cookie_header_from_set_cookie(&login_cookies).expect("new session");
+    let (status, body, _) = call_text(
+        app,
+        peer_request("GET", "/dashboard/ui", None, Some(&new_cookie), &[]),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains(&email));
     cleanup_email(&pool, &email).await;
 }

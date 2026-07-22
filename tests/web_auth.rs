@@ -489,12 +489,16 @@ async fn logout_deletes_session() {
     .await;
     let cookie = cookie_header_from_set_cookie(&cookies).expect("cookie");
 
-    let (status, _, _) = call(
+    let (status, _, cookies) = call(
         app.clone(),
         peer_request("POST", "/logout", None, None, Some(&cookie)),
     )
     .await;
-    assert_eq!(status, StatusCode::NO_CONTENT);
+    assert_eq!(status, StatusCode::SEE_OTHER);
+    assert!(
+        cookies.iter().any(|c| c.contains(&format!("{SESSION_COOKIE_NAME}=")) && c.contains("Max-Age=0")),
+        "logout must clear session cookie"
+    );
 
     let (status, body, _) = call(app, peer_request("GET", "/me", None, None, Some(&cookie))).await;
     assert_eq!(status, StatusCode::UNAUTHORIZED);

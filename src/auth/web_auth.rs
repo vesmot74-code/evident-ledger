@@ -211,8 +211,11 @@ async fn logout_handler(
 
     let secure_cookie = !state.config.dev_mode;
     Ok((
-        StatusCode::NO_CONTENT,
-        [(header::SET_COOKIE, clear_session_cookie(secure_cookie))],
+        StatusCode::SEE_OTHER,
+        [
+            (header::LOCATION, "/login".to_string()),
+            (header::SET_COOKIE, clear_session_cookie(secure_cookie)),
+        ],
     )
         .into_response())
 }
