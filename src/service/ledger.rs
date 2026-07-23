@@ -28,6 +28,8 @@ pub enum LedgerError {
     UsageLimitExceeded,
     TsaLimitExceeded,
     QualifiedTsaUnavailable,
+    /// Identity columns must not be submitted on legacy `POST /events` (use `/v1/events`).
+    IdentityNotSupportedOnLegacyPath,
     DatabaseError(sqlx::Error),
 }
 
@@ -73,6 +75,10 @@ impl IntoResponse for LedgerError {
             LedgerError::QualifiedTsaUnavailable => (
                 StatusCode::SERVICE_UNAVAILABLE,
                 "Qualified TSA is not yet available for your tariff plan",
+            ),
+            LedgerError::IdentityNotSupportedOnLegacyPath => (
+                StatusCode::BAD_REQUEST,
+                "Identity fields are not supported on POST /events; use POST /v1/events",
             ),
             LedgerError::DatabaseError(_) => (StatusCode::INTERNAL_SERVER_ERROR, "Database error"),
         };

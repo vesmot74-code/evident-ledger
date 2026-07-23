@@ -119,6 +119,8 @@ fn map_ledger_error(err: LedgerError) -> ApiError {
         LedgerError::ParentMismatch
         | LedgerError::DuplicateIdempotencyKey
         | LedgerError::DuplicateChainSequence => ApiError::Conflict,
+        // Legacy-only; v1 never surfaces this.
+        LedgerError::IdentityNotSupportedOnLegacyPath => ApiError::Internal,
         LedgerError::DatabaseError(_) => ApiError::Internal,
     }
 }
