@@ -46,15 +46,22 @@ async fn main() {
     tracing_subscriber::fmt::init();
     dotenvy::dotenv().ok();
 
-    let pool = db::create_pool().await;
-    let signer = Arc::new(signing::ServerSigner::load_or_create("signing_key.bin"));
     let config = config::AppConfig::from_env();
+    let signer = Arc::new(signing::ServerSigner::load_or_create(
+        &config.signing_key_path,
+    ));
 
     println!("Public key: {}", signer.public_key_hex());
+    println!(
+        "Signing key path: {}",
+        config.signing_key_path_display().display()
+    );
     if config.dev_mode {
         println!("Dev mode: enabled (tariff switcher available)");
     }
+    println!("Environment: {}", config.environment);
 
+    let pool = db::create_pool().await;
     let state = state::AppState::new(pool, signer, config.clone());
 
     let rate_limits =

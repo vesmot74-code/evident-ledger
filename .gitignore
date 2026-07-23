@@ -9,7 +9,6 @@ signing_key.bin
 
 # Rust
 target/
-Cargo.lock
 
 # OS
 .DS_Store

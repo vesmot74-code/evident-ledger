@@ -1,8 +1,13 @@
 use std::env;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 pub struct AppConfig {
     pub dev_mode: bool,
+    /// Deployment environment label (`development` / `production`).
+    pub environment: String,
+    /// Filesystem path to the server Ed25519 signing key.
+    pub signing_key_path: String,
     pub trust_proxy_headers: bool,
     pub paddle_webhook_secret: String,
     pub paddle_api_key: String,
@@ -13,12 +18,28 @@ pub struct AppConfig {
 
 impl AppConfig {
     pub fn from_env() -> Self {
+        let environment = env::var("ENVIRONMENT")
+            .ok()
+            .map(|v| v.trim().to_lowercase())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "development".into());
+
         let dev_mode = env::var("DEV_MODE")
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false)
             || env::var("APP_ENV")
                 .map(|v| v.eq_ignore_ascii_case("development"))
                 .unwrap_or(false);
+
+        if dev_mode && environment == "production" {
+            panic!("DEV_MODE cannot be enabled in production environment");
+        }
+
+        let signing_key_path = env::var("SIGNING_KEY_PATH")
+            .ok()
+            .map(|v| v.trim().to_string())
+            .filter(|v| !v.is_empty())
+            .unwrap_or_else(|| "signing_key.bin".into());
 
         let trust_proxy_headers = env::var("TRUST_PROXY_HEADERS")
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
@@ -62,6 +83,8 @@ impl AppConfig {
 
         Self {
             dev_mode,
+            environment,
+            signing_key_path,
             trust_proxy_headers,
             paddle_webhook_secret,
             paddle_api_key,
@@ -82,11 +105,25 @@ impl AppConfig {
     pub fn test_defaults() -> Self {
         Self {
             dev_mode: true,
+            environment: "development".into(),
+            signing_key_path: "signing_key.bin".into(),
             trust_proxy_headers: false,
             paddle_webhook_secret: "test-paddle-webhook-secret".into(),
             paddle_api_key: "test-paddle-api-key".into(),
             paddle_api_base_url: "https://api.paddle.com".into(),
             paddle_client_token: "test_paddle_client_token".into(),
+        }
+    }
+
+    /// Absolute-ish path for logging (CWD-joined when relative).
+    pub fn signing_key_path_display(&self) -> PathBuf {
+        let path = PathBuf::from(&self.signing_key_path);
+        if path.is_absolute() {
+            path
+        } else {
+            env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or_else(|_| PathBuf::from(&self.signing_key_path))
         }
     }
 }

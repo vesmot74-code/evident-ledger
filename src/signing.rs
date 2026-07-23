@@ -1,6 +1,6 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 pub struct ServerSigner {
     signing_key: SigningKey,
@@ -9,7 +9,8 @@ pub struct ServerSigner {
 
 impl ServerSigner {
     pub fn load_or_create(path: &str) -> Self {
-        if Path::new(path).exists() {
+        let path_ref = Path::new(path);
+        if path_ref.exists() {
             let bytes = std::fs::read(path).expect("Failed to read signing key");
             let array: [u8; 32] = bytes.try_into().expect("Invalid key length");
             let signing_key = SigningKey::from_bytes(&array);
@@ -20,12 +21,29 @@ impl ServerSigner {
             };
         }
         let signing_key = SigningKey::generate(&mut OsRng);
+        if let Some(parent) = path_ref.parent() {
+            if !parent.as_os_str().is_empty() {
+                std::fs::create_dir_all(parent).expect("Failed to create signing key directory");
+            }
+        }
         std::fs::write(path, signing_key.to_bytes()).expect("Failed to write signing key");
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
             std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600)).ok();
         }
+        let display = PathBuf::from(path);
+        let display = if display.is_absolute() {
+            display
+        } else {
+            std::env::current_dir()
+                .map(|cwd| cwd.join(path))
+                .unwrap_or(display)
+        };
+        eprintln!(
+            "WARNING: created new server signing key at {}",
+            display.display()
+        );
         let verifying_key = signing_key.verifying_key();
         Self {
             signing_key,

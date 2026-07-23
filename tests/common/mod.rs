@@ -18,6 +18,8 @@ pub fn setup_test_env() {
         std::env::set_var("PADDLE_WEBHOOK_SECRET", TEST_PADDLE_WEBHOOK_SECRET);
         std::env::set_var("PADDLE_API_KEY", TEST_PADDLE_API_KEY);
         std::env::set_var("PADDLE_CLIENT_TOKEN", TEST_PADDLE_CLIENT_TOKEN);
+        // Avoid local `.env` with ENVIRONMENT=production + DEV_MODE from breaking tests.
+        std::env::set_var("ENVIRONMENT", "development");
     }
 }
 
