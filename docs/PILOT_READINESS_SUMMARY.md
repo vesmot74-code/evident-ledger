@@ -10,6 +10,7 @@ Security / smoke lineage:
 - [audits/STAGE_11_5_MEDIUM_FINDINGS.md](audits/STAGE_11_5_MEDIUM_FINDINGS.md) — M3 closed; M4 accepted; M5 deferred
 - [audits/STAGE_11_6_PILOT_SMOKE_TEST.md](audits/STAGE_11_6_PILOT_SMOKE_TEST.md) — READY WITH LIMITATIONS
 - [audits/STAGE_12_0_FINDINGS.md](audits/STAGE_12_0_FINDINGS.md) — C1 signing-key backup **Closed**
+- [audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md](audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md) — empty `events.signature` on CLI `/events` **Fixed**
 
 | Area | Document | Status |
 |---|---|---|
@@ -20,6 +21,7 @@ Security / smoke lineage:
 | Monitoring | [MANUAL_MONITORING.md](MANUAL_MONITORING.md) | Ready (interim; no `/health`) |
 | SLA draft | [PILOT_SLA_DRAFT.md](PILOT_SLA_DRAFT.md) | DRAFT — internal review required |
 | Stage 12 findings | [audits/STAGE_12_0_FINDINGS.md](audits/STAGE_12_0_FINDINGS.md) | C1 Closed |
+| Signature persist (CLI) | [audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md](audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md) | **Closed** — legacy `/events` persists before commit |
 
 Also referenced: [DEPLOYMENT.md](DEPLOYMENT.md), [DEPLOYMENT_FINDINGS.md](DEPLOYMENT_FINDINGS.md), [BILLING_MODEL.md](BILLING_MODEL.md), [`.env.example`](../.env.example).
 
@@ -37,6 +39,7 @@ Also referenced: [DEPLOYMENT.md](DEPLOYMENT.md), [DEPLOYMENT_FINDINGS.md](DEPLOY
 8. **Unmanaged CWD `./signing_key.bin` hazard** — may be a different key than `SIGNING_KEY_PATH`; never confuse the two ([SIGNING_KEY_OPERATIONS.md](SIGNING_KEY_OPERATIONS.md)).
 9. **Paddle payment → webhook E2E** may need a reachable notification URL (Stage 11.6 partial).
 10. **Signing-key off-host backup** — required; verified closed in Stage 12.0 C1 (maintain backups going forward).
+11. ~~**CLI `/events` left `events.signature` empty**~~ — **Closed**: legacy path now persists via `persist_event_signature` before commit (same model as `/v1/events`). See critical investigation audit.
 
 ---
 
@@ -48,6 +51,7 @@ Justification:
 
 - Stage 11.x security / subscription / webhook / smoke gates passed with Critical/High product issues closed or accepted as documented limitations.
 - Stage 12.0 Critical gap C1 (no signing-key backup) was **remediated and restore-drilled**, then documented.
+- Critical signature persistence gap on CLI `/events` was **diagnosed and fixed** before real pilot proofs (test DB rows are disposable; truncate after smoke).
 - Operator runbooks exist for deploy, key ops, rollback, onboarding, and manual monitoring.
 - Pilot should start on **free** evidence path, with known paid/Identity/TSA and billing limitations disclosed to the user.
 

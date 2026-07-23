@@ -5,6 +5,10 @@ use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::api::v1::proof_material::{persist_event_signature, proof_snapshot_at_event};
+use crate::api::v1::proof_status::{derive_proof_status, ProofStatus};
+use crate::public_proof::{on_proof_anchored, tsa_class_from_plan};
+use crate::service::capabilities::get_account_capabilities;
 use crate::{models::event::SubmitEventRequest, signing::ServerSigner};
 
 #[derive(Debug, Clone)]
@@ -202,9 +206,46 @@ pub async fn submit_event(
     }
 
     let (event_id, sequence) = insert_event_in_tx(&mut *tx, pool, account_id, &req).await?;
+
+    // Same model as submit_v1_event: sign + persist inside the open transaction,
+    // then commit. Never commit the empty placeholder alone.
+    let snapshot = proof_snapshot_at_event(&mut *tx, signer, req.chain_id, event_id, sequence)
+        .await
+        .map_err(LedgerError::DatabaseError)?;
+    persist_event_signature(&mut *tx, event_id, &snapshot.signature)
+        .await
+        .map_err(LedgerError::DatabaseError)?;
+
     tx.commit().await?;
 
-    finalize_event_submission(pool, signer, req.chain_id, event_id, sequence).await
+    // Same Anchored gate as submit_v1_event (do not change the condition itself).
+    let proof_status = derive_proof_status(&snapshot.context);
+    if proof_status == ProofStatus::Anchored {
+        let capabilities = get_account_capabilities(pool, account_id)
+            .await
+            .map_err(LedgerError::DatabaseError)?;
+        let tsa_class = tsa_class_from_plan(&capabilities.plan_name);
+        if let Err(err) = on_proof_anchored(pool, event_id, &req.file_hash, tsa_class).await {
+            tracing::error!(
+                proof_id = %event_id,
+                file_hash = %req.file_hash,
+                error = %err,
+                "public proof materialization failed after legacy /events anchor"
+            );
+        }
+    }
+
+    finalize_event_submission(
+        pool,
+        signer,
+        req.chain_id,
+        event_id,
+        sequence,
+        &snapshot.merkle_root,
+        &snapshot.signature,
+        &snapshot.public_key,
+    )
+    .await
 }
 
 /// Inserts a ledger event inside an open transaction (no commit).
@@ -306,6 +347,8 @@ pub async fn insert_event_in_tx(
     .bind(parent_event_id)
     .bind(&req.file_hash)
     .bind(&req.idempotency_key)
+    // Placeholder; overwritten by persist_event_signature before tx.commit()
+    // (legacy POST /events and POST /v1/events).
     .bind("")
     .bind(sequence)
     .bind(req.identity_key_id)
@@ -345,16 +388,19 @@ pub async fn insert_event_in_tx(
 
 async fn finalize_event_submission(
     pool: &PgPool,
-    signer: &ServerSigner,
+    _signer: &ServerSigner,
     chain_id: Uuid,
     event_id: Uuid,
     sequence: i64,
+    merkle_root: &str,
+    signature: &str,
+    public_key: &str,
 ) -> Result<Value, LedgerError> {
+    // TSA after commit (same timing class as v1 post_commit_tsa).
     if let Some(root) = compute_chain_root(pool, chain_id).await {
         crate::tsa_worker::stamp_chain(pool, chain_id, &root, event_id).await;
     }
 
-    // Потом получаем TSA из БД
     let tsa_record = sqlx::query!(
         r#"
         SELECT tsa_timestamp, tsa_serial, length(tsa_token) as token_bytes
@@ -380,11 +426,7 @@ async fn finalize_event_submission(
     .fetch_all(pool)
     .await?;
 
-    let root = crate::merkle::MerkleTree::recompute_root_from_events(&events);
     let chain_head = event_id.to_string();
-    let signature = signer.sign_root(&chain_id.to_string(), &root, &chain_head);
-    let public_key = signer.public_key_hex();
-
     let event_payloads: Vec<Value> = events
         .iter()
         .map(|event| {
@@ -397,6 +439,7 @@ async fn finalize_event_submission(
         })
         .collect();
 
+    // Use the pre-commit snapshot signature/root so response bytes match DB.
     Ok(json!({
         "leaf_version": crate::proof_format::LEAF_VERSION,
         "event_id": event_id,
@@ -407,7 +450,7 @@ async fn finalize_event_submission(
         "proof": {
             "version": crate::proof_format::PROOF_VERSION,
             "type": crate::proof_format::PROOF_TYPE,
-            "root": root,
+            "root": merkle_root,
             "chain_head": chain_head,
             "signature": signature,
             "public_key": public_key,
