@@ -87,6 +87,7 @@ Severity legend: **High** / **Medium** / **Low**.
 | Signing key files tracked? | **No** (`*.bin` / `signing_key.bin` gitignored) |
 | Live Paddle secrets / private keys in tree? | **None found** in tracked sources |
 | `Cargo.lock` tracked? | **Yes** (closed) |
+| Production `SIGNING_KEY_PATH` enforced? | **Yes** (Stage 11.2 — see [SECURITY_AUDIT_STAGE_11_2.md](audits/SECURITY_AUDIT_STAGE_11_2.md)) |
 
 ---
 

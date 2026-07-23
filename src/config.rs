@@ -35,11 +35,16 @@ impl AppConfig {
             panic!("DEV_MODE cannot be enabled in production environment");
         }
 
-        let signing_key_path = env::var("SIGNING_KEY_PATH")
+        let signing_key_from_env = env::var("SIGNING_KEY_PATH")
             .ok()
             .map(|v| v.trim().to_string())
-            .filter(|v| !v.is_empty())
-            .unwrap_or_else(|| "signing_key.bin".into());
+            .filter(|v| !v.is_empty());
+
+        if environment == "production" && signing_key_from_env.is_none() {
+            panic!("SIGNING_KEY_PATH must be set in production environment");
+        }
+
+        let signing_key_path = signing_key_from_env.unwrap_or_else(|| "signing_key.bin".into());
 
         let trust_proxy_headers = env::var("TRUST_PROXY_HEADERS")
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))

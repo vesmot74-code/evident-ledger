@@ -47,6 +47,14 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let config = config::AppConfig::from_env();
+    if config.environment == "production"
+        && !std::path::Path::new(&config.signing_key_path).exists()
+    {
+        panic!(
+            "signing key not found at {}; refusing to auto-create in production",
+            config.signing_key_path_display().display()
+        );
+    }
     let signer = Arc::new(signing::ServerSigner::load_or_create(
         &config.signing_key_path,
     ));

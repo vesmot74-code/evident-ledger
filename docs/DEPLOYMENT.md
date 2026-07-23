@@ -39,7 +39,7 @@ Template: [`.env.example`](../.env.example).
 |----------|---------|
 | `DATABASE_URL` | Postgres connection string. Startup expects this; process panics if missing or unreachable. |
 | `ENVIRONMENT` | `development` or `production`. Defaults to `development` if unset. |
-| `SIGNING_KEY_PATH` | **Required for production.** Absolute path to the server Ed25519 signing key file. |
+| `SIGNING_KEY_PATH` | **Required for production** (enforced at startup). Absolute path to the server Ed25519 signing key file. |
 | `PADDLE_API_KEY` | Server-side Paddle API key. **Required** — panic if unset (non-test). |
 | `PADDLE_WEBHOOK_SECRET` | HMAC secret for `POST /paddle/webhook`. **Required** — panic if unset. |
 | `PADDLE_CLIENT_TOKEN` | Public Paddle.js client token for Dashboard overlay. **Required** — panic if unset. |
@@ -60,9 +60,11 @@ Template: [`.env.example`](../.env.example).
 | Mode | Behavior |
 |------|----------|
 | `SIGNING_KEY_PATH` set | Use that path exactly (no silent fallback). |
-| unset | Fallback to `./signing_key.bin` relative to process CWD (local/dev only). |
+| unset + `ENVIRONMENT=development` | Fallback to `./signing_key.bin` relative to process CWD. |
+| unset + `ENVIRONMENT=production` | Startup panic: `SIGNING_KEY_PATH must be set in production environment`. |
+| path missing + `ENVIRONMENT=production` | Startup panic — refuses to auto-create a new key. |
 
-If a new key file is created, the server logs:
+In development, if a new key file is created, the server logs:
 
 ```text
 WARNING: created new server signing key at <full-path>
