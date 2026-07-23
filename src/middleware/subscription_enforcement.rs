@@ -1,6 +1,6 @@
-//! Subscription enforcement middleware for write APIs (Stage 8.2c / 11.3).
+//! Subscription enforcement middleware for write APIs (Stage 8.2c / 11.3 / 11.5).
 //!
-//! Applied to `/v1/*` and legacy `/events`, `/chains`.
+//! Applied to `/v1/*`, legacy `/events`, `/chains`, and `/backup`.
 
 use axum::{
     body::Body,

@@ -1,6 +1,6 @@
-//! Subscription billing enforcement (Stage 8.2c / 11.3).
+//! Subscription billing enforcement (Stage 8.2c / 11.3 / 11.5).
 //!
-//! Shared by `/v1/*` and legacy write routes (`/events`, `/chains`).
+//! Shared by `/v1/*`, legacy writes (`/events`, `/chains`), and `/backup`.
 
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};

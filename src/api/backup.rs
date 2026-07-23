@@ -1,6 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::{header, HeaderMap, HeaderValue, StatusCode},
+    middleware,
     response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
@@ -9,7 +10,8 @@ use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
 
-use crate::auth::AuthedAccount;
+use crate::auth::{api_key_auth_middleware, AuthedAccount};
+use crate::middleware::subscription_enforcement::subscription_enforcement_middleware;
 use crate::service::backup::{
     create_backup, get_backup_info, list_backups, read_backup_file, BackupError,
 };
@@ -27,6 +29,14 @@ pub fn router(state: AppState) -> Router {
         .route("/list", get(list_handler))
         .route("/:backup_id/download", get(download_handler))
         .route("/:backup_id", get(info_handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            subscription_enforcement_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_key_auth_middleware,
+        ))
         .with_state(state)
 }
 

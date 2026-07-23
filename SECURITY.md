@@ -189,7 +189,11 @@ A change to any invariant below is an intentional edit to `SECURITY.md`, not a s
 
 17. Subscription status determines API access for paid features.
 
-18. Past-due accounts lose write access immediately.
+18. Past-due accounts on paid tiers lose **paid write capabilities** immediately
+    (ledger writes, server backup create, and other guarded mutating APIs).
+    Documented exception: `/accounts/*` account-management surfaces (including
+    identity key challenge/register) remain available under `past_due` — see
+    [docs/BILLING_MODEL.md](docs/BILLING_MODEL.md) §5.
 
 19. Canceled accounts retain paid-tier access until `current_period_end`; after expiry, `subscription_status` becomes `none` and `tariff_plan_id` reverts to the free tariff.
 
@@ -259,7 +263,11 @@ Full specification: [docs/BILLING_MODEL.md](docs/BILLING_MODEL.md) (frozen at St
 | External authority | Paddle — payment truth; local DB is derived, verified state |
 | Free tier | `tariff_plan_id = free` — never blocked by `subscription_status` |
 
-Paid-tier write access requires `active` (or `canceled` before period end). `past_due` blocks writes only on paid tiers. Webhooks: signature verification + idempotency required (Invariants 21–22).
+Paid-tier write access requires `active` (or `canceled` before period end).
+`past_due` blocks paid write capabilities (including `POST /backup/create` and
+`/v1` / legacy ledger writes) on paid tiers only. `/accounts/*` identity and
+account-admin routes remain available (Accepted exception). Webhooks: signature
+verification + idempotency required (Invariants 21–22).
 
 ---
 

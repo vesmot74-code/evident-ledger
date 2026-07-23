@@ -229,25 +229,36 @@ Stale events (timestamp older than current derived state) **should** be ignored 
 
 ---
 
-## 5. Access Control — Stage 8.2c
+## 5. Access Control — Stage 8.2c / 11.5
 
 `subscription_status` affects **paid tiers only**. Free tier is never blocked by billing status.
 
-| `tariff_plan_id` | `subscription_status` | `/v1/*` writes | `/v1/*` reads | `/accounts/*` |
-|------------------|----------------------|----------------|---------------|---------------|
-| `free` | any | ✅ within free limits | ✅ | ✅ |
-| paid (`legal`, `vault`, `identity`, …) | `active` | ✅ | ✅ | ✅ |
-| paid | `past_due` | ❌ | ✅ | ✅ |
-| paid | `canceled` (before period end) | ✅ | ✅ | ✅ |
-| paid | `canceled` (after period end, before lazy eval) | → treated as `free` after lazy eval | → same | ✅ |
+| `tariff_plan_id` | `subscription_status` | `/v1/*` writes | `/v1/*` reads | `/accounts/*` | `POST /backup/create` |
+|------------------|----------------------|----------------|---------------|---------------|------------------------|
+| `free` | any | ✅ within free limits | ✅ | ✅ | entitlement (`server_backup`) |
+| paid (`legal`, `vault`, `identity`, …) | `active` | ✅ | ✅ | ✅ | ✅ if `server_backup` |
+| paid | `past_due` | ❌ `402` | ✅ | ✅ | ❌ `402` |
+| paid | `canceled` (before period end) | ✅ | ✅ | ✅ | ✅ if `server_backup` |
+| paid | `canceled` (after period end, before lazy eval) | → treated as `free` after lazy eval | → same | ✅ | → same |
+
+### Endpoint enforcement (explicit)
+
+| Endpoint | `past_due` behavior |
+|---|---|
+| `POST /v1/events`, legacy `POST /events`, `POST /chains` | **Blocked** — `402 payment_required` |
+| `POST /backup/create` | **Blocked** — `402 payment_required` (Stage 11.5) |
+| `GET /backup/*` (list/info/download) | Allowed if entitlement (`server_backup`); reads not blocked by `past_due` |
+| `/accounts/identity/keys/*` | **Allowed** — Accepted account-management exception |
+| Other `/accounts/*` (me, API keys, …) | **Allowed** — account management |
 
 **Reads** include `GET /v1/verify`, `GET /v1/proof`, and other non-mutating owner operations — allowed under `past_due` because they do not create billable resources.
 
-**Enforcement (8.2c):**
+**Enforcement (8.2c / 11.3 / 11.5):**
 
 - Middleware evaluates **`tariff_plan_id`**, not `pending_tariff_plan_id`
 - Runs lazy expiration/downgrade conditional update before limit checks when applicable
-- Write paths reject `past_due` on paid tiers; free tier unaffected
+- Paid write capabilities (`/v1` writes, legacy ledger writes, `POST /backup/create`) reject `past_due`; free tier unaffected by subscription status
+- Plan entitlements (`server_backup`, `identity_enabled`, …) still apply independently
 
 ---
 

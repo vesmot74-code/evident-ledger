@@ -7,7 +7,6 @@ use axum::http::{Request, StatusCode};
 use chrono::{Duration, Utc};
 use evident_ledger::api::v1;
 use evident_ledger::auth::api_key;
-use evident_ledger::config::AppConfig;
 use evident_ledger::state::AppState;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -34,6 +33,12 @@ fn legacy_write_app(state: AppState) -> axum::Router {
     axum::Router::new()
         .nest("/events", events::router(state.clone()))
         .nest("/chains", chains::router(state))
+}
+
+fn backup_app(state: AppState) -> axum::Router {
+    use evident_ledger::api::backup;
+
+    axum::Router::new().nest("/backup", backup::router(state))
 }
 
 async fn enable_machine_tsa_for_plan(pool: &sqlx::PgPool, plan_name: &str) {
@@ -252,6 +257,10 @@ async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
         .bind(account_id)
         .execute(pool)
         .await;
+    let _ = sqlx::query("DELETE FROM backups WHERE account_id = $1")
+        .bind(account_id)
+        .execute(pool)
+        .await;
     let _ = sqlx::query(
         "DELETE FROM events WHERE chain_id IN (SELECT chain_id FROM chains WHERE account_id = $1)",
     )
@@ -270,6 +279,22 @@ async fn cleanup_account(pool: &sqlx::PgPool, account_id: Uuid) {
         .bind(account_id)
         .execute(pool)
         .await;
+}
+
+async fn post_backup_create(
+    app: axum::Router,
+    account: &TestAccount,
+) -> (StatusCode, Value) {
+    call(
+        app,
+        authed_request(
+            "POST",
+            "/backup/create",
+            &account.api_key,
+            Some(json!({ "chain_id": account.chain_id })),
+        ),
+    )
+    .await
 }
 
 #[tokio::test]
@@ -545,5 +570,61 @@ async fn legacy_chains_active_write_passes() {
     let (status, body) = post_legacy_chain(app, &account).await;
     assert!(status.is_success(), "expected success, got {status}");
     assert!(body.get("chain_id").is_some(), "body={body}");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+// --- Stage 11.5: `/backup` uses the same subscription guard ---
+
+#[tokio::test]
+async fn backup_create_active_subscription_passes() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "vault", "active").await;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    unsafe {
+        std::env::set_var("EVIDENT_BACKUP_DIR", tmp.path());
+    }
+    let app = backup_app(test_state(pool.clone()));
+    let (status, body) = post_backup_create(app, &account).await;
+    assert_eq!(status, StatusCode::CREATED, "body={body}");
+    assert_eq!(body["status"], "created");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn backup_create_past_due_matches_v1_payment_required() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "vault", "past_due").await;
+    let state = test_state(pool.clone());
+
+    let (v1_status, v1_body) = post_event(v1_app(state.clone()), &account, "v1-vs-backup").await;
+    let (backup_status, backup_body) = post_backup_create(backup_app(state), &account).await;
+
+    assert_eq!(v1_status, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(v1_body["error"]["code"], "payment_required");
+    assert_eq!(backup_status, v1_status);
+    assert_eq!(backup_body["error"]["code"], v1_body["error"]["code"]);
+    assert_eq!(backup_body["error"]["message"], v1_body["error"]["message"]);
+
+    let backup_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backups WHERE account_id = $1")
+            .bind(account.account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("backup count");
+    assert_eq!(backup_rows, 0, "backup handler must not run on past_due");
+
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn backup_create_free_account_keeps_entitlement_behavior() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "free", "none").await;
+    let app = backup_app(test_state(pool.clone()));
+    let (status, body) = post_backup_create(app, &account).await;
+    // Free has server_backup=false — entitlement rejection, not payment_required.
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert_eq!(body["error"], "feature_not_available");
+    assert_eq!(body["feature"], "server_backup");
     cleanup_account(&pool, account.account_id).await;
 }

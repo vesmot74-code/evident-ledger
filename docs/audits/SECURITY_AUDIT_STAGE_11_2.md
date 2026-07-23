@@ -66,9 +66,13 @@ HMAC binds `ts` + body (`src/paddle/signature.rs`) but does not reject stale `ts
 
 Unset `ENVIRONMENT` → `development` (`src/config.rs`). Combined with accidental `DEV_MODE` / `APP_ENV=development`, Secure cookies and tariff switcher can be wrong on a “production-ish” host. Guard only fires when `ENVIRONMENT=production` **and** DEV_MODE is on.
 
-### M3. Non-v1 surfaces skip `past_due` middleware
+### M3. Non-v1 surfaces skip `past_due` middleware — **CLOSED for backup (Stage 11.5)**
 
-`/backup/*` and `/accounts/identity/keys` rely on plan entitlements, not the subscription enforcement layer. Past-due paid accounts may retain some paid-adjacent capabilities until plan flags change.
+| | |
+|--|--|
+| **Backup** | `POST /backup/create` now uses the same subscription middleware as `/v1` / legacy writes → `402` on `past_due`. |
+| **Identity** | `/accounts/identity/keys/*` **Accepted** — `/accounts/*` exception in BILLING_MODEL. |
+| **Evidence** | [STAGE_11_5_MEDIUM_FINDINGS.md](STAGE_11_5_MEDIUM_FINDINGS.md) |
 
 ### M4. Weak password policy
 
