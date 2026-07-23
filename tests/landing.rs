@@ -112,3 +112,61 @@ async fn landing_authenticated_nav_includes_dashboard_href() {
 
     cleanup_email(&pool, &email).await;
 }
+
+#[tokio::test]
+async fn landing_primary_download_points_to_cli_not_gui() {
+    let pool = test_pool().await;
+    let app = landing_app(common::test_app_state(pool));
+
+    let (status, html) = call_html(app, None).await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(
+        html.contains("Download CLI"),
+        "landing must label the primary CTA as Download CLI"
+    );
+
+    let main_href = extract_href_for_id(&html, "el-download-main");
+    let bottom_href = extract_href_for_id(&html, "el-download-main-bottom");
+    assert!(
+        main_href.contains("/download/evident-") && !main_href.contains("evident-gui"),
+        "primary download must target CLI artifact, got {main_href}"
+    );
+    assert!(
+        bottom_href.contains("/download/evident-") && !bottom_href.contains("evident-gui"),
+        "bottom primary download must target CLI artifact, got {bottom_href}"
+    );
+
+    // OS-detection map for the primary CTA must use CLI assets.
+    assert!(html.contains(
+        "releases/latest/download/evident-aarch64-apple-darwin'"
+    ));
+    assert!(html.contains(
+        "releases/latest/download/evident-windows-x64.exe'"
+    ));
+    // GUI remains available only as a labeled preview option.
+    assert!(html.contains("GUI Preview"));
+    assert!(html.contains("data-download-kind=\"gui\""));
+    assert!(html.contains("data-download-kind=\"cli\""));
+}
+
+/// Pull `href="…"` for an anchor that includes `id="<id>"` in its opening tag.
+fn extract_href_for_id(html: &str, id: &str) -> String {
+    let marker = format!(r#"id="{id}""#);
+    let Some(id_pos) = html.find(&marker) else {
+        return String::new();
+    };
+    let tag_start = html[..id_pos].rfind('<').unwrap_or(0);
+    let tag_end = html[id_pos..]
+        .find('>')
+        .map(|i| id_pos + i)
+        .unwrap_or(id_pos);
+    let tag = &html[tag_start..=tag_end];
+    let href_key = "href=\"";
+    let Some(h) = tag.find(href_key) else {
+        return String::new();
+    };
+    let start = h + href_key.len();
+    let end = tag[start..].find('"').map(|i| start + i).unwrap_or(start);
+    tag[start..end].to_string()
+}

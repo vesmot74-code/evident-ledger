@@ -23,7 +23,7 @@ Verified against release **v1.1.5** (asset names are the source of truth):
 
 **Pilot users should install `evident`, not `evident-gui`.**
 
-The landing-page “Download” buttons currently point at **GUI** assets. For first proof, use the CLI assets listed above.
+The landing primary CTA is labeled **Download CLI** and points at the `evident-*` release assets (platform-detected). GUI builds remain available as separate **GUI Preview** links only.
 
 ---
 
