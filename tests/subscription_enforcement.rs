@@ -28,6 +28,14 @@ fn v1_app(state: AppState) -> axum::Router {
     v1::router(state)
 }
 
+fn legacy_write_app(state: AppState) -> axum::Router {
+    use evident_ledger::api::{chains, events};
+
+    axum::Router::new()
+        .nest("/events", events::router(state.clone()))
+        .nest("/chains", chains::router(state))
+}
+
 async fn enable_machine_tsa_for_plan(pool: &sqlx::PgPool, plan_name: &str) {
     sqlx::query("UPDATE tariff_plans SET tsa_mode = 'machine' WHERE name = $1")
         .bind(plan_name)
@@ -187,6 +195,37 @@ async fn post_event(app: axum::Router, account: &TestAccount, label: &str) -> (S
     req.headers_mut()
         .insert("Idempotency-Key", format!("idem-{label}").parse().unwrap());
     call(app, req).await
+}
+
+/// Legacy `POST /events` uses `SubmitEventRequest` JSON (idempotency in body).
+async fn post_legacy_event(
+    app: axum::Router,
+    account: &TestAccount,
+    label: &str,
+) -> (StatusCode, Value) {
+    call(
+        app,
+        authed_request(
+            "POST",
+            "/events",
+            &account.api_key,
+            Some(json!({
+                "chain_id": account.chain_id,
+                "file_hash": valid_file_hash(label),
+                "idempotency_key": format!("legacy-idem-{label}"),
+                "parent_event_id": null,
+            })),
+        ),
+    )
+    .await
+}
+
+async fn post_legacy_chain(app: axum::Router, account: &TestAccount) -> (StatusCode, Value) {
+    call(
+        app,
+        authed_request("POST", "/chains", &account.api_key, None),
+    )
+    .await
 }
 
 async fn account_plan_name(pool: &sqlx::PgPool, account_id: Uuid) -> String {
@@ -425,5 +464,86 @@ async fn free_plan_read_passes_when_usage_limit_exceeded() {
     let (status, body) = call(app, req).await;
     assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_ne!(body["error"]["code"], "usage_limit_exceeded");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+// --- Stage 11.3: legacy `/events` and `/chains` use the same subscription guard ---
+
+#[tokio::test]
+async fn legacy_events_paid_active_write_passes() {
+    let pool = test_pool().await;
+    enable_machine_tsa_for_plan(&pool, "legal").await;
+    let account = create_test_account(&pool, "legal", "active").await;
+    let app = legacy_write_app(test_state(pool.clone()));
+    let (status, _) = post_legacy_event(app, &account, "legacy-paid-active").await;
+    assert!(status.is_success(), "expected success, got {status}");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn legacy_events_past_due_matches_v1_payment_required() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "legal", "past_due").await;
+    let state = test_state(pool.clone());
+
+    let (v1_status, v1_body) = post_event(v1_app(state.clone()), &account, "v1-past-due").await;
+    let (legacy_status, legacy_body) =
+        post_legacy_event(legacy_write_app(state), &account, "legacy-past-due").await;
+
+    assert_eq!(v1_status, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(v1_body["error"]["code"], "payment_required");
+    assert_eq!(legacy_status, v1_status);
+    assert_eq!(legacy_body["error"]["code"], v1_body["error"]["code"]);
+    assert_eq!(legacy_body["error"]["message"], v1_body["error"]["message"]);
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn legacy_events_free_account_write_allowed() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "free", "none").await;
+    let app = legacy_write_app(test_state(pool.clone()));
+    let (status, _) = post_legacy_event(app, &account, "legacy-free-ok").await;
+    assert!(status.is_success(), "expected success, got {status}");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn legacy_events_canceled_before_period_end_write_passes() {
+    let pool = test_pool().await;
+    enable_machine_tsa_for_plan(&pool, "legal").await;
+    let account = create_test_account(&pool, "legal", "canceled").await;
+    set_billing_fields(
+        &pool,
+        account.account_id,
+        None,
+        Some(Utc::now() + Duration::days(7)),
+    )
+    .await;
+    let app = legacy_write_app(test_state(pool.clone()));
+    let (status, _) = post_legacy_event(app, &account, "legacy-canceled-active").await;
+    assert!(status.is_success(), "expected success, got {status}");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn legacy_chains_past_due_returns_payment_required() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "legal", "past_due").await;
+    let app = legacy_write_app(test_state(pool.clone()));
+    let (status, body) = post_legacy_chain(app, &account).await;
+    assert_eq!(status, StatusCode::PAYMENT_REQUIRED);
+    assert_eq!(body["error"]["code"], "payment_required");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn legacy_chains_active_write_passes() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "legal", "active").await;
+    let app = legacy_write_app(test_state(pool.clone()));
+    let (status, body) = post_legacy_chain(app, &account).await;
+    assert!(status.is_success(), "expected success, got {status}");
+    assert!(body.get("chain_id").is_some(), "body={body}");
     cleanup_account(&pool, account.account_id).await;
 }

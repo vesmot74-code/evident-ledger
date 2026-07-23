@@ -38,15 +38,13 @@ Full clean pilot path (register → commit → Paddle sandbox upgrade → webhoo
 
 ## High
 
-### H1. `past_due` (and related) subscription enforcement bypass on legacy write routes
+### H1. `past_due` (and related) subscription enforcement bypass on legacy write routes — **CLOSED (Stage 11.3)**
 
 | | |
 |--|--|
-| **Problem** | `subscription_enforcement_middleware` is mounted only under `/v1/*`. Legacy `POST /events`, `POST /chains` (and CLI clients that still call them) check quotas but not `past_due`. |
-| **Impact** | A paid account in `past_due` can keep committing evidence via CLI/legacy API while `/v1/events` correctly returns 402. |
-| **Evidence** | `src/api/v1/mod.rs`, `src/main.rs` (`/chains`, `/events` nests), `src/service/subscription_enforcement.rs`, `src/client.rs` / `src/bin/evident.rs` |
-| **Recommendation** | Before enabling paid pilot traffic: apply the same middleware to legacy write routers, or disable/redirect legacy writers in production. |
-| **Pilot note** | Acceptable only for a trusted single-operator pilot that uses Dashboard/`/v1` exclusively **or** monitors billing status manually. |
+| **Was** | `subscription_enforcement_middleware` mounted only under `/v1/*`. Legacy `POST /events`, `POST /chains` checked quotas but not `past_due`. |
+| **Now** | Legacy `/events` and `/chains` use the same middleware; past_due → `402 payment_required` matching `/v1`. |
+| **Evidence** | [STAGE_11_3_SUBSCRIPTION_ENFORCEMENT.md](STAGE_11_3_SUBSCRIPTION_ENFORCEMENT.md), `tests/subscription_enforcement.rs` |
 
 ### H2. Failed Paddle webhooks cannot be successfully retried
 

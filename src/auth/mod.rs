@@ -9,8 +9,10 @@ pub use web_auth::router as web_auth_router;
 use crate::state::AppState;
 use axum::{
     async_trait,
-    extract::FromRequestParts,
-    http::{request::Parts, StatusCode},
+    body::Body,
+    extract::{FromRequestParts, State},
+    http::{request::Parts, Request, StatusCode},
+    middleware::Next,
     response::{IntoResponse, Response},
     Json,
 };
@@ -58,6 +60,22 @@ pub async fn resolve_authed_account(
         account_id: row.try_get("account_id").map_err(|_| AuthError::Invalid)?,
         key_hash: row.try_get("key_hash").map_err(|_| AuthError::Invalid)?,
     })
+}
+
+/// Authenticates once and stores `AuthedAccount` for subscription middleware / handlers.
+/// Keeps legacy `AuthError` response shape (unlike `/v1` which maps to `ApiError`).
+pub async fn api_key_auth_middleware(
+    State(state): State<AppState>,
+    mut request: Request<Body>,
+    next: Next,
+) -> Response {
+    match resolve_authed_account(request.headers(), &state).await {
+        Ok(auth) => {
+            request.extensions_mut().insert(auth);
+            next.run(request).await
+        }
+        Err(err) => err.into_response(),
+    }
 }
 
 impl IntoResponse for AuthError {

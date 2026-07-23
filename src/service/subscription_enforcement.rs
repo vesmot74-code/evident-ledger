@@ -1,4 +1,6 @@
-//! Subscription billing enforcement for `/v1/*` (Stage 8.2c).
+//! Subscription billing enforcement (Stage 8.2c / 11.3).
+//!
+//! Shared by `/v1/*` and legacy write routes (`/events`, `/chains`).
 
 use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Row};

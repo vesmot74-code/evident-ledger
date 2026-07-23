@@ -1,10 +1,26 @@
-use crate::auth::AuthedAccount;
+use crate::auth::{api_key_auth_middleware, AuthedAccount};
+use crate::middleware::subscription_enforcement::subscription_enforcement_middleware;
 use crate::service::chains::create_chain;
 use crate::state::AppState;
-use axum::{extract::State, routing::post, Json, Router};
+use axum::{
+    extract::State,
+    middleware,
+    routing::post,
+    Json, Router,
+};
 
 pub fn router(state: AppState) -> Router {
-    Router::new().route("/", post(handler)).with_state(state)
+    Router::new()
+        .route("/", post(handler))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            subscription_enforcement_middleware,
+        ))
+        .layer(middleware::from_fn_with_state(
+            state.clone(),
+            api_key_auth_middleware,
+        ))
+        .with_state(state)
 }
 
 async fn handler(
