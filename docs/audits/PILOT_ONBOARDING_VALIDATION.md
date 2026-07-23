@@ -1,7 +1,7 @@
 # Pilot onboarding validation
 
 Date: 2026-07-23  
-Commit: *(this commit)* — Stage 13.2 validation after `dff4b6c` (landing CLI CTA) + `a715d67` (dashboard onboarding)  
+Commit: `2835cb3` — Stage 13.2 validation after `dff4b6c` (landing CLI CTA) + `a715d67` (dashboard onboarding)  
 Environment: production-like (`ENVIRONMENT=production`, `DEV_MODE=false`), `SIGNING_KEY_PATH` pilot key, live `http://127.0.0.1:3000`  
 CLI under test: workspace `target/release/evident` (`evident 0.1.0`)  
 Release assets reference: GitHub `v1.1.5` (`evident-aarch64-apple-darwin`, not `evident-gui-*`)
