@@ -45,13 +45,19 @@ If `xattr` reports that the attribute is missing, that is fine — continue.
 
 macOS may block unsigned binaries downloaded from the Internet.
 
-This is expected during controlled pilot distribution.
+This is expected during controlled pilot distribution. The warning is Gatekeeper policy — **not** a corrupted binary.
+
+Apple notarization and signed installers are deferred to a later distribution stage (Stage 14.x).
 
 If macOS shows “cannot be opened because the developer cannot be verified”:
 
 1. System Settings → Privacy & Security → allow the blocked app, **or**
 2. Right-click the binary → Open (once), **or**
-3. Clear quarantine with `xattr -d com.apple.quarantine ./evident` as above.
+3. Clear quarantine:
+
+```bash
+xattr -d com.apple.quarantine ./evident
+```
 
 ---
 
@@ -83,14 +89,22 @@ You may rename it to `evident.exe` for convenience.
 
 ---
 
-## First run
+## First command
 
 ```bash
-./evident --help
-./evident version
+./evident --version
 ```
 
-Point the CLI at your pilot server if it is not already configured by the operator (default in this codebase is typically `http://127.0.0.1:3000` for local pilot).
+Then create a chain and commit a file:
+
+```bash
+./evident new-chain
+./evident commit ./example.txt --chain <chain_id>
+```
+
+Proof JSON is written under `~/.evident/proofs/<chain_id>/`.
+
+Point the CLI at your pilot server if needed (default in this codebase: `http://127.0.0.1:3000`).
 
 Create an API key in **Dashboard → API Keys**, then:
 
@@ -99,17 +113,6 @@ export EVIDENT_API_KEY=ev_…
 # or
 mkdir -p ~/.evident && echo 'ev_…' > ~/.evident/api_key && chmod 600 ~/.evident/api_key
 ```
-
----
-
-## First commit
-
-```bash
-./evident new-chain
-./evident commit document.pdf --chain <chain_id>
-```
-
-Proof JSON is written under `~/.evident/proofs/<chain_id>/`.
 
 ---
 

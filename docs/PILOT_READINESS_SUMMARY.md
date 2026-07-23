@@ -64,6 +64,15 @@ Deferred:
 - Apple notarization
 - Automated installers
 
+## Stage 13.2 — Pilot onboarding validation
+
+Status: **Completed** — [audits/PILOT_ONBOARDING_VALIDATION.md](audits/PILOT_ONBOARDING_VALIDATION.md)
+
+- Full landing → register → dashboard → CLI → commit → verify path exercised
+- Landing CTA confirmed on live process after rebuild/restart
+- Dashboard empty state enriched with concrete CLI commands
+- Residual: Secure cookies on plain HTTP (ops / HTTPS for real pilot)
+
 ---
 
 ## Incident resolutions (pre-pilot)

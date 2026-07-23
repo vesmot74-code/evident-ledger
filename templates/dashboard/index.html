@@ -16,11 +16,27 @@
 {% if show_onboarding %}
 <section class="onboarding" data-onboarding="first-run">
   <h2>Welcome to Evident Ledger</h2>
-  <p class="lead">Your account is ready. Here is the next step for your first proof.</p>
+  <p class="lead">No proofs yet. Your account is ready — create the first one with the CLI.</p>
   <ol>
-    <li>Install the CLI</li>
-    <li>Create your first proof</li>
-    <li>Verify it publicly</li>
+    <li>
+      Install the CLI
+      <p class="muted">Download the <code>evident</code> binary (not <code>evident-gui</code>), then:</p>
+      <pre class="onboarding-code">chmod +x ./evident
+xattr -d com.apple.quarantine ./evident
+./evident --version</pre>
+    </li>
+    <li>
+      Create an API key
+      <p class="muted">Dashboard → API Keys → create, then save it:</p>
+      <pre class="onboarding-code">export EVIDENT_API_KEY=ev_…
+# or: echo 'ev_…' > ~/.evident/api_key && chmod 600 ~/.evident/api_key</pre>
+    </li>
+    <li>
+      Create your first proof
+      <pre class="onboarding-code">./evident new-chain
+./evident commit ./example.txt --chain &lt;chain_id&gt;
+./evident verify ~/.evident/proofs/&lt;chain_id&gt;/&lt;event_id&gt;.json</pre>
+    </li>
   </ol>
   <div class="card-actions">
     <a class="btn btn-primary" href="https://github.com/vesmot74-code/evident-ledger/releases/latest">Download CLI</a>

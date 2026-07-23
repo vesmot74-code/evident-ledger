@@ -191,8 +191,11 @@ async fn dashboard_home_renders_profile_after_login() {
     assert!(!body.contains(" · none"));
     assert!(!body.contains(">none<"));
     assert!(body.contains("Welcome to Evident Ledger"));
+    assert!(body.contains("No proofs yet"));
     assert!(body.contains("Download CLI"));
     assert!(body.contains("Documentation"));
+    assert!(body.contains("evident commit"));
+    assert!(body.contains("evident-gui")); // onboarding must distinguish CLI vs GUI
     assert!(body.contains("data-onboarding=\"first-run\""));
     assert!(body.contains(r#"href="/whitepaper""#));
     assert!(body.contains(r#"href="/#tiers""#));
