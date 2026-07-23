@@ -1,16 +1,35 @@
 {% extends "dashboard/layout.html" %}
 {% block title %}Account{% endblock %}
 {% block nav_dashboard %}active{% endblock %}
+{% block nav_account %}active{% endblock %}
 {% block head_extra %}
 <meta name="paddle-client-token" content="{{ paddle_client_token }}">
 <meta name="paddle-environment" content="{{ paddle_environment }}">
 <script src="https://cdn.paddle.com/paddle/v2/paddle.js" data-paddle-sdk></script>
 {% endblock %}
 {% block header_meta %}
-<span class="plan-chip">{{ plan_display }} · {{ subscription_status }}</span>
+<span class="plan-chip">{{ plan_display }}</span>
+<span class="muted">{{ subscription_status }}</span>
 <span>{{ email }}</span>
 {% endblock %}
 {% block content %}
+{% if show_onboarding %}
+<section class="onboarding" data-onboarding="first-run">
+  <h2>Welcome to Evident Ledger</h2>
+  <p class="lead">Your account is ready. Here is the next step for your first proof.</p>
+  <ol>
+    <li>Install the CLI</li>
+    <li>Create your first proof</li>
+    <li>Verify it publicly</li>
+  </ol>
+  <div class="card-actions">
+    <a class="btn btn-primary" href="https://github.com/vesmot74-code/evident-ledger/releases/latest">Download CLI</a>
+    <a class="btn" href="/whitepaper">Documentation</a>
+    <a class="btn" href="/dashboard/ui/api-keys">Create first proof</a>
+  </div>
+</section>
+{% endif %}
+
 <h2 class="page-title">Account</h2>
 <p class="page-subtitle">Overview of your account, plan, and usage.</p>
 
@@ -25,7 +44,7 @@
     <section class="card">
       <h2>Current plan</h2>
       <p class="value">{{ plan_display }}</p>
-      <p class="muted">Subscription: {{ subscription_status }}</p>
+      <p class="muted">{{ subscription_status }}</p>
       <div class="card-actions">
         <a class="btn" href="/dashboard/ui/subscription">Manage subscription</a>
       </div>

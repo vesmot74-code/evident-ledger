@@ -24,6 +24,7 @@ Security / smoke lineage:
 | Stage 12 findings | [audits/STAGE_12_0_FINDINGS.md](audits/STAGE_12_0_FINDINGS.md) | C1 Closed |
 | Signature persist (CLI) | [audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md](audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md) | **Resolved** — legacy `/events` persists before commit |
 | Identity on legacy `/events` | [audits/P1_LEGACY_EVENTS_IDENTITY_FIELDS.md](audits/P1_LEGACY_EVENTS_IDENTITY_FIELDS.md) | **Resolved** — reject; Identity via `/v1/events` only |
+| Pilot UX onboarding | [CLI_INSTALLATION.md](CLI_INSTALLATION.md) | Stage 13.1 **Completed** |
 
 Also referenced: [DEPLOYMENT.md](DEPLOYMENT.md), [DEPLOYMENT_FINDINGS.md](DEPLOYMENT_FINDINGS.md), [BILLING_MODEL.md](BILLING_MODEL.md), [`.env.example`](../.env.example).
 
@@ -43,6 +44,25 @@ Also referenced: [DEPLOYMENT.md](DEPLOYMENT.md), [DEPLOYMENT_FINDINGS.md](DEPLOY
 10. **Signing-key off-host backup** — required; verified closed in Stage 12.0 C1 (maintain backups going forward).
 11. ~~**CLI `/events` left `events.signature` empty**~~ — **Resolved** (see incident section below).
 12. ~~**Legacy `/events` accepted identity fields without PoP**~~ — **Resolved** (see incident section below). Residual Low/Medium only: P2 dual idempotency, P3 weaker legacy validation ([CRITICAL perimeter](audits/CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md)).
+
+---
+
+## Stage 13.1 — Pilot UX onboarding
+
+Status: **Completed**
+
+Implemented:
+
+- Dashboard navigation links (home, Docs, Download CLI, Pricing, Account)
+- Improved free plan presentation (`Free plan` / `No subscription` — no raw `none` / “нет”)
+- First-run onboarding state when `server_commits == 0`
+- CLI installation guide: [CLI_INSTALLATION.md](CLI_INSTALLATION.md) (binary name verified against GitHub release assets — pilot path uses `evident`, not `evident-gui`)
+
+Deferred:
+
+- Public download portal (`/download`)
+- Apple notarization
+- Automated installers
 
 ---
 

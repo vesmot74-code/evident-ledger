@@ -47,6 +47,8 @@
       flex-wrap: wrap;
     }
     .header h1 { font-size: 1.2rem; font-weight: 700; letter-spacing: -0.01em; }
+    .header h1 a { color: var(--text); text-decoration: none; }
+    .header h1 a:hover { color: var(--accent); text-decoration: none; }
     .header-meta {
       display: flex;
       align-items: center;
@@ -89,6 +91,32 @@
       text-decoration: none;
     }
     .nav-logout { margin-left: auto; }
+    .onboarding {
+      border: 1px solid #bfdbfe;
+      background: linear-gradient(180deg, #eff6ff 0%, #ffffff 100%);
+      border-radius: var(--radius);
+      padding: 22px 22px 18px;
+      margin-bottom: 20px;
+      box-shadow: var(--shadow);
+    }
+    .onboarding h2 {
+      font-size: 1.15rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-bottom: 6px;
+      text-transform: none;
+      color: var(--text);
+    }
+    .onboarding .lead {
+      color: var(--text-secondary);
+      margin-bottom: 14px;
+    }
+    .onboarding ol {
+      margin: 0 0 16px 1.2rem;
+      color: var(--text);
+    }
+    .onboarding li { margin-bottom: 6px; }
+    .onboarding .card-actions { margin-top: 0; }
     .page-title {
       font-size: 1.35rem;
       font-weight: 700;
@@ -169,7 +197,7 @@
   <div class="shell">
     <header class="header">
       <div class="header-top">
-        <h1>Evident Ledger</h1>
+        <h1><a href="/">Evident Ledger</a></h1>
         <div class="header-meta">
           {% block header_meta %}{% endblock %}
           <form class="nav-logout" method="post" action="/auth/logout">
@@ -177,8 +205,13 @@
           </form>
         </div>
       </div>
-      <nav class="nav">
-        <a href="/dashboard/ui" class="{% block nav_dashboard %}{% endblock %}">Account</a>
+      <nav class="nav" aria-label="Dashboard">
+        <a href="/">Evident Ledger</a>
+        <a href="/dashboard/ui" class="{% block nav_dashboard %}{% endblock %}">Dashboard</a>
+        <a href="/whitepaper">Docs</a>
+        <a href="https://github.com/vesmot74-code/evident-ledger/releases/latest">Download CLI</a>
+        <a href="/#tiers">Pricing</a>
+        <a href="/dashboard/ui" class="{% block nav_account %}{% endblock %}">Account</a>
         <a href="/dashboard/ui/subscription" class="{% block nav_subscription %}{% endblock %}">Subscription</a>
         <a href="/dashboard/identity" class="{% block nav_identity %}{% endblock %}">Identity</a>
         <a href="/dashboard/ui/api-keys" class="{% block nav_api_keys %}{% endblock %}">API Keys</a>

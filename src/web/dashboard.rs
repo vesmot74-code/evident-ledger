@@ -18,8 +18,9 @@ use crate::service::accounts::{self, RevokeApiKeyError};
 use crate::service::tariff;
 use crate::state::AppState;
 use crate::web::templates::{
-    format_optional_datetime, format_optional_text, format_percentage, format_usage_summary,
-    trust_level_label, ApiKeyCreatedTemplate, ApiKeyRevokedTemplate, ApiKeyRow, ApiKeysTemplate,
+    format_optional_datetime, format_optional_text, format_percentage, format_plan_label,
+    format_subscription_status_label, format_usage_summary, trust_level_label,
+    ApiKeyCreatedTemplate, ApiKeyRevokedTemplate, ApiKeyRow, ApiKeysTemplate,
     DashboardIndexTemplate, LoginTemplate, RegisterTemplate, SubscriptionTemplate, UsageTemplate,
 };
 
@@ -74,11 +75,12 @@ async fn index_handler(State(state): State<AppState>, session: SessionUser) -> R
 
     render_template(DashboardIndexTemplate {
         email: profile.email,
-        plan_display: profile.plan_display_name.to_uppercase(),
-        subscription_status: profile.subscription_status,
+        plan_display: format_plan_label(&profile.plan_name, &profile.plan_display_name),
+        subscription_status: format_subscription_status_label(&profile.subscription_status),
         trust_level: trust_level_label(&profile.plan_name).to_string(),
         usage_summary: format_usage_summary(usage.server_commits, usage.monthly_commits_limit),
         percentage: format_percentage(percentage),
+        show_onboarding: usage.server_commits == 0,
         can_upgrade: !available_plans.is_empty(),
         available_plans,
         paddle_client_token: state.config.paddle_client_token.clone(),
@@ -98,9 +100,9 @@ async fn subscription_handler(State(state): State<AppState>, session: SessionUse
         .unwrap_or_default();
 
     render_template(SubscriptionTemplate {
-        plan_display: snapshot.plan_display_name.to_uppercase(),
+        plan_display: format_plan_label(&snapshot.plan_name, &snapshot.plan_display_name),
         plan: snapshot.plan_name,
-        subscription_status: snapshot.subscription_status,
+        subscription_status: format_subscription_status_label(&snapshot.subscription_status),
         current_period_end: format_optional_datetime(snapshot.current_period_end),
         pending_plan_display: format_optional_text(snapshot.pending_plan_display_name.as_deref()),
         can_upgrade: !available_plans.is_empty(),

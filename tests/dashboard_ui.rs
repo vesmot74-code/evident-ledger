@@ -108,6 +108,15 @@ async fn cleanup_email(pool: &sqlx::PgPool, email: &str) {
     .execute(pool)
     .await;
     let _ = sqlx::query(
+        r#"
+        DELETE FROM usage_monthly
+        WHERE account_id IN (SELECT account_id FROM accounts WHERE email = $1)
+        "#,
+    )
+    .bind(email)
+    .execute(pool)
+    .await;
+    let _ = sqlx::query(
         "DELETE FROM api_keys WHERE account_id IN (SELECT account_id FROM accounts WHERE email = $1)",
     )
     .bind(email)
@@ -175,7 +184,18 @@ async fn dashboard_home_renders_profile_after_login() {
 
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains(&email));
-    assert!(body.contains("FREE"));
+    assert!(body.contains("Free plan"));
+    assert!(body.contains("No subscription"));
+    assert!(!body.contains("БЕСПЛАТНО"));
+    // Raw status must not appear as a standalone confusing label.
+    assert!(!body.contains(" · none"));
+    assert!(!body.contains(">none<"));
+    assert!(body.contains("Welcome to Evident Ledger"));
+    assert!(body.contains("Download CLI"));
+    assert!(body.contains("Documentation"));
+    assert!(body.contains("data-onboarding=\"first-run\""));
+    assert!(body.contains(r#"href="/whitepaper""#));
+    assert!(body.contains(r#"href="/#tiers""#));
     assert!(body.contains("Manage subscription") || body.contains("Manage API keys"));
     assert!(body.contains("cdn.paddle.com/paddle/v2/paddle.js"));
     assert!(body.contains(r#"name="paddle-client-token""#));
@@ -186,6 +206,47 @@ async fn dashboard_home_renders_profile_after_login() {
     assert!(body.contains("Logout"));
     assert!(body.contains(r#"action="/auth/logout""#));
     assert!(body.contains("Trust level"));
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn dashboard_hides_onboarding_after_first_commit_usage() {
+    let pool = test_pool().await;
+    let email = format!("ui-onboard-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = full_app(test_state(pool.clone()));
+    let cookie = register_and_login(&app, &email).await;
+
+    let account_id: Uuid = sqlx::query_scalar("SELECT account_id FROM accounts WHERE email = $1")
+        .bind(&email)
+        .fetch_one(&pool)
+        .await
+        .expect("account");
+
+    sqlx::query(
+        r#"
+        INSERT INTO usage_monthly (account_id, period_start, server_commits)
+        VALUES ($1, date_trunc('month', now())::date, 1)
+        ON CONFLICT (account_id, period_start)
+        DO UPDATE SET server_commits = EXCLUDED.server_commits
+        "#,
+    )
+    .bind(account_id)
+    .execute(&pool)
+    .await
+    .expect("usage");
+
+    let (status, body, _) = call_text(
+        app,
+        peer_request("GET", "/dashboard/ui", None, Some(&cookie), &[]),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
+    assert!(body.contains("Free plan"));
+    assert!(body.contains("Download CLI"));
+    assert!(!body.contains("data-onboarding=\"first-run\""));
+    assert!(!body.contains("Welcome to Evident Ledger"));
     cleanup_email(&pool, &email).await;
 }
 
@@ -211,8 +272,9 @@ async fn dashboard_subscription_page_renders_plan() {
 
     assert_eq!(status, StatusCode::OK);
     assert!(body.contains("Subscription"));
-    assert!(body.contains("FREE"));
-    assert!(body.contains("none"));
+    assert!(body.contains("Free plan"));
+    assert!(body.contains("No subscription"));
+    assert!(!body.contains(" · none"));
     assert!(body.contains("cdn.paddle.com/paddle/v2/paddle.js"));
     assert!(body.contains(r#"name="paddle-client-token""#));
     assert!(body.contains("data-paddle-sdk"));

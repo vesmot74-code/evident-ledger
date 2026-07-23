@@ -11,6 +11,9 @@ pub struct DashboardIndexTemplate {
     pub trust_level: String,
     pub usage_summary: String,
     pub percentage: String,
+    /// True when the account has not yet recorded any server commits this period
+    /// (and has no usage row) — used for first-run onboarding only.
+    pub show_onboarding: bool,
     pub can_upgrade: bool,
     pub available_plans: Vec<PlanPreview>,
     pub paddle_client_token: String,
@@ -140,5 +143,45 @@ pub fn trust_level_label(plan_name: &str) -> &'static str {
         "vault" => "VAULT",
         "legal" => "ENHANCED",
         _ => "BASIC",
+    }
+}
+
+/// Human-readable plan label for dashboard presentation (no billing changes).
+pub fn format_plan_label(plan_name: &str, plan_display_name: &str) -> String {
+    if plan_name == "free" {
+        "Free plan".to_string()
+    } else {
+        plan_display_name.to_string()
+    }
+}
+
+/// Human-readable subscription status for dashboard presentation.
+pub fn format_subscription_status_label(status: &str) -> String {
+    match status {
+        "none" => "No subscription".to_string(),
+        "active" => "Active".to_string(),
+        "past_due" => "Past due".to_string(),
+        "canceled" | "cancelled" => "Canceled".to_string(),
+        other => other.to_string(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn free_plan_label_is_user_friendly() {
+        assert_eq!(format_plan_label("free", "Free"), "Free plan");
+        assert_eq!(format_plan_label("free", "Бесплатно"), "Free plan");
+        assert_eq!(format_plan_label("legal", "Legal"), "Legal");
+    }
+
+    #[test]
+    fn none_subscription_is_not_raw_none() {
+        assert_eq!(format_subscription_status_label("none"), "No subscription");
+        assert_ne!(format_subscription_status_label("none"), "none");
+        assert_ne!(format_subscription_status_label("none"), "нет");
+        assert_eq!(format_subscription_status_label("active"), "Active");
     }
 }
