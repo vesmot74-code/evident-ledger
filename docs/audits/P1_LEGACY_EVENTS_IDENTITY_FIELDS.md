@@ -2,7 +2,7 @@
 
 Date: 2026-07-23  
 Status: **Resolved**  
-Fix commit: *(recorded after commit)*  
+Fix commit: `c77172e`  
 Related: [CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md](CRITICAL_SIGNATURE_PERSISTENCE_INVESTIGATION.md) (Perimeter check P1)  
 Severity: **Medium** (default CLI path) · **High candidate** if any client posts Identity via legacy `/events`
 
