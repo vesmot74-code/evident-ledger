@@ -1,4 +1,4 @@
-//! POST /paddle/webhook — Paddle Billing webhook handler (Stage 8.2b).
+//! POST /paddle/webhook — Paddle Billing webhook handler (Stage 8.2b / 11.4).
 
 use axum::{
     body::Bytes,
@@ -34,6 +34,7 @@ async fn webhook_handler(
         .and_then(|v| v.to_str().ok())
         .unwrap_or("");
 
+    // Permanent: invalid signature (do not retry).
     if !verify_paddle_signature(&body, signature, &state.config.paddle_webhook_secret) {
         return error_response(
             StatusCode::UNAUTHORIZED,
@@ -41,6 +42,7 @@ async fn webhook_handler(
         );
     }
 
+    // Permanent: malformed JSON (do not retry). Keep existing 400 contract.
     let event: PaddleWebhookEvent = match serde_json::from_slice(&body) {
         Ok(event) => event,
         Err(_) => {
@@ -66,19 +68,47 @@ async fn webhook_handler(
         Ok(WebhookOutcome::Ignored) => {
             (StatusCode::OK, Json(json!({ "status": "ignored" }))).into_response()
         }
-        Err(WebhookError::PayloadHashConflict) => {
+        Err(err) => map_processing_error(&event, err),
+    }
+}
+
+fn map_processing_error(event: &PaddleWebhookEvent, err: WebhookError) -> Response {
+    if err.is_temporary() {
+        tracing::error!(
+            event_id = %event.event_id,
+            event_type = %event.event_type,
+            error_type = err.error_type_name(),
+            error = ?err,
+            "paddle webhook temporary processing failure; returning 5xx for Paddle retry"
+        );
+        return error_response(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            json!({ "error": "temporary_failure" }),
+        );
+    }
+
+    // Permanent payload/structure issues — do not invite Paddle retry.
+    match err {
+        WebhookError::PayloadHashConflict => {
             error_response(StatusCode::CONFLICT, json!({ "error": "conflict" }))
         }
-        Err(WebhookError::InvalidStatusTransition) | Err(WebhookError::PlanNotFound) => {
+        WebhookError::MissingField(field) => error_response(
+            StatusCode::BAD_REQUEST,
+            json!({ "error": "invalid_payload", "field": field }),
+        ),
+        other => {
+            // Defensive: unclassified permanent variants.
+            tracing::warn!(
+                event_id = %event.event_id,
+                event_type = %event.event_type,
+                error_type = other.error_type_name(),
+                "paddle webhook permanent processing failure"
+            );
             error_response(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                json!({ "error": "internal_error" }),
+                StatusCode::BAD_REQUEST,
+                json!({ "error": "invalid_payload" }),
             )
         }
-        Err(WebhookError::MissingField(_)) | Err(WebhookError::Database(_)) => error_response(
-            StatusCode::INTERNAL_SERVER_ERROR,
-            json!({ "error": "internal_error" }),
-        ),
     }
 }
 

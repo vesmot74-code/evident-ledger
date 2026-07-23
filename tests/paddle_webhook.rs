@@ -456,3 +456,223 @@ async fn conflicting_payload_hash_returns_conflict() {
         "2026-08-18T10:00:00Z",
     );
 }
+
+// --- Stage 11.4: permanent vs temporary error classification ---
+
+#[tokio::test]
+async fn malformed_payload_is_permanent_bad_request() {
+    let pool = test_pool().await;
+    let app = paddle_webhook::router(test_state(pool));
+    let body = "not-json";
+    let (status, json) = post_webhook(app, signed_request(body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"], "invalid_payload");
+}
+
+#[tokio::test]
+async fn missing_customer_id_is_permanent_bad_request() {
+    let pool = test_pool().await;
+    let app = paddle_webhook::router(test_state(pool));
+    let body = json!({
+        "event_id": format!("evt_{}", Uuid::new_v4()),
+        "event_type": "subscription.created",
+        "occurred_at": "2026-07-18T10:00:00Z",
+        "data": {
+            "id": format!("sub_{}", Uuid::new_v4()),
+            "items": [{ "price": { "id": "pri_legal_test" } }],
+            "current_billing_period": { "ends_at": "2026-08-18T10:00:00Z" }
+        }
+    })
+    .to_string();
+
+    let (status, json) = post_webhook(app, signed_request(&body)).await;
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(json["error"], "invalid_payload");
+}
+
+fn event_payload_with_price(
+    event_id: &str,
+    event_type: &str,
+    customer_id: &str,
+    subscription_id: &str,
+    period_end: &str,
+    price_id: &str,
+) -> String {
+    json!({
+        "event_id": event_id,
+        "event_type": event_type,
+        "occurred_at": "2026-07-18T10:00:00Z",
+        "data": {
+            "id": subscription_id,
+            "customer_id": customer_id,
+            "current_billing_period": { "ends_at": period_end },
+            "items": [{ "price": { "id": price_id } }]
+        }
+    })
+    .to_string()
+}
+
+/// Unknown price mapping is temporary (config may sync); Paddle should retry (5xx).
+#[tokio::test]
+async fn plan_not_found_is_temporary_internal_error() {
+    let pool = test_pool().await;
+    let customer_id = format!("ctm_{}", Uuid::new_v4());
+    let subscription_id = format!("sub_{}", Uuid::new_v4());
+    let event_id = format!("evt_{}", Uuid::new_v4());
+    let missing_price = format!("pri_missing_{}", Uuid::new_v4());
+    let account_id = create_account(&pool, &customer_id, "none").await;
+    let app = paddle_webhook::router(test_state(pool.clone()));
+
+    let body = event_payload_with_price(
+        &event_id,
+        "subscription.created",
+        &customer_id,
+        &subscription_id,
+        "2026-08-18T10:00:00Z",
+        &missing_price,
+    );
+    let (status, json) = post_webhook(app, signed_request(&body)).await;
+
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+    assert_eq!(json["error"], "temporary_failure");
+    assert_eq!(account_tariff_plan_name(&pool, account_id).await, "free");
+
+    let webhook_status: String =
+        sqlx::query_scalar("SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("webhook status");
+    assert_eq!(webhook_status, "failed");
+}
+
+/// After a temporary failure (`failed`), a later delivery must re-enter processing.
+/// Uses `vault` price mapping so parallel tests that touch `legal` do not race.
+#[tokio::test]
+async fn failed_webhook_retries_successfully_after_config_fix() {
+    let pool = test_pool().await;
+    let customer_id = format!("ctm_{}", Uuid::new_v4());
+    let subscription_id = format!("sub_{}", Uuid::new_v4());
+    let event_id = format!("evt_{}", Uuid::new_v4());
+    let price_id = format!("pri_retry_{}", Uuid::new_v4());
+    let account_id = create_account(&pool, &customer_id, "none").await;
+    let app = paddle_webhook::router(test_state(pool.clone()));
+
+    let body = event_payload_with_price(
+        &event_id,
+        "subscription.created",
+        &customer_id,
+        &subscription_id,
+        "2026-08-18T10:00:00Z",
+        &price_id,
+    );
+
+    let (status, _) = post_webhook(app.clone(), signed_request(&body)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = 'vault'")
+        .bind(&price_id)
+        .execute(&pool)
+        .await
+        .expect("map price");
+
+    let (status, json) = post_webhook(app, signed_request(&body)).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(json["status"], "processed");
+    assert_eq!(account_tariff_plan_name(&pool, account_id).await, "vault");
+
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
+    assert_eq!(rows, 1);
+
+    let webhook_status: String =
+        sqlx::query_scalar("SELECT status FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("webhook status");
+    assert_eq!(webhook_status, "processed");
+}
+
+/// Concurrent retries of a `failed` event must not double-apply (conditional mark_processing).
+/// Uses `identity` price mapping to avoid racing other tests on `legal`/`vault`.
+#[tokio::test]
+async fn concurrent_failed_retries_do_not_double_apply() {
+    let pool = test_pool().await;
+    let customer_id = format!("ctm_{}", Uuid::new_v4());
+    let subscription_id = format!("sub_{}", Uuid::new_v4());
+    let event_id = format!("evt_{}", Uuid::new_v4());
+    let price_id = format!("pri_race_{}", Uuid::new_v4());
+    let account_id = create_account(&pool, &customer_id, "none").await;
+    let app = Arc::new(paddle_webhook::router(test_state(pool.clone())));
+
+    let body = event_payload_with_price(
+        &event_id,
+        "subscription.created",
+        &customer_id,
+        &subscription_id,
+        "2026-08-18T10:00:00Z",
+        &price_id,
+    );
+
+    // First delivery fails (no price mapping) → status `failed`.
+    let (status, _) = post_webhook((*app).clone(), signed_request(&body)).await;
+    assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+
+    sqlx::query("UPDATE tariff_plans SET paddle_price_id = $1 WHERE name = 'identity'")
+        .bind(&price_id)
+        .execute(&pool)
+        .await
+        .expect("map price");
+
+    let barrier = Arc::new(tokio::sync::Barrier::new(2));
+    let app_a = Arc::clone(&app);
+    let app_b = Arc::clone(&app);
+    let body_a = body.clone();
+    let body_b = body.clone();
+    let barrier_a = Arc::clone(&barrier);
+    let barrier_b = Arc::clone(&barrier);
+
+    let task_a = tokio::spawn(async move {
+        barrier_a.wait().await;
+        post_webhook((*app_a).clone(), signed_request(&body_a)).await
+    });
+    let task_b = tokio::spawn(async move {
+        barrier_b.wait().await;
+        post_webhook((*app_b).clone(), signed_request(&body_b)).await
+    });
+
+    let (ra, rb) = tokio::join!(task_a, task_b);
+    let (status_a, json_a) = ra.expect("task a");
+    let (status_b, json_b) = rb.expect("task b");
+
+    // One wins (processed); the other is idempotent or temporary — never a second apply.
+    let statuses = [status_a, status_b];
+    assert!(
+        statuses.iter().any(|s| *s == StatusCode::OK),
+        "expected at least one OK, got {status_a:?}/{status_b:?} bodies={json_a}/{json_b}"
+    );
+    for (status, json) in [(status_a, &json_a), (status_b, &json_b)] {
+        if status == StatusCode::OK {
+            assert!(
+                json["status"] == "processed" || json["status"] == "idempotent",
+                "unexpected ok body: {json}"
+            );
+        } else {
+            assert_eq!(status, StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+
+    assert_eq!(account_tariff_plan_name(&pool, account_id).await, "identity");
+    let rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM paddle_webhook_events WHERE paddle_event_id = $1")
+            .bind(&event_id)
+            .fetch_one(&pool)
+            .await
+            .expect("event count");
+    assert_eq!(rows, 1);
+}

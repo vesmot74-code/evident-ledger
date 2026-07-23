@@ -46,14 +46,13 @@ Full clean pilot path (register → commit → Paddle sandbox upgrade → webhoo
 | **Now** | Legacy `/events` and `/chains` use the same middleware; past_due → `402 payment_required` matching `/v1`. |
 | **Evidence** | [STAGE_11_3_SUBSCRIPTION_ENFORCEMENT.md](STAGE_11_3_SUBSCRIPTION_ENFORCEMENT.md), `tests/subscription_enforcement.rs` |
 
-### H2. Failed Paddle webhooks cannot be successfully retried
+### H2. Failed Paddle webhooks cannot be successfully retried — **CLOSED (Stage 11.4)**
 
 | | |
 |--|--|
-| **Problem** | On apply failure the row is marked `failed`. Later Paddle delivery hits `find_by_paddle_event_id` early; `handle_existing_event` only treats `processed` / `waiting_for_account_link` as idempotent → `InvalidStatusTransition` → HTTP 500. |
-| **Impact** | Permanent billing desync (missed cancel / `past_due` / plan change) with endless Paddle retries. |
-| **Evidence** | `src/paddle/processor.rs` (`handle_existing_event`), `src/paddle/webhook_store.rs` (`mark_processing` allows `failed` but is unreachable after early return), `src/api/paddle_webhook.rs` |
-| **Recommendation** | On retry of `failed` (and stuck `received`/`processing`), re-enter processing path; keep idempotency for `processed`. |
+| **Was** | `failed` rows returned `InvalidStatusTransition` on retry without re-entering processing. |
+| **Now** | Permanent vs temporary error classification; temporary → `5xx` for Paddle retry; `failed`/`received` re-claimed via atomic `mark_processing`. |
+| **Evidence** | [STAGE_11_4_WEBHOOK_RELIABILITY.md](STAGE_11_4_WEBHOOK_RELIABILITY.md), `tests/paddle_webhook.rs` |
 
 ---
 
