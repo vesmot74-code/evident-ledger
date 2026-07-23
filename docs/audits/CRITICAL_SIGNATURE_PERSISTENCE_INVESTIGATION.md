@@ -88,7 +88,7 @@ Was **CRITICAL**. Closed by persist-before-commit on legacy path + regression te
 
 ## Perimeter check: legacy `/events` vs `/v1/events`
 
-Date: 2026-07-23 (post-fix code review; **no code changes** in this section)  
+Date: 2026-07-23 (post-fix code review; table updated when P1 closed)  
 Confirmed smoke (operator): `event_id=49d0fcdf-66c9-4f41-8e07-ac49c3c37e42` — `signature` len 128, `proof_status=anchored`, TSA `tsr-1784800586`, registry `pv_A4FoZX6wgq4NALbUmfXc9C` REGISTERED / VALID.
 
 Legend for **Status**: `OK (shared)` = same function / equivalent behavior · `OK (intentional)` = different by design · `GAP` = divergence with residual risk.
@@ -96,7 +96,7 @@ Legend for **Status**: `OK (shared)` = same function / equivalent behavior · `O
 | Stage | v1 `/events` | legacy `/events` | Status |
 |---|---|---|---|
 | request validation | `validate_submit_request`: `event_type`, `file_hash` format; `event_id` required if identity present; `Idempotency-Key` header required | Axum JSON → `SubmitEventRequest` only; **no** `is_valid_file_hash` / event_type checks; `parent_event_id` accepted but **ignored** at insert (head from chain) | **GAP — Low**: weaker input validation on legacy; CLI always sends well-formed SHA-256 |
-| capability checks | `get_account_capabilities` for trust/tsa_class; `require_feature(Identity)` when identity present; commit/TSA limits inside shared `insert_event_in_tx` | No Identity `require_feature`; commit/TSA/`tsa_available` via **same** `insert_event_in_tx` | **GAP — Medium** on Identity entitlement (see identity fields); tariff/TSA limits **OK (shared)** |
+| capability checks | `get_account_capabilities` for trust/tsa_class; `require_feature(Identity)` when identity present; commit/TSA limits inside shared `insert_event_in_tx` | No Identity feature gate (Identity rejected at handler); commit/TSA/`tsa_available` via **same** `insert_event_in_tx` | **OK (intentional)** for Identity entry point; tariff/TSA limits **OK (shared)** |
 | idempotency | Header key → `idempotency_records` (+ `request_hash` conflict); full response replay | Body `idempotency_key` → lookup on `events` row; replay returns `{event_id, cached:true}` **without** proof | **GAP — Low/Medium**: dual stores; legacy replay omits proof (D3) |
 | insert | Shared `insert_event_in_tx` | Shared `insert_event_in_tx` | **OK (shared)** |
 | placeholder signature | `.bind("")` then overwrite | Same | **OK (shared)** |
@@ -122,12 +122,17 @@ Legend for **Status**: `OK (shared)` = same function / equivalent behavior · `O
 
 ### Perimeter verdict
 
-**No further Critical or High discrepancies found between legacy and v1 paths** for the default CLI write path (server signature, persist, commit order, materialization, TSA, subscription enforcement).
+**Final verdict: no Critical or High unresolved discrepancies** between legacy `POST /events` and `POST /v1/events` for the default CLI write path and for Identity entry-point policy.
 
-**Open / residual (post-P1):**
+- Critical signature persistence gap — **Resolved** (persist-before-commit on both paths; E2E smoke + `tests/legacy_events_signature_persist.rs`).
+- P1 identity fields on legacy — **Resolved** (`c77172e`; reject-on-legacy Option A; `tests/legacy_events_identity_reject.rs`). See [P1_LEGACY_EVENTS_IDENTITY_FIELDS.md](P1_LEGACY_EVENTS_IDENTITY_FIELDS.md).
+
+Shared / intentional parity covers: server signature, persist, commit order, materialization, TSA, subscription enforcement. Identity commits are **only** via `/v1/events` (validated); legacy rejects identity-bearing bodies with **400**.
+
+**Open / residual (not Critical/High):**
 
 | ID | Finding | Severity | Status |
 |---|---|---|---|
 | P1 | Legacy `/events` accepts/persists identity columns without `require_feature` or PoP validation | Medium (High candidate) | **Resolved** — Option A reject-on-legacy; [P1_LEGACY_EVENTS_IDENTITY_FIELDS.md](P1_LEGACY_EVENTS_IDENTITY_FIELDS.md) |
-| P2 | Dual idempotency models; legacy cache response lacks proof | Low–Medium | Open |
-| P3 | Weaker request validation / no file_hash normalize on legacy | Low | Open |
+| P2 | Dual idempotency models; legacy cache response lacks proof | Low–Medium | Open (accepted for controlled pilot) |
+| P3 | Weaker request validation / no file_hash normalize on legacy | Low | Open (accepted for controlled pilot; CLI sends well-formed hashes) |
