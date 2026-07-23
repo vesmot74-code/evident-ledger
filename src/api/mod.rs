@@ -5,6 +5,7 @@ pub mod backup;
 pub mod chains;
 pub mod dashboard;
 pub mod dashboard_billing;
+pub mod dashboard_desktop;
 pub mod events;
 pub mod identity;
 pub mod identity_keys;

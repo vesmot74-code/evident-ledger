@@ -7,6 +7,7 @@ pub mod backup_snapshot;
 pub mod billing;
 pub mod capabilities;
 pub mod chains;
+pub mod desktop_tokens;
 pub mod entitlements;
 pub mod identity_audit;
 pub mod identity_challenge;

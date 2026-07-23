@@ -69,6 +69,7 @@ pub struct EvidentClient {
     base_url: String,
     client: Client,
     api_key: Option<String>,
+    desktop_token: Option<String>,
 }
 
 #[derive(Debug)]
@@ -128,24 +129,46 @@ pub struct DevChangePlanResponse {
 }
 
 impl EvidentClient {
-    /// Создаёт клиента и пытается загрузить API-ключ автоматически:
-    /// 1) переменная окружения EVIDENT_API_KEY,
-    /// 2) файл ~/.evident/api_key.
-    /// Если ключ не найден — клиент создаётся без него (запросы на защищённые
-    /// эндпоинты вернут 401 от сервера, а не упадут на этапе создания клиента).
+    /// Creates a client and loads credentials automatically:
+    /// 1) `EVIDENT_DESKTOP_TOKEN` (Bearer desktop_…),
+    /// 2) `EVIDENT_API_KEY` / `~/.evident/api_key` (X-API-KEY).
     pub fn new(base_url: impl Into<String>) -> Self {
+        let desktop_token = Self::load_desktop_token();
+        let api_key = if desktop_token.is_some() {
+            None
+        } else {
+            Self::load_api_key()
+        };
         Self {
             base_url: base_url.into(),
             client: Client::new(),
-            api_key: Self::load_api_key(),
+            api_key,
+            desktop_token,
         }
     }
 
-    /// Явно задать/переопределить API-ключ (например, GUI после того как
-    /// пользователь вставил ключ в поле настроек).
+    /// Explicitly set/override API key (CLI / legacy GUI path).
     pub fn with_api_key(mut self, api_key: impl Into<String>) -> Self {
         self.api_key = Some(api_key.into());
+        self.desktop_token = None;
         self
+    }
+
+    /// Desktop Bearer token (Stage 13.4). Takes precedence over API key.
+    pub fn with_desktop_token(mut self, token: impl Into<String>) -> Self {
+        self.desktop_token = Some(token.into());
+        self.api_key = None;
+        self
+    }
+
+    fn load_desktop_token() -> Option<String> {
+        if let Ok(key) = std::env::var("EVIDENT_DESKTOP_TOKEN") {
+            let key = key.trim().to_string();
+            if key.starts_with("desktop_") && !key.is_empty() {
+                return Some(key);
+            }
+        }
+        None
     }
 
     fn load_api_key() -> Option<String> {
@@ -162,18 +185,60 @@ impl EvidentClient {
             .filter(|s| !s.is_empty())
     }
 
-    /// Добавляет заголовок X-API-KEY к запросу, если ключ загружен.
+    /// Adds auth headers: `Authorization: Bearer` for desktop tokens, else `X-API-KEY`.
     fn authed(&self, builder: RequestBuilder) -> RequestBuilder {
+        if let Some(token) = &self.desktop_token {
+            return builder.header("Authorization", format!("Bearer {token}"));
+        }
         match &self.api_key {
             Some(key) => builder.header("X-API-KEY", key),
             None => builder,
         }
     }
 
+    pub fn has_credentials(&self) -> bool {
+        self.desktop_token.is_some() || self.api_key.is_some()
+    }
+
+    pub fn uses_desktop_token(&self) -> bool {
+        self.desktop_token.is_some()
+    }
+
     fn evident_dir() -> PathBuf {
         PathBuf::from(std::env::var("HOME").unwrap_or_else(|_| ".".into())).join(".evident")
     }
 
+    /// `GET /v1/me` — account profile for the current credential.
+    pub fn fetch_me(&self) -> Result<serde_json::Value, ClientError> {
+        let resp = self
+            .authed(self.client.get(format!("{}/v1/me", self.base_url)))
+            .send()?;
+        if !resp.status().is_success() {
+            return Err(ClientError::Server(format!(
+                "GET /v1/me failed: {}",
+                resp.status()
+            )));
+        }
+        Ok(resp.json()?)
+    }
+
+    /// Best-effort `GET /public/verify?file_hash=` → `public_proof_id` (`pv_…`).
+    pub fn lookup_public_proof_id(&self, file_hash: &str) -> Option<String> {
+        let resp = self
+            .client
+            .get(format!("{}/public/verify", self.base_url))
+            .query(&[("file_hash", file_hash)])
+            .send()
+            .ok()?;
+        if !resp.status().is_success() {
+            return None;
+        }
+        let v: serde_json::Value = resp.json().ok()?;
+        v.get("public_proof_id")
+            .and_then(|x| x.as_str())
+            .filter(|s| !s.is_empty())
+            .map(str::to_string)
+    }
     pub fn head_event_id(&self, chain_id: &Uuid) -> Result<Option<Uuid>, ClientError> {
         let resp = self
             .client

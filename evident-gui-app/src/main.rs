@@ -16,8 +16,11 @@ use std::fs;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::time::Duration;
 use uuid::Uuid;
 use zip::write::{SimpleFileOptions, ZipWriter};
+
+mod desktop_auth;
 
 /// Базовый URL сервера Evident Ledger.
 /// По умолчанию — локальный сервер для разработки.
@@ -25,6 +28,14 @@ use zip::write::{SimpleFileOptions, ZipWriter};
 /// например EVIDENT_SERVER_URL=https://api.evident-ledger.com
 fn server_url() -> String {
     std::env::var("EVIDENT_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string())
+}
+
+fn authed_client() -> EvidentClient {
+    let mut client = EvidentClient::new(server_url());
+    if let Some(token) = desktop_auth::load_token_from_keychain() {
+        client = client.with_desktop_token(token);
+    }
+    client
 }
 
 // ============================================================================
@@ -254,6 +265,14 @@ struct App {
     pending_restore: Option<PendingRestore>,
     backup_restore_error: Option<UiText>,
     backup_restore_summary: Option<RestoreSummary>,
+
+    // === Desktop auth (Stage 13.4) ===
+    auth_state: desktop_auth::AuthState,
+    connected_email: String,
+    connected_plan: String,
+    public_proof_id: String,
+    connecting: bool,
+    connect_error: Option<String>,
 }
 
 impl Default for App {
@@ -316,6 +335,12 @@ impl Default for App {
             pending_restore: None,
             backup_restore_error: None,
             backup_restore_summary: None,
+            auth_state: desktop_auth::AuthState::Unauthenticated,
+            connected_email: String::new(),
+            connected_plan: String::new(),
+            public_proof_id: String::new(),
+            connecting: false,
+            connect_error: None,
         }
     }
 }
@@ -350,6 +375,7 @@ enum VerifyStatus {
 #[derive(PartialEq, Default)]
 enum Screen {
     #[default]
+    Connect,
     FileSelection,
     HashPreview,
     SelectProject,
@@ -371,6 +397,7 @@ struct CommitSuccess {
     chain_uuid: Uuid,
     source_file_path: String,
     file_name: String,
+    public_proof_id: Option<String>,
 }
 
 #[derive(Debug)]
@@ -387,6 +414,7 @@ enum WorkerResponse {
     VerifyChainDone(Result<evident_ledger::client::VerifyResponse, String>),
     CommitDone(Result<CommitSuccess, CommitFailure>),
     AccountFetchDone(Result<serde_json::Value, String>),
+    ConnectDone(Result<(String, String), String>),
     DevChangePlanDone(Result<client::DevChangePlanResponse, String>),
     BackupListDone(Result<Vec<client::BackupListItem>, String>),
     BackupCreateDone(Result<client::BackupCreateResponse, String>),
@@ -1009,7 +1037,92 @@ impl App {
         if let Err(err) = app.ensure_projects_dir() {
             app.status = format!("⚠️ {err}");
         }
+        app.refresh_auth_from_keychain();
         app
+    }
+
+    fn refresh_auth_from_keychain(&mut self) {
+        match desktop_auth::load_token_from_keychain() {
+            Some(token) => {
+                match EvidentClient::new(server_url())
+                    .with_desktop_token(token)
+                    .fetch_me()
+                {
+                    Ok(me) => {
+                        self.connected_email = me
+                            .get("email")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        self.connected_plan = me
+                            .get("plan_display")
+                            .or_else(|| me.get("plan"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("")
+                            .to_string();
+                        self.auth_state = desktop_auth::AuthState::Authenticated;
+                        if self.screen == Screen::Connect {
+                            self.screen = Screen::FileSelection;
+                        }
+                    }
+                    Err(e) => {
+                        let msg = e.to_string();
+                        let lower = msg.to_lowercase();
+                        if lower.contains("revoked") {
+                            self.auth_state = desktop_auth::AuthState::Revoked;
+                            desktop_auth::clear_token_from_keychain();
+                        } else if lower.contains("401") || lower.contains("unauthorized") {
+                            self.auth_state = desktop_auth::AuthState::Expired;
+                            desktop_auth::clear_token_from_keychain();
+                        } else {
+                            self.auth_state = desktop_auth::AuthState::Unauthenticated;
+                        }
+                        self.screen = Screen::Connect;
+                        self.connect_error = Some(msg);
+                    }
+                }
+            }
+            None => {
+                self.auth_state = desktop_auth::AuthState::Unauthenticated;
+                self.screen = Screen::Connect;
+            }
+        }
+    }
+
+    fn start_connect(&mut self, ctx: &egui::Context) {
+        if self.connecting {
+            return;
+        }
+        self.connecting = true;
+        self.connect_error = None;
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        let base = server_url();
+        std::thread::spawn(move || {
+            let result = desktop_auth::connect_via_browser(&base, Duration::from_secs(180)).and_then(
+                |token| {
+                    desktop_auth::save_token_to_keychain(&token)?;
+                    let me = EvidentClient::new(base)
+                        .with_desktop_token(token)
+                        .fetch_me()
+                        .map_err(|e| e.to_string())?;
+                    let email = me
+                        .get("email")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    let plan = me
+                        .get("plan_display")
+                        .or_else(|| me.get("plan"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
+                    Ok((email, plan))
+                },
+            );
+            let _ = tx.send(WorkerResponse::ConnectDone(result));
+            ctx.request_repaint();
+        });
     }
 
     fn projects_dir(&self) -> Result<PathBuf, String> {
@@ -1284,7 +1397,7 @@ impl App {
             // бы не заметить подмену ключа сервером/атакующим).
             if trusted_public_key.is_none() {
                 if let Some(path) = pinned_key_path.as_ref() {
-                    let client = EvidentClient::new(server_url());
+                    let client = authed_client();
                     match client.fetch_identity() {
                         Ok(key) => {
                             let _ = fs::write(path, &key);
@@ -1482,9 +1595,10 @@ impl App {
                 server_url(),
                 chain_uuid
             );
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             match client.submit_event(chain_uuid, &file_bytes) {
                 Ok((commit, proof_path, file_hash)) => {
+                    let public_proof_id = client.lookup_public_proof_id(&file_hash);
                     let _ = tx.send(WorkerResponse::CommitDone(Ok(CommitSuccess {
                         commit,
                         proof_path,
@@ -1494,6 +1608,7 @@ impl App {
                         chain_uuid,
                         source_file_path,
                         file_name,
+                        public_proof_id,
                     })));
                 }
                 Err(e) => {
@@ -1558,7 +1673,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client::verify_chain(&client, chain_id).map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::VerifyChainDone(result));
             ctx.request_repaint();
@@ -1573,7 +1688,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client::fetch_capabilities(&client).map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::AccountFetchDone(result));
             ctx.request_repaint();
@@ -1588,7 +1703,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client
                 .dev_change_plan(account_id, &plan)
                 .map_err(|e| e.to_string());
@@ -1604,7 +1719,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client.backup_list().map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::BackupListDone(result));
             ctx.request_repaint();
@@ -1761,7 +1876,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client
                 .backup_download(backup_id)
                 .map_err(|e| e.to_string())
@@ -1807,7 +1922,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client.backup_create(chain_id).map_err(|e| e.to_string());
             let _ = tx.send(WorkerResponse::BackupCreateDone(result));
             ctx.request_repaint();
@@ -1822,7 +1937,7 @@ impl App {
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
         self.rt.spawn_blocking(move || {
-            let client = EvidentClient::new(server_url());
+            let client = authed_client();
             let result = client
                 .backup_download(backup_id)
                 .map_err(|e| e.to_string())
@@ -1845,22 +1960,29 @@ impl eframe::App for App {
             style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(8);
             style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(8);
 
+            // Buttons use accent fill + white label text. Keep inactive
+            // fg_stroke dark so TextEdit / radios remain readable (white-on-white bug).
             let white_text = egui::Stroke::new(1.0, egui::Color32::WHITE);
+            let dark_text = egui::Stroke::new(1.0, egui::Color32::from_rgb(15, 23, 42));
+            let surface = egui::Color32::from_rgb(248, 250, 252);
 
             style.visuals.widgets.inactive.bg_fill = COLOR_ACCENT;
-            style.visuals.widgets.inactive.weak_bg_fill = COLOR_ACCENT;
+            style.visuals.widgets.inactive.weak_bg_fill = surface;
             style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT);
-            style.visuals.widgets.inactive.fg_stroke = white_text;
+            style.visuals.widgets.inactive.fg_stroke = dark_text;
 
             style.visuals.widgets.hovered.bg_fill = COLOR_ACCENT_DARK;
-            style.visuals.widgets.hovered.weak_bg_fill = COLOR_ACCENT_DARK;
+            style.visuals.widgets.hovered.weak_bg_fill = surface;
             style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT_DARK);
             style.visuals.widgets.hovered.fg_stroke = white_text;
 
             style.visuals.widgets.active.bg_fill = COLOR_ACCENT_DARK;
-            style.visuals.widgets.active.weak_bg_fill = COLOR_ACCENT_DARK;
+            style.visuals.widgets.active.weak_bg_fill = surface;
             style.visuals.widgets.active.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT_DARK);
             style.visuals.widgets.active.fg_stroke = white_text;
+
+            // Button text stays white via Button TextStyle + explicit override below.
+            style.visuals.override_text_color = None;
 
             style.text_styles.insert(
                 egui::TextStyle::Button,
@@ -1924,6 +2046,23 @@ impl eframe::App for App {
                         Err(e) => {
                             self.account_data = None;
                             self.set_localized_status(UiText::AccountLoadFailed(e));
+                        }
+                    }
+                }
+                WorkerResponse::ConnectDone(res) => {
+                    self.connecting = false;
+                    match res {
+                        Ok((email, plan)) => {
+                            self.connected_email = email;
+                            self.connected_plan = plan;
+                            self.auth_state = desktop_auth::AuthState::Authenticated;
+                            self.connect_error = None;
+                            self.screen = Screen::FileSelection;
+                        }
+                        Err(e) => {
+                            self.auth_state = desktop_auth::AuthState::Unauthenticated;
+                            self.connect_error = Some(e);
+                            self.screen = Screen::Connect;
                         }
                     }
                 }
@@ -2026,11 +2165,13 @@ impl eframe::App for App {
                                 chain_uuid,
                                 source_file_path,
                                 file_name,
+                                public_proof_id,
                             } = success;
 
                             self.state.head_event_id = Some(commit.head_event_id.clone());
 
                             self.event_id = commit.event_id.clone();
+                            self.public_proof_id = public_proof_id.unwrap_or_default();
                             let proof_name = format!("{}.json", self.event_id);
                             let dest_proof = proofs_dir.join(&proof_name);
                             let _ = fs::copy(&proof_path, &dest_proof);
@@ -2074,7 +2215,7 @@ impl eframe::App for App {
                                 }
                             }
 
-                            let report_client = EvidentClient::new(server_url());
+                            let report_client = authed_client();
                             self.last_proof = client::fetch_proof(&report_client, chain_uuid).ok();
 
                             self.step = Step::Done;
@@ -2140,6 +2281,56 @@ impl eframe::App for App {
                 });
             });
             ui.add_space(4.0);
+
+            if self.screen == Screen::Connect
+                || self.auth_state != desktop_auth::AuthState::Authenticated
+            {
+                self.screen = Screen::Connect;
+                ui.heading("Evident Ledger");
+                ui.add_space(12.0);
+                ui.label(self.tr(
+                    "Добро пожаловать в Evident Ledger",
+                    "Welcome to Evident Ledger",
+                ));
+                ui.add_space(4.0);
+                ui.label(self.tr(
+                    "Ваш аккаунт не подключён.",
+                    "Your account is not connected.",
+                ));
+                if matches!(
+                    self.auth_state,
+                    desktop_auth::AuthState::Expired | desktop_auth::AuthState::Revoked
+                ) {
+                    ui.add_space(8.0);
+                    ui.colored_label(
+                        COLOR_INVALID,
+                        self.tr(
+                            "Сессия рабочего стола истекла или отозвана. Подключите аккаунт снова.",
+                            "Desktop session expired or revoked. Connect your account again.",
+                        ),
+                    );
+                }
+                if let Some(err) = &self.connect_error {
+                    ui.add_space(8.0);
+                    ui.colored_label(COLOR_INVALID, format!("⚠️ {err}"));
+                }
+                ui.add_space(16.0);
+                if self.connecting {
+                    ui.horizontal(|ui| {
+                        ui.spinner();
+                        ui.label(self.tr(
+                            "Ожидание подтверждения в браузере…",
+                            "Waiting for browser confirmation…",
+                        ));
+                    });
+                } else if ui
+                    .button(self.tr("Подключить аккаунт", "Connect Account"))
+                    .clicked()
+                {
+                    self.start_connect(ui.ctx());
+                }
+                return;
+            }
 
             if self.screen == Screen::Account {
                 ui.heading(self.tr("Аккаунт", "Account"));
@@ -2483,6 +2674,21 @@ impl eframe::App for App {
             if self.screen == Screen::FileSelection {
                 ui.heading("Evident Ledger");
                 ui.add_space(8.0);
+                if !self.connected_email.is_empty() {
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("Подключено", "Connected"),
+                        self.connected_email
+                    ));
+                    if !self.connected_plan.is_empty() {
+                        ui.label(format!(
+                            "{}: {}",
+                            self.tr("План", "Plan"),
+                            self.connected_plan
+                        ));
+                    }
+                    ui.add_space(8.0);
+                }
 
                 let main_btn_width = 240.0;
 
@@ -2661,7 +2867,7 @@ impl eframe::App for App {
                         if ui
                             .add_sized(
                                 [220.0, 32.0],
-                                egui::Button::new(self.tr("✅ Зафиксировать", "✅ Commit")),
+                                egui::Button::new(self.tr("✅ Создать доказательство", "✅ Create Proof")),
                             )
                             .clicked()
                         {
@@ -3022,7 +3228,7 @@ impl eframe::App for App {
                             Some(cached_proof) => Uuid::parse_str(&cached_proof.chain_id)
                                 .ok()
                                 .and_then(|chain_uuid| {
-let client = EvidentClient::new(server_url());
+let client = authed_client();
                                     client::fetch_proof(&client, chain_uuid).ok()
                                 }),
                             None => None,
@@ -3324,7 +3530,7 @@ ui.add_space(12.0);
                         .add_enabled_ui(can_commit, |ui| {
                             ui.add_sized(
                                 [220.0, 32.0],
-                                egui::Button::new(self.tr("✅ Зафиксировать", "✅ Commit")),
+                                egui::Button::new(self.tr("✅ Создать доказательство", "✅ Create Proof")),
                             )
                         })
                         .inner
@@ -3358,6 +3564,20 @@ ui.add_space(12.0);
                 ui.heading(self.tr("Фиксация документа", "Committing Document"));
                 ui.add_space(12.0);
 
+                if !self.connected_email.is_empty() {
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("Подключено", "Connected"),
+                        self.connected_email
+                    ));
+                }
+                if !self.connected_plan.is_empty() {
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("План", "Plan"),
+                        self.connected_plan
+                    ));
+                }
                 ui.label(format!(
                     "📁 {}: {}",
                     self.tr("Файл", "File"),
@@ -3432,6 +3652,29 @@ ui.add_space(12.0);
                 ));
                 ui.add_space(8.0);
 
+                if !self.connected_email.is_empty() {
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("Подключено", "Connected"),
+                        self.connected_email
+                    ));
+                }
+                if !self.connected_plan.is_empty() {
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("План", "Plan"),
+                        self.connected_plan
+                    ));
+                }
+                if !self.file_name.is_empty() {
+                    ui.label(format!(
+                        "{}: {}",
+                        self.tr("Файл", "File"),
+                        self.file_name
+                    ));
+                }
+
+                ui.add_space(8.0);
                 ui.label(format!(
                     "📁 {}: {}",
                     self.tr("Проект", "Project"),
@@ -3441,10 +3684,15 @@ ui.add_space(12.0);
                         &self.selected_project
                     }
                 ));
+                let proof_id = if !self.public_proof_id.is_empty() {
+                    self.public_proof_id.as_str()
+                } else {
+                    self.event_id.as_str()
+                };
                 ui.label(format!(
-                    "📄 {}: {}",
-                    self.tr("Событие", "Event"),
-                    self.event_id
+                    "{}: {}",
+                    self.tr("Proof ID", "Proof ID"),
+                    proof_id
                 ));
                 ui.label(format!(
                     "📄 {}: {}",

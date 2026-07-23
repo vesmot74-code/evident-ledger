@@ -79,8 +79,10 @@ async fn main() {
     let public_routes = api::public_verify::public_router(state.clone(), rate_limits.clone());
     let accounts_routes = api::accounts::router(state.clone(), rate_limits.clone());
     let auth_routes = api::auth::router(state.clone(), login_limits);
-    let dashboard_ui = web::dashboard::router(state.clone());
-    let dashboard_api = api::dashboard::router(state.clone());
+    let dashboard_ui = web::dashboard::router(state.clone())
+        .merge(api::dashboard_desktop::ui_router(state.clone()));
+    let dashboard_api = api::dashboard::router(state.clone())
+        .merge(api::dashboard_desktop::api_router(state.clone()));
     let dashboard_billing = api::dashboard_billing::router(state.clone());
 
     let landing = axum::Router::new()

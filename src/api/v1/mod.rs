@@ -9,6 +9,7 @@ pub mod idempotency;
 pub mod identity_key_events;
 pub mod identity_key_revoke;
 pub mod identity_keys;
+pub mod me;
 pub mod proof;
 pub mod proof_material;
 pub mod proof_state;
@@ -17,7 +18,7 @@ pub mod submit_event;
 pub mod validation;
 pub mod verify;
 
-use axum::{middleware, Router};
+use axum::{middleware, routing::get, Router};
 
 use crate::middleware::subscription_enforcement::subscription_enforcement_middleware;
 use crate::state::AppState;
@@ -26,7 +27,12 @@ use self::auth::v1_auth_middleware;
 use self::errors::request_id_layer;
 
 pub fn router(state: AppState) -> Router {
+    let me_routes = Router::new()
+        .route("/me", get(me::me_handler))
+        .with_state(state.clone());
+
     Router::new()
+        .merge(me_routes)
         .nest("/events", events::router(state.clone()))
         .nest("/proof", proof::router(state.clone()))
         .nest("/verify", verify::router(state.clone()))

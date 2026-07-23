@@ -1,4 +1,5 @@
 pub mod api_key;
+pub mod desktop_token;
 pub mod password;
 pub mod session_store;
 pub mod web_auth;
@@ -6,12 +7,13 @@ pub mod web_me;
 
 pub use web_auth::router as web_auth_router;
 
+use crate::service::desktop_tokens;
 use crate::state::AppState;
 use axum::{
     async_trait,
     body::Body,
     extract::{FromRequestParts, State},
-    http::{request::Parts, Request, StatusCode},
+    http::{header, request::Parts, Request, StatusCode},
     middleware::Next,
     response::{IntoResponse, Response},
     Json,
@@ -30,11 +32,15 @@ pub enum AuthError {
     Invalid,
 }
 
-/// Resolve `X-API-KEY` to an authenticated account (shared by extractors and v1 middleware).
+/// Resolve `Authorization: Bearer desktop_…` or `X-API-KEY` to an authenticated account.
 pub async fn resolve_authed_account(
     headers: &axum::http::HeaderMap,
     state: &AppState,
 ) -> Result<AuthedAccount, AuthError> {
+    if let Some(auth) = resolve_desktop_bearer(headers, state).await? {
+        return Ok(auth);
+    }
+
     let raw_key = headers
         .get("X-API-KEY")
         .and_then(|v| v.to_str().ok())
@@ -62,8 +68,44 @@ pub async fn resolve_authed_account(
     })
 }
 
+async fn resolve_desktop_bearer(
+    headers: &axum::http::HeaderMap,
+    state: &AppState,
+) -> Result<Option<AuthedAccount>, AuthError> {
+    let Some(value) = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|v| v.to_str().ok())
+    else {
+        return Ok(None);
+    };
+    let Some(raw) = value
+        .strip_prefix("Bearer ")
+        .or_else(|| value.strip_prefix("bearer "))
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    else {
+        return Ok(None);
+    };
+
+    // Non-desktop Bearer schemes are ignored so API-key auth can still apply.
+    let Some(token_hash) = desktop_token::hash_desktop_token_for_lookup(raw) else {
+        return Ok(None);
+    };
+
+    let record = desktop_tokens::find_active_by_token_hash(&state.db, &token_hash)
+        .await
+        .map_err(|_| AuthError::Invalid)?
+        .ok_or(AuthError::Invalid)?;
+
+    let _ = desktop_tokens::touch_last_used(&state.db, record.id).await;
+
+    Ok(Some(AuthedAccount {
+        account_id: record.account_id,
+        key_hash: record.token_hash,
+    }))
+}
+
 /// Authenticates once and stores `AuthedAccount` for subscription middleware / handlers.
-/// Keeps legacy `AuthError` response shape (unlike `/v1` which maps to `ApiError`).
 pub async fn api_key_auth_middleware(
     State(state): State<AppState>,
     mut request: Request<Body>,
@@ -81,8 +123,8 @@ pub async fn api_key_auth_middleware(
 impl IntoResponse for AuthError {
     fn into_response(self) -> Response {
         let msg = match self {
-            AuthError::Missing => "Missing X-API-KEY header",
-            AuthError::Invalid => "Invalid or revoked API key",
+            AuthError::Missing => "Missing credentials (X-API-KEY or Authorization Bearer)",
+            AuthError::Invalid => "Invalid or revoked credentials",
         };
         (StatusCode::UNAUTHORIZED, Json(json!({ "error": msg }))).into_response()
     }
