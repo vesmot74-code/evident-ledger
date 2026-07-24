@@ -86,18 +86,76 @@ pub fn verify_root(
     };
     let signature = Signature::from_bytes(&sig_array);
 
-    // Пробуем новый формат (с chain_id)
-    let message_new = format!("{}:{}:{}", chain_id, merkle_root, chain_head);
-    if verifying_key
-        .verify(message_new.as_bytes(), &signature)
-        .is_ok()
-    {
-        return true;
+    // Only the versioned format is accepted: chain_id:merkle_root:chain_head.
+    // No legacy fallback (merkle_root:chain_head) — that would accept a signature
+    // for any chain_id and break cryptographic chain binding.
+    let message = format!("{}:{}:{}", chain_id, merkle_root, chain_head);
+    verifying_key.verify(message.as_bytes(), &signature).is_ok()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::Signer;
+    use rand::rngs::OsRng;
+    use uuid::Uuid;
+
+    #[test]
+    fn legacy_signature_without_chain_id_is_rejected() {
+        let signing_key = SigningKey::generate(&mut OsRng);
+        let public_key_hex = hex::encode(signing_key.verifying_key().to_bytes());
+
+        let merkle_root = "a".repeat(64);
+        let chain_head = Uuid::new_v4().to_string();
+        let expected_chain_id = Uuid::new_v4().to_string();
+        let other_chain_id = Uuid::new_v4().to_string();
+
+        // Old format: no chain_id in the signed message.
+        let message_old = format!("{}:{}", merkle_root, chain_head);
+        let signature_hex = hex::encode(signing_key.sign(message_old.as_bytes()).to_bytes());
+
+        for chain_id in [expected_chain_id.as_str(), other_chain_id.as_str(), ""] {
+            assert!(
+                !verify_root(
+                    chain_id,
+                    &merkle_root,
+                    &chain_head,
+                    &signature_hex,
+                    &public_key_hex,
+                ),
+                "legacy signature must be rejected for chain_id={chain_id:?}"
+            );
+        }
     }
 
-    // Пробуем старый формат (без chain_id)
-    let message_old = format!("{}:{}", merkle_root, chain_head);
-    verifying_key
-        .verify(message_old.as_bytes(), &signature)
-        .is_ok()
+    #[test]
+    fn versioned_signature_binds_chain_id() {
+        let signer = ServerSigner::load_or_create(
+            &std::env::temp_dir()
+                .join(format!("evident-signing-test-{}.bin", Uuid::new_v4()))
+                .to_string_lossy(),
+        );
+        let merkle_root = "b".repeat(64);
+        let chain_head = Uuid::new_v4().to_string();
+        let chain_id = Uuid::new_v4().to_string();
+        let other_chain_id = Uuid::new_v4().to_string();
+
+        let signature_hex = signer.sign_root(&chain_id, &merkle_root, &chain_head);
+        let public_key_hex = signer.public_key_hex();
+
+        assert!(verify_root(
+            &chain_id,
+            &merkle_root,
+            &chain_head,
+            &signature_hex,
+            &public_key_hex,
+        ));
+        assert!(!verify_root(
+            &other_chain_id,
+            &merkle_root,
+            &chain_head,
+            &signature_hex,
+            &public_key_hex,
+        ));
+    }
 }

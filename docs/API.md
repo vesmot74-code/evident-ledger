@@ -267,6 +267,8 @@ current chain head:
   (prefix ending at the target event).
 - **Signature message** — `chain_id:merkle_root:chain_head` where `chain_head` is
   **this event's** `event_id`, not the latest event in the chain.
+  Only this versioned format is accepted; there is no legacy
+  (`merkle_root:chain_head`) verification fallback.
 
 Later events appended to the chain do not change proof returned for earlier events.
 The server may recompute proof on read; Ed25519 signatures are deterministic for

@@ -61,6 +61,7 @@ Mitigations address casual and automated abuse; they do not guarantee protection
 
 - **SHA-256** is used for content fingerprints. The system assumes preimage and collision resistance appropriate for evidence fingerprinting.
 - **Ed25519** signatures on chain material assume standard elliptic-curve security properties.
+- **Server signature** cryptographically binds merkle root and chain head to a specific `chain_id`. Only the versioned format (`chain_id:merkle_root:chain_head`) is accepted; no legacy fallback exists.
 - Hashes are **one-way**: public verification confirms registration of a fingerprint, not document content.
 
 ### Timestamp authority (TSA)
