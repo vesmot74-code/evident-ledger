@@ -1960,29 +1960,26 @@ impl eframe::App for App {
             style.visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(8);
             style.visuals.widgets.active.corner_radius = egui::CornerRadius::same(8);
 
-            // Buttons use accent fill + white label text. Keep inactive
-            // fg_stroke dark so TextEdit / radios remain readable (white-on-white bug).
+            // Buttons use accent fill + white label text. TextEdit and
+            // radio groups override fg_stroke locally (see scoped
+            // ui.scope blocks) where dark text is needed, so this
+            // global style stays accent/white for buttons everywhere.
             let white_text = egui::Stroke::new(1.0, egui::Color32::WHITE);
-            let dark_text = egui::Stroke::new(1.0, egui::Color32::from_rgb(15, 23, 42));
-            let surface = egui::Color32::from_rgb(248, 250, 252);
 
             style.visuals.widgets.inactive.bg_fill = COLOR_ACCENT;
-            style.visuals.widgets.inactive.weak_bg_fill = surface;
+            style.visuals.widgets.inactive.weak_bg_fill = COLOR_ACCENT;
             style.visuals.widgets.inactive.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT);
-            style.visuals.widgets.inactive.fg_stroke = dark_text;
+            style.visuals.widgets.inactive.fg_stroke = white_text;
 
             style.visuals.widgets.hovered.bg_fill = COLOR_ACCENT_DARK;
-            style.visuals.widgets.hovered.weak_bg_fill = surface;
+            style.visuals.widgets.hovered.weak_bg_fill = COLOR_ACCENT_DARK;
             style.visuals.widgets.hovered.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT_DARK);
             style.visuals.widgets.hovered.fg_stroke = white_text;
 
             style.visuals.widgets.active.bg_fill = COLOR_ACCENT_DARK;
-            style.visuals.widgets.active.weak_bg_fill = surface;
+            style.visuals.widgets.active.weak_bg_fill = COLOR_ACCENT_DARK;
             style.visuals.widgets.active.bg_stroke = egui::Stroke::new(0.0, COLOR_ACCENT_DARK);
             style.visuals.widgets.active.fg_stroke = white_text;
-
-            // Button text stays white via Button TextStyle + explicit override below.
-            style.visuals.override_text_color = None;
 
             style.text_styles.insert(
                 egui::TextStyle::Button,
