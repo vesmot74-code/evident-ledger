@@ -17,6 +17,9 @@ pub use core::{
 };
 pub use facade::provider_from_config;
 pub use http::{HttpTsaProvider, JsonTsaProvider};
+pub use openssl_provider::{
+    freetsa_trust_paths, verify_tsr_bytes, OpenSslTsaProvider, OpensslAdapterError,
+};
 pub use provider::TsaProvider;
 pub use response::{TsaProof, TsaResponse};
 

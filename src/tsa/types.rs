@@ -27,6 +27,45 @@ pub enum TsaStatus {
     NotProvided,
 }
 
+/// Read-path TSA verification outcome exposed on proof/verify APIs.
+///
+/// - `Verified` — fresh cryptographic check just succeeded
+/// - `VerifiedCached` — prior check reused (`token_sha256` match + status verified)
+/// - `Failed` — token invalid, stub outside dev, or OpenSSL reject
+/// - `Unavailable` — imprint OK but trust bundle / OpenSSL cannot run
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TsaVerificationStatus {
+    Verified,
+    VerifiedCached,
+    Failed,
+    Unavailable,
+}
+
+impl TsaVerificationStatus {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Verified => "verified",
+            Self::VerifiedCached => "verified_cached",
+            Self::Failed => "failed",
+            Self::Unavailable => "unavailable",
+        }
+    }
+
+    pub fn is_failure(self) -> bool {
+        matches!(self, Self::Failed)
+    }
+
+    /// Persistable cache value (never stores `verified_cached`).
+    pub fn cache_value(self) -> Option<&'static str> {
+        match self {
+            Self::Verified | Self::VerifiedCached => Some("verified"),
+            Self::Failed => Some("failed"),
+            Self::Unavailable => Some("unavailable"),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TsaJobState {
     Pending,

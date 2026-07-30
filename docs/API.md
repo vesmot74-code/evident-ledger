@@ -296,6 +296,20 @@ fixed inputs.
 }
 ```
 
+When a TSA row exists, `tsa` is an object:
+
+```json
+{
+  "timestamp": 0,
+  "serial": "",
+  "token_bytes": 0,
+  "verification_status": "verified"
+}
+```
+
+`verification_status` is one of `verified`, `verified_cached`, `failed`,
+`unavailable` (see ADR_TSA_READ_PATH_VERIFICATION).
+
 ### Response when proof material is not yet available
 
 HTTP **200 OK** (the event exists — do not use `404`):
@@ -405,7 +419,7 @@ With `?file_hash=<hex>` when hash matches:
 information.
 
 When present, `tsa` uses the same object shape as §6 (`timestamp`, `serial`,
-`token_bytes`).
+`token_bytes`, `verification_status`).
 
 ### Chain vs file verification
 

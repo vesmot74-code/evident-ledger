@@ -5,12 +5,19 @@
 
 mod attest;
 mod job_store;
+mod read_verify;
 mod types;
 mod verify;
 mod writer;
 
 pub use attest::{create_stub_attestation, submit_bundle_hash_stub};
 pub use job_store::{process_pending_job, FileSystemTsaJobStore, TsaJobStore};
-pub use types::{TsaAttestation, TsaJob, TsaJobState, TsaStatus, TsaTrustLevel};
+pub use read_verify::{
+    cached_status_if_fresh, is_evident_stub_json_token, resolve_and_cache_tsa_verification,
+    stubs_allowed_in_current_env, token_sha256_hex, verify_token_fresh, CachedTsaVerification,
+};
+pub use types::{
+    TsaAttestation, TsaJob, TsaJobState, TsaStatus, TsaTrustLevel, TsaVerificationStatus,
+};
 pub use verify::{tsa_status_for_bundle, verify_tsa_attestation};
 pub use writer::FileSystemTsaWriter;

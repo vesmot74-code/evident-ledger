@@ -70,6 +70,9 @@ Mitigations address casual and automated abuse; they do not guarantee protection
 - Tier-1 / machine TSA: availability and long-term token retention depend on the external provider.
 - Tier-2+ / qualified TSA: stronger operational and jurisdictional assumptions; may be unavailable on some tariff tiers.
 - Evident Ledger does **not** operate as a timestamp authority.
+- **Read-path verification:** proof responses re-validate stored RFC3161 tokens (message-imprint + OpenSSL against the FreeTSA CA bundle) on cache miss. Cached `verified` outcomes are exposed as `verified_cached` when `token_sha256` still matches. See [docs/design/ADR_TSA_READ_PATH_VERIFICATION.md](docs/design/ADR_TSA_READ_PATH_VERIFICATION.md).
+- **Cache limitation:** `verified_cached` reflects the check at `verified_at` against the CA bundle then in use; automatic re-verification on later TSA certificate revocation is not performed.
+- **Stub tokens** (`"stub":true`) verify only when `DEV_MODE=true` or `APP_ENV=development`; otherwise they fail closed.
 
 ### Client and local environment
 

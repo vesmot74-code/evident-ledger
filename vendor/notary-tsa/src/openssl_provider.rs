@@ -7,7 +7,6 @@ use tempfile::NamedTempFile;
 use thiserror::Error;
 
 const TSA_HTTP_TIMEOUT_SECS: u64 = 30;
-const FREETSA_CA_CERT_URL: &str = "https://freetsa.org/files/cacert.pem";
 
 #[derive(Debug, Error)]
 pub enum OpensslAdapterError {
@@ -157,7 +156,8 @@ impl OpenSslTsaProvider {
         }
     }
 
-    fn write_digest(hash: &[u8]) -> Result<PathBuf, OpensslAdapterError> {
+    /// Write raw digest bytes to a temp file for `openssl ts -verify -data`.
+    pub fn write_digest(hash: &[u8]) -> Result<PathBuf, OpensslAdapterError> {
         if hash.is_empty() {
             return Err(OpensslAdapterError::Io(std::io::Error::new(
                 std::io::ErrorKind::InvalidInput,
@@ -211,6 +211,52 @@ impl OpenSslTsaProvider {
             ))
         })
     }
+}
+
+/// Resolve FreeTSA trust material from the same env vars as smoke tests:
+/// `FREETSA_CA_CERT_PATH` (required) and `FREETSA_UNTRUSTED_CERT_PATH` (default `tsa.crt`).
+pub fn freetsa_trust_paths() -> Option<(PathBuf, PathBuf)> {
+    let ca = std::env::var("FREETSA_CA_CERT_PATH")
+        .ok()
+        .map(PathBuf::from)
+        .filter(|p| p.is_file())?;
+    let untrusted = std::env::var("FREETSA_UNTRUSTED_CERT_PATH")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| PathBuf::from("tsa.crt"));
+    if !untrusted.is_file() {
+        return None;
+    }
+    Some((ca, untrusted))
+}
+
+/// Cryptographically verify an RFC3161 TSR against a SHA-256 digest using OpenSSL
+/// and the provided CA / untrusted TSA certificate (same trust bundle as write-path smoke).
+pub fn verify_tsr_bytes(
+    tsr: &[u8],
+    hash: &[u8],
+    ca_cert_path: &Path,
+    untrusted_cert_path: &Path,
+) -> Result<(), OpensslAdapterError> {
+    if hash.len() != 32 {
+        return Err(OpensslAdapterError::Io(std::io::Error::new(
+            std::io::ErrorKind::InvalidInput,
+            "digest must be 32 bytes (SHA-256)",
+        )));
+    }
+
+    let mut tsr_file = NamedTempFile::with_suffix(".tsr")?;
+    tsr_file.write_all(tsr)?;
+    tsr_file.flush()?;
+
+    let digest_path = OpenSslTsaProvider::write_digest(hash)?;
+    let provider = OpenSslTsaProvider::new(
+        String::new(),
+        ca_cert_path.to_path_buf(),
+        untrusted_cert_path.to_path_buf(),
+    );
+    let result = provider.verify_reply(tsr_file.path(), &digest_path);
+    let _ = std::fs::remove_file(&digest_path);
+    result
 }
 
 #[cfg(test)]

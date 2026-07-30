@@ -567,6 +567,7 @@ fn corrupt_tsa_token(chain_id: Uuid, merkle_root: &str) {
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");
+        // Token-byte change alone invalidates cache via token_sha256 mismatch on read.
         sqlx::query(
             "UPDATE tsa_tokens SET tsa_token = $1 WHERE chain_id = $2 AND merkle_root = $3",
         )
@@ -637,6 +638,13 @@ fn v1_get_proof_valid_tsa_returns_anchored() {
     let body: Value = resp.json().expect("json");
     assert_eq!(body["proof_status"], "anchored");
     assert!(body.get("tsa").unwrap().is_object());
+    assert_eq!(body["tsa"]["verification_status"], "verified");
+
+    // Repeat read — cache hit (same token_sha256).
+    let resp = get_proof(&client, &api_key, event_id);
+    assert_eq!(resp.status(), 200);
+    let body: Value = resp.json().expect("json");
+    assert_eq!(body["tsa"]["verification_status"], "verified_cached");
 
     cleanup_chain(chain_id);
 }
