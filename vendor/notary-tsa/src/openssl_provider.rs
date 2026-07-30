@@ -124,6 +124,9 @@ impl OpenSslTsaProvider {
         ca_cert_path: &Path,
         untrusted_cert_path: &Path,
     ) -> Result<std::process::Output, OpensslAdapterError> {
+        // Smoke / OpenSslTsaProvider::build_tsq path uses `openssl ts -query -data`
+        // (imprint = SHA-256 of file bytes). Production write-path stamps a digest
+        // imprint; that path verifies via `openssl_verify_digest` / `verify_tsr_bytes`.
         let output = Command::new("openssl")
             .arg("ts")
             .arg("-verify")
@@ -131,6 +134,29 @@ impl OpenSslTsaProvider {
             .arg(tsr_path)
             .arg("-data")
             .arg(digest_path)
+            .arg("-CAfile")
+            .arg(ca_cert_path)
+            .arg("-untrusted")
+            .arg(untrusted_cert_path)
+            .output()?;
+        Ok(output)
+    }
+
+    /// Verify a TSR whose message imprint is the SHA-256 digest itself (hex).
+    /// Matches production write-path RFC3161 imprint semantics (`Rfc3161Client`).
+    fn openssl_verify_digest(
+        tsr_path: &Path,
+        digest_hex: &str,
+        ca_cert_path: &Path,
+        untrusted_cert_path: &Path,
+    ) -> Result<std::process::Output, OpensslAdapterError> {
+        let output = Command::new("openssl")
+            .arg("ts")
+            .arg("-verify")
+            .arg("-in")
+            .arg(tsr_path)
+            .arg("-digest")
+            .arg(digest_hex)
             .arg("-CAfile")
             .arg(ca_cert_path)
             .arg("-untrusted")
@@ -231,6 +257,9 @@ pub fn freetsa_trust_paths() -> Option<(PathBuf, PathBuf)> {
 
 /// Cryptographically verify an RFC3161 TSR against a SHA-256 digest using OpenSSL
 /// and the provided CA / untrusted TSA certificate (same trust bundle as write-path smoke).
+///
+/// Uses `openssl ts -verify -digest <hex>` so the message imprint matches write-path
+/// digest-imprint stamping. Do not use `-data` on raw digest bytes (that re-hashes).
 pub fn verify_tsr_bytes(
     tsr: &[u8],
     hash: &[u8],
@@ -244,19 +273,34 @@ pub fn verify_tsr_bytes(
         )));
     }
 
+    if !ca_cert_path.is_file() {
+        return Err(OpensslAdapterError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!("CA certificate not found: {}", ca_cert_path.display()),
+        )));
+    }
+    if !untrusted_cert_path.is_file() {
+        return Err(OpensslAdapterError::Io(std::io::Error::new(
+            std::io::ErrorKind::NotFound,
+            format!(
+                "untrusted certificate not found: {}",
+                untrusted_cert_path.display()
+            ),
+        )));
+    }
+
     let mut tsr_file = NamedTempFile::with_suffix(".tsr")?;
     tsr_file.write_all(tsr)?;
     tsr_file.flush()?;
 
-    let digest_path = OpenSslTsaProvider::write_digest(hash)?;
-    let provider = OpenSslTsaProvider::new(
-        String::new(),
-        ca_cert_path.to_path_buf(),
-        untrusted_cert_path.to_path_buf(),
-    );
-    let result = provider.verify_reply(tsr_file.path(), &digest_path);
-    let _ = std::fs::remove_file(&digest_path);
-    result
+    let digest_hex = hex::encode(hash);
+    let output = OpenSslTsaProvider::openssl_verify_digest(
+        tsr_file.path(),
+        &digest_hex,
+        ca_cert_path,
+        untrusted_cert_path,
+    )?;
+    OpenSslTsaProvider::validate_verify_output(&output)
 }
 
 #[cfg(test)]
