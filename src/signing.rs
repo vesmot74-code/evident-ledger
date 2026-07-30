@@ -1,5 +1,6 @@
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
+use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 pub struct ServerSigner {
@@ -59,6 +60,12 @@ impl ServerSigner {
 
     pub fn public_key_hex(&self) -> String {
         hex::encode(self.verifying_key.to_bytes())
+    }
+
+    pub fn sha256_fingerprint(&self) -> String {
+        let mut hasher = Sha256::new();
+        hasher.update(self.signing_key.to_bytes());
+        hex::encode(hasher.finalize())
     }
 }
 

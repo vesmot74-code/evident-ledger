@@ -47,19 +47,27 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let config = config::AppConfig::from_env();
-    if config.environment == "production"
-        && !std::path::Path::new(&config.signing_key_path).exists()
-    {
-        panic!(
-            "signing key not found at {}; refusing to auto-create in production",
-            config.signing_key_path_display().display()
-        );
-    }
-    let signer = Arc::new(signing::ServerSigner::load_or_create(
-        &config.signing_key_path,
-    ));
+    let signer = if config.environment == "production" {
+        if !std::path::Path::new(&config.signing_key_path).exists() {
+            panic!(
+                "Production signing key missing: {}",
+                config.signing_key_path_display().display()
+            );
+        }
+        Arc::new(signing::ServerSigner::load_or_create(
+            &config.signing_key_path,
+        ))
+    } else {
+        if std::env::var("SIGNING_KEY_PATH").is_err() {
+            eprintln!("WARNING: SIGNING_KEY_PATH is not set. Using local development signing key.");
+        }
+        Arc::new(signing::ServerSigner::load_or_create(
+            &config.signing_key_path,
+        ))
+    };
 
     println!("Public key: {}", signer.public_key_hex());
+    println!("Signing key SHA256: {}", signer.sha256_fingerprint());
     println!(
         "Signing key path: {}",
         config.signing_key_path_display().display()
