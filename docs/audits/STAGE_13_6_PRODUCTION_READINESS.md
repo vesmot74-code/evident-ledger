@@ -1,7 +1,7 @@
 # Stage 13.6 — Production Readiness
 
 Date: 2026-07-30  
-Status: Production readiness audit closed for release baseline.
+Status: Production readiness audit completed for release baseline with known runtime-dependent test limitation.
 
 Repository state:
 - Branch: stage-13.6-production-readiness
@@ -72,10 +72,19 @@ Note:
 The skip only prevents external HTTP dependency from affecting the default suite.
 
 Landing contract tests pass without a running HTTP server (`landing::index()`
-is exercised in-process). Remaining failures observed in
-`legacy_events_signature_persist` depend on a live server on `:3000` and its
-runtime signing/TSA environment; they are outside the Stage 13.6 landing
-restoration and signing-identity evidence scope.
+is exercised in-process).
+
+Known test limitation:
+`legacy_events_signature_persist` was not marked as passed in this audit.
+
+Observed behavior:
+
+- failure occurs only in live HTTP execution mode using server `127.0.0.1:3000`;
+- failure is related to runtime signing/TSA environment behavior;
+- no evidence currently links this behavior to Stage 13.6 signing-key hardening changes.
+
+Classification:
+Known runtime-dependent issue, carried forward for separate investigation.
 
 ## Out of scope / Carried forward
 
@@ -86,12 +95,18 @@ The following items are intentionally not part of Stage 13.6:
 - operator runbook
 - backup and restore procedures
 - final pilot release checklist
+- runtime investigation of legacy_events_signature_persist live-server behavior
 
 These items are carried forward to Stage 13.7 Release Candidate preparation.
 
 ## Result
 
 Stage 13.6 production readiness evidence is complete for baseline `6695770`.
+
+Known limitation:
+one runtime-dependent test path (`legacy_events_signature_persist`) remains under
+separate investigation and is not classified as a Stage 13.6 regression.
+Stage 13.7 must resolve or formally accept this item before final pilot release.
 
 Gate for Stage 13.7: use this audit as the release evidence attachment; do not
 rotate the pilot signing key; keep `SIGNING_KEY_PATH` explicit in production.
