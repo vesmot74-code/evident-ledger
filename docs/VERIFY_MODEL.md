@@ -96,6 +96,56 @@ Verification is layered. Each layer answers a distinct question.
 
 Proof state is resolved from persisted signature, TSA material, and failure signals. It gates access to structural verification — handlers do not reach `chain{}` or `file{}` until Anchored.
 
+#### RFC3161 TSA verification (digest imprint)
+
+Write-path and read-path use matching digest-imprint semantics:
+
+```text
+document / event content fingerprint
+    ↓
+SHA-256
+    ↓
+merkle_root (hex / 32 raw bytes)
+    ↓
+RFC3161 message imprint (= merkle_root digest)
+    ↓
+OpenSSL CA-backed verification:
+  openssl ts -verify -digest <merkle_root_hex>
+    ↓
+verification_status:
+  verified | verified_cached | failed | unavailable
+```
+
+Implementation:
+
+- Write: `src/tsa_worker.rs` stamps the merkle-root digest via `Rfc3161Client`.
+- Structural imprint: `notary_tsa::parse_and_validate_tsr`.
+- CA-backed OpenSSL: `notary_tsa::verify_tsr_bytes` →
+  `openssl ts -verify -digest` (`vendor/notary-tsa/src/openssl_provider.rs`).
+- Cache / status: `src/tsa/read_verify.rs`.
+
+API exposure:
+
+- `GET /v1/proof/{event_id}` may include `tsa.verification_status` when anchored.
+- `GET /v1/verify/{event_id}` does **not** return a `tsa` object; TSA only gates
+  via proof status (`failed` → HTTP 422). See [API.md](API.md) §6–§7.
+
+Semantics:
+
+- `failed` — sets proof failure signal → `proof_status=failed`.
+- `unavailable` — CA/OpenSSL trust material missing or unusable; imprint may
+  still have succeeded; does **not** by itself make the proof invalid.
+- `verified` / `verified_cached` — CA-backed check succeeded (fresh or cached).
+
+##### Historical note (pre-`5681d3c`)
+
+Before commit `5681d3c`, CA-backed verification used
+`openssl ts -verify -data` against raw digest bytes.
+This caused RFC3161 message imprint mismatch because
+OpenSSL hashed the digest bytes again.
+Current implementation uses digest semantics matching
+the RFC3161 write-path.
+
 ---
 
 ### Layer 2 — Chain Integrity
