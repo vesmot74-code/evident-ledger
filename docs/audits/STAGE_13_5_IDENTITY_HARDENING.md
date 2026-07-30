@@ -35,21 +35,39 @@ f21dbaf7fa6e6e3b94ce657163f7cc72160f332693cdac8d2ad76602b7be622e
 
 ## Verification
 
-```bash
-cargo run --bin print_key_pub ./signing_key.bin
-```
+The public key and signing fingerprint are verified through the normal server startup path.
 
-```
-81dc1ab20cecbfeb698c77b271e953267e35b4f029b4d1ca89e81a6377397fb9
-```
+Production key verification:
 
 ```bash
-cargo run --bin print_key_pub target/pilot116-key.JBOhAH/signing_key.bin
+ENVIRONMENT=production \
+DEV_MODE=false \
+SIGNING_KEY_PATH="$(pwd)/target/pilot116-key.JBOhAH/signing_key.bin" \
+cargo run
 ```
 
+Expected startup output:
+
 ```
-fd97921df83d5e4adfa94f30989e93411f17641770446c91b6adc3f5676b156a
+Public key: fd97921df83d5e4adfa94f30989e93411f17641770446c91b6adc3f5676b156a
+Signing key SHA256: f21dbaf7fa6e6e3b94ce657163f7cc72160f332693cdac8d2ad76602b7be622e
+Environment: production
 ```
+
+The SHA-256 fingerprint can also be independently checked:
+
+```bash
+shasum -a 256 target/pilot116-key.JBOhAH/signing_key.bin
+```
+
+Expected:
+
+```
+f21dbaf7fa6e6e3b94ce657163f7cc72160f332693cdac8d2ad76602b7be622e
+```
+
+The fingerprint is calculated from the raw Ed25519 seed bytes.
+It does not expose the private key material.
 
 ## Hardening changes
 
