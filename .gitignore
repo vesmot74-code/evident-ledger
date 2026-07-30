@@ -42,3 +42,6 @@ proofs/
 data/backups/
 *.zip
 cookies.txt
+
+# Local freeze backups (do not commit)
+.local-backups/
