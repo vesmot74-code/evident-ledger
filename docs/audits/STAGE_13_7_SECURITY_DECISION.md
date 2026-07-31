@@ -153,3 +153,31 @@ git commit -m "security: record Stage 13.7 review findings and RC decisions"
 ```
 
 **Not executed in this step.**
+
+### cargo audit result (post-RC1 triage)
+
+Executed: 2026-07-31 (after v0.13.7-rc1 was tagged)
+
+Raw output:
+`docs/audits/STAGE_13_7_CARGO_AUDIT.txt`
+
+8 advisories found. Triaged against actual dependency graph and build output:
+
+| Finding | Reachable (server) | Reachable (gui-app) | Action |
+|---|---|---|---|
+| lopdf (RUSTSEC-2026-0187) | No — used through PDF generation (`printpdf`); no untrusted PDF parsing path found | N/A | No action; re-check if PDF parsing is introduced |
+| quick-xml (RUSTSEC-2026-0194, RUSTSEC-2026-0195) | No — not in server dependency graph | Yes — via `keyring` → zbus → zbus_xml on Linux secret-service backend | Local desktop surface only; track future upgrade |
+| rustls-webpki 0.101.7 (RUSTSEC-2026-0098/0099/0104) | Yes — transitive via sqlx 0.7.4 → rustls 0.21.12 | N/A | Address through sqlx upgrade |
+| sqlx 0.7.4 (RUSTSEC-2024-0363) | Yes — direct dependency | N/A | Upgrade to sqlx >=0.8.1 in separate migration stage |
+| rsa 0.9.10 (RUSTSEC-2023-0071) | No — inactive sqlx-mysql dependency path; not present in release build | N/A | No action |
+| paste, rustls-pemfile, ttf-parser | Maintenance warnings | Maintenance warnings | Backlog |
+| spin | Yanked crate warning | N/A | Backlog |
+
+Process note:
+
+This scan was executed after `v0.13.7-rc1` was already tagged and pushed.
+The tag is intentionally not rewritten.
+
+Triage confirms no unresolved exploitable server-side RC blocker.
+The remaining sqlx/rustls modernization is tracked separately before
+the final non-RC release.
