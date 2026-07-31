@@ -64,9 +64,12 @@ Hardening (separate commit `fix(tsa): validate trust material configuration`):
 - Production refuses to start on invalid trust config (`exit(1)`).
 - Non-production warns and continues.
 - Read-path keeps `verification_status=unavailable` for trust gaps, and adds
-  optional `verification_reason` (`trust_material_missing` /
-  `trust_material_invalid`) so clients can tell config errors from crypto
-  `failed` / reserved `tsa_network_unavailable`.
+  optional additive `verification_reason` values:
+  - `trust_material_missing`
+  - `trust_material_invalid`
+  - `verification_failed`
+  - `tsa_network_unavailable`
+  No new public status enum values were introduced.
 - RFC3161 crypto path remains `-digest` (unchanged by this hardening).
 
 ---
