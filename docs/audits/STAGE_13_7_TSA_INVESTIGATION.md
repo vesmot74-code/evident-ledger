@@ -273,3 +273,45 @@ verification_status = verified
 No test expectations were changed.
 
 No API contract changes introduced.
+
+---
+
+## Follow-up: trust material configuration hardening
+
+### Why prior `unavailable` was ambiguous
+
+Before trust-config hardening, missing `FREETSA_CA_CERT_PATH` /
+`FREETSA_UNTRUSTED_CERT_PATH` (or non-existent files) caused
+`freetsa_trust_paths() = None` → `verification_status = unavailable`.
+
+That status also reads as “TSA temporarily unreachable”, so a **deployment
+misconfiguration** was indistinguishable from an external TSA / network outage
+in API responses and audits.
+
+### Digest verification confirmation
+
+RFC3161 read-path verification remains:
+
+`openssl ts -verify -digest <merkle_root_hex>`
+
+There is no return to `-data` for digest-imprint tokens (fix `5681d3c`).
+
+### New trust configuration model
+
+- Pure check: `check_tsa_configuration(ca_path, untrusted_path)` — no env reads.
+- Env parsing stays in callers (`freetsa_trust_path_options_from_env` / `main`).
+- Production (`ENVIRONMENT=production` or `APP_ENV=production`): invalid trust
+  config → controlled `exit(1)` at startup.
+- Non-production: startup continues with a tracing warning.
+
+### Distinguishing failure classes
+
+| Class | `verification_status` | `verification_reason` (additive) |
+|---|---|---|
+| Crypto / imprint reject | `failed` | `verification_failed` |
+| Missing trust paths | `unavailable` | `trust_material_missing` |
+| Paths set but not files | `unavailable` | `trust_material_invalid` |
+| External TSA / network (reserved) | `unavailable` | `tsa_network_unavailable` |
+
+`verification_status` vocabulary and DB cache column values are unchanged.
+`verification_reason` is optional on proof TSA JSON only (backward compatible).

@@ -109,7 +109,7 @@ async fn stub_in_dev_verifies_then_cached_on_repeat() {
     let first = resolve_and_cache_tsa_verification(&pool, chain_id, &merkle_root, &token, &empty)
         .await
         .expect("first verify");
-    assert_eq!(first, TsaVerificationStatus::Verified);
+    assert_eq!(first.status, TsaVerificationStatus::Verified);
 
     let (status, sha): (Option<String>, Option<String>) = sqlx::query_as(
         r#"
@@ -133,7 +133,7 @@ async fn stub_in_dev_verifies_then_cached_on_repeat() {
     let second = resolve_and_cache_tsa_verification(&pool, chain_id, &merkle_root, &token, &cache)
         .await
         .expect("second verify");
-    assert_eq!(second, TsaVerificationStatus::VerifiedCached);
+    assert_eq!(second.status, TsaVerificationStatus::VerifiedCached);
 
     unsafe {
         std::env::remove_var("DEV_MODE");
@@ -150,7 +150,7 @@ async fn stub_outside_dev_fails() {
     let merkle_root = "22".repeat(32);
     let token = stub_bytes(&merkle_root);
     assert_eq!(
-        verify_token_fresh(&token, &merkle_root),
+        verify_token_fresh(&token, &merkle_root).status,
         TsaVerificationStatus::Failed
     );
 }
@@ -160,7 +160,7 @@ async fn malformed_der_fails() {
     let merkle_root = "33".repeat(32);
     let token = vec![0x30, 0x01, 0xff];
     assert_eq!(
-        verify_token_fresh(&token, &merkle_root),
+        verify_token_fresh(&token, &merkle_root).status,
         TsaVerificationStatus::Failed
     );
 }
@@ -194,7 +194,7 @@ async fn changed_token_sha_forces_reverify_not_stale_cache() {
     let outcome = resolve_and_cache_tsa_verification(&pool, chain_id, &merkle_root, &token, &stale)
         .await
         .expect("reverify");
-    assert_eq!(outcome, TsaVerificationStatus::Verified);
+    assert_eq!(outcome.status, TsaVerificationStatus::Verified);
 
     unsafe {
         std::env::remove_var("DEV_MODE");

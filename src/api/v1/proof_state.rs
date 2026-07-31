@@ -32,6 +32,9 @@ pub struct ResolvedProofState {
 /// - `verified_cached` — prior check reused (`token_sha256` match)
 /// - `failed` — invalid token / stub outside dev
 /// - `unavailable` — imprint OK but OpenSSL trust bundle unavailable
+///
+/// Optional additive `tsa.verification_reason` distinguishes trust-material
+/// misconfiguration from crypto failure without changing status vocabulary.
 pub async fn resolve_proof_state(
     pool: &PgPool,
     chain_id: Uuid,
@@ -66,13 +69,21 @@ pub async fn resolve_proof_state(
                 TsaStatus::Verified
             };
 
-            let json = json!({
+            let mut json = json!({
                 "timestamp": row.tsa_timestamp,
                 "serial": row.tsa_serial,
                 "token_bytes": row.tsa_token.len() as i64,
                 "verification_status": outcome.as_str(),
             });
-            (tsa_status, Some(outcome), Some(json))
+            if let Some(reason) = outcome.reason {
+                json.as_object_mut()
+                    .expect("tsa json object")
+                    .insert(
+                        "verification_reason".to_string(),
+                        json!(reason.as_str()),
+                    );
+            }
+            (tsa_status, Some(outcome.status), Some(json))
         }
     };
 
@@ -196,13 +207,13 @@ mod tests {
         std::env::remove_var("DEV_MODE");
         std::env::remove_var("APP_ENV");
         assert_eq!(
-            verify_token_fresh(&token, &root),
+            verify_token_fresh(&token, &root).status,
             TsaVerificationStatus::Failed
         );
 
         std::env::set_var("DEV_MODE", "true");
         assert_eq!(
-            verify_token_fresh(&token, &root),
+            verify_token_fresh(&token, &root).status,
             TsaVerificationStatus::Verified
         );
         std::env::remove_var("DEV_MODE");
