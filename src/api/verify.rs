@@ -1,3 +1,4 @@
+use crate::api::v1::errors::ApiError;
 use crate::sac::SacDocument;
 use crate::service::attestation::build_attestation;
 use crate::service::verification::{export_proof, verify_chain};
@@ -12,21 +13,9 @@ use axum::{
 use serde_json::json;
 use uuid::Uuid;
 
-pub enum ApiError {
-    BadRequest(String),
-    NotFound(String),
-    Internal(String),
-}
-
-impl IntoResponse for ApiError {
-    fn into_response(self) -> Response {
-        let (status, message) = match self {
-            ApiError::BadRequest(msg) => (StatusCode::BAD_REQUEST, msg),
-            ApiError::NotFound(msg) => (StatusCode::NOT_FOUND, msg),
-            ApiError::Internal(msg) => (StatusCode::INTERNAL_SERVER_ERROR, msg),
-        };
-        (status, Json(json!({ "error": message }))).into_response()
-    }
+fn map_internal(err: impl std::fmt::Display, context: &'static str) -> ApiError {
+    tracing::error!(error = %err, "{context}");
+    ApiError::Internal
 }
 
 pub fn router(state: AppState) -> Router {
@@ -70,7 +59,7 @@ async fn handler_verify(
     verify_chain(&state.db, &state.signer, chain_id)
         .await
         .map(Json)
-        .map_err(|e| ApiError::Internal(e.to_string()))
+        .map_err(|e| map_internal(e, "legacy verify failed"))
 }
 
 async fn handler_attestation(
@@ -80,7 +69,7 @@ async fn handler_attestation(
     build_attestation(&state.db, &state.signer, chain_id)
         .await
         .map(Json)
-        .map_err(|e| ApiError::Internal(e.to_string()))
+        .map_err(|e| map_internal(e, "legacy attestation failed"))
 }
 
 async fn handler_attestation_pdf(
@@ -89,7 +78,7 @@ async fn handler_attestation_pdf(
 ) -> Result<impl IntoResponse, ApiError> {
     let doc = build_attestation(&state.db, &state.signer, chain_id)
         .await
-        .map_err(|e| ApiError::Internal(e.to_string()))?;
+        .map_err(|e| map_internal(e, "legacy attestation pdf failed"))?;
 
     let pdf_bytes = crate::sac_pdf::render_sac_pdf(&doc);
 
@@ -115,7 +104,7 @@ async fn handler_proof(
     export_proof(&state.db, &state.signer, chain_id)
         .await
         .map(Json)
-        .map_err(|e| ApiError::Internal(e.to_string()))
+        .map_err(|e| map_internal(e, "legacy proof export failed"))
 }
 
 async fn handler_verify_hash(
@@ -145,4 +134,42 @@ fn deprecated_hash_lookup_response() -> Response {
         })),
     )
         .into_response()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use axum::body::to_bytes;
+    use serde_json::Value;
+
+    #[tokio::test]
+    async fn map_internal_response_hides_leaky_details() {
+        let leaky = "sqlx::Error Postgres protocol /Users/test/src/foo.rs: panic in /home/ci";
+        let response = map_internal(leaky, "test verify leak").into_response();
+        assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
+
+        let body = to_bytes(response.into_body(), usize::MAX)
+            .await
+            .expect("body");
+        let text = String::from_utf8_lossy(&body);
+        for needle in [
+            "sqlx",
+            "Postgres",
+            "postgres",
+            ".rs:",
+            "panic",
+            "/Users/",
+            "/home/",
+        ] {
+            assert!(
+                !text.contains(needle),
+                "response must not contain {needle:?}: {text}"
+            );
+        }
+
+        let json: Value = serde_json::from_slice(&body).expect("json");
+        assert_eq!(json["error"]["code"], "internal_error");
+        assert_eq!(json["error"]["message"], "Internal server error");
+        assert!(json["error"]["request_id"].is_string());
+    }
 }
