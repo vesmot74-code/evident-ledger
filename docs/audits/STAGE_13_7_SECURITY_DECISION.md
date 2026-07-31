@@ -14,8 +14,8 @@ Baseline: `stage-13.7-release-candidate` @ `75cfc12`
 
 | Finding | Decision | Rationale | Action | Owner | Target |
 |---|---|---|---|---|---|
-| SEC-001 | **Fix before RC** | Legacy `/verify/*` exposes internal error details through raw error strings (`e.to_string()` / SQL driver text); route is unauthenticated. Direct information disclosure. | Introduce stable public error envelope; keep internal details only in server logs | TBD | Stage 13.7.2-B |
-| SEC-002 | **Fix before RC** | Same information disclosure class on authenticated `/chains` and `/account/*` (`Result<…, String>` / `e.to_string()`). | Unify legacy routes with opaque public error mapping; align with v1 error handling model | TBD | Stage 13.7.2-B |
+| SEC-001 | **RESOLVED** | Legacy `/verify/*` returns opaque `v1::ApiError::Internal` envelope; internal details stay in server logs only. | Introduce stable public error envelope; keep internal details only in server logs | Stage 13.7.2-B | Stage 13.7.2-B (`e4fa355`) |
+| SEC-002 | **RESOLVED** | Legacy `/chains` and `/account/*` use the same opaque public error mapping as `/verify`. | Unify legacy routes with opaque public error mapping; align with v1 error handling model | Stage 13.7.2-B | Stage 13.7.2-B (`e4fa355`) |
 
 ---
 
@@ -27,7 +27,7 @@ Baseline: `stage-13.7-release-candidate` @ `75cfc12`
 | SEC-004 | **RESOLVED** | Minimum password length increased to **12** characters. Policy applies to new password creation and password changes only. Existing password hashes are not invalidated retroactively. No forced password reset introduced for pilot stage. Deferred (backlog): password breach blacklist / compromised-password database. |
 | SEC-005 | **Accept for pilot** | Auth status codes already unified; remote timing exploitation is hard; pilot threat model does not justify blocking RC. Deferred: constant-time login hardening / dummy hash verification for unknown users. |
 | SEC-006 | **Accept for pilot** | Confirmed: `identity_keys.fingerprint` has DB `UNIQUE` — duplicate fingerprint registration blocked. Remaining risk is challenge consumption atomicity (`used_at` is application-level). Deferred: atomic challenge consume + identity key insert transaction. |
-| SEC-007 | **Fix before RC** | Low-cost consistency: add login rate-limit headers (`Retry-After` + rate-limit metadata) similar to public API throttling. Target: Stage 13.7.2-B. |
+| SEC-007 | **RESOLVED** | Login rate-limit HTTP 429 now includes `Retry-After` from `FixedWindowLimiter` `decision.retry_after_secs`, matching public API throttling. Threshold and window unchanged. |
 | SEC-008 | **Accept for pilot** | Tampering is detectable cryptographically; schema does not prevent UPDATE/DELETE. DB admin/operator compromise is outside current pilot threat model. Follow-up docs: update `SECURITY.md` / `THREAT_MODEL.md` in a later documentation hardening stage. |
 
 ### SEC-003 observation (implementation)
@@ -58,13 +58,13 @@ Out of scope for SEC-003: changing auto-claim / first-writer-wins behavior.
 
 | ID | Area | Decision | RC gate |
 |---|---|---|---|
-| SEC-001 | Error leakage (`/verify`) | Fix before RC | Blocks RC until fixed |
-| SEC-002 | Error leakage (`/chains`, `/account`) | Fix before RC | Blocks RC until fixed |
+| SEC-001 | Error leakage (`/verify`) | **RESOLVED** | Closed |
+| SEC-002 | Error leakage (`/chains`, `/account`) | **RESOLVED** | Closed |
 | SEC-003 | Authz oracle (legacy `/events`) | **RESOLVED** | Closed |
 | SEC-004 | Password min length → 12 | **RESOLVED** | Closed |
 | SEC-005 | Login timing | Accept for pilot | Accepted risk |
 | SEC-006 | Identity challenge race | Accept for pilot | Accepted risk |
-| SEC-007 | Login Retry-After | Fix before RC | Blocks RC until fixed |
+| SEC-007 | Login Retry-After | **RESOLVED** | Closed |
 | SEC-008 | DB append-only | Accept for pilot | Accepted risk |
 | SEC-013 | Dependencies | Scan not performed | Recommend before tag |
 
@@ -107,7 +107,7 @@ RC tag `v0.13.7-rc1` blocked until:
 - [x] SEC-002 fixed *(required — Stage 13.7.2-B)*
 - [x] SEC-003 fixed *(required — Stage 13.7.2-B)*
 - [x] SEC-004 fixed *(required — min length 12; Stage 13.7.2-B)*
-- [ ] SEC-007 fixed *(required — Stage 13.7.2-B)*
+- [x] SEC-007 fixed *(required — Stage 13.7.2-B)*
 - [ ] cargo audit executed and result recorded *(recommended before tag; currently NOT PERFORMED)*
 
 Accepted pilot risks (do not block RC once blockers above are closed):
@@ -123,7 +123,7 @@ Accepted pilot risks (do not block RC once blockers above are closed):
 1. SEC-001 / SEC-002 — opaque error envelopes for legacy `/verify`, `/chains`, `/account` — **done** (`e4fa355`)
 2. SEC-003 — legacy `/events` ownership error disclosure → generic 404 — **done** (`a1a626e`)
 3. SEC-004 — password minimum length 12 — **done** (`69df13a`)
-4. SEC-007 — login `Retry-After` + rate-limit headers — pending
+4. SEC-007 — login `Retry-After` on rate-limit 429 — **done** (`fd1c759`)
 
 ### SEC-004 resolution notes
 
@@ -133,6 +133,14 @@ Existing password hashes are not invalidated retroactively.
 No forced password reset introduced for pilot stage.
 
 **Commit:** `69df13ac4292125636c12b40343a5599ca4a333d`
+
+### SEC-007 resolution notes
+
+Login rate-limit HTTP 429 includes `Retry-After` derived from the shared
+`FixedWindowLimiter` decision (`retry_after_secs`), consistent with public API
+throttling. Rate-limit threshold and window were not changed.
+
+**Commit:** `fd1c759d9ec024e2c76e7f10b23845c4fcfebd40`
 
 ---
 

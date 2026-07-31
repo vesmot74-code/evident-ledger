@@ -584,18 +584,33 @@ async fn login_rate_limit_blocks_eleventh_attempt() {
         assert_ne!(status, StatusCode::TOO_MANY_REQUESTS);
     }
 
-    let (status, body, _) = call(
-        app,
-        peer_request(
+    let response = app
+        .into_service()
+        .oneshot(peer_request(
             "POST",
             "/login",
             Some(json!({ "email": email, "password": "wrongpass12x" })),
             None,
             None,
-        ),
-    )
-    .await;
-    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+        ))
+        .await
+        .expect("response");
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
+    assert!(response.headers().contains_key(header::RETRY_AFTER));
+    let retry_after = response
+        .headers()
+        .get(header::RETRY_AFTER)
+        .expect("header present");
+    let seconds: u64 = retry_after
+        .to_str()
+        .expect("Retry-After is ascii")
+        .parse()
+        .expect("numeric Retry-After");
+    assert!(seconds > 0);
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let body: Value = serde_json::from_slice(&bytes).expect("json");
     assert_eq!(body["error"]["code"], "rate_limited");
     cleanup_email(&pool, &email).await;
 }
