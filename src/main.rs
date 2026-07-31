@@ -47,6 +47,14 @@ async fn main() {
     dotenvy::dotenv().ok();
 
     let config = config::AppConfig::from_env();
+
+    let (ca_path, untrusted_path) = tsa::freetsa_trust_path_options_from_env();
+    if let Err(err) = tsa::check_tsa_configuration(ca_path.as_deref(), untrusted_path.as_deref()) {
+        let app_env = std::env::var("APP_ENV").ok();
+        let production = tsa::is_production_tsa_env(config.environment.as_str(), app_env.as_deref());
+        tsa::enforce_tsa_trust_at_startup(production, &err);
+    }
+
     let signer = if config.environment == "production" {
         if !std::path::Path::new(&config.signing_key_path).exists() {
             panic!(

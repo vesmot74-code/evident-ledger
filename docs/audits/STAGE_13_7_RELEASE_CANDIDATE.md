@@ -52,6 +52,23 @@ Status:
 
 Resolved. RC blocker removed.
 
+### Trust material configuration hardening
+
+Prior gap: missing/invalid FreeTSA trust files produced the same
+`verification_status=unavailable` as a conceptual TSA outage, which weakened
+auditability of deployment mistakes.
+
+Hardening (separate commit `fix(tsa): validate trust material configuration`):
+
+- Startup validates CA + TSA certificate paths via `check_tsa_configuration`.
+- Production refuses to start on invalid trust config (`exit(1)`).
+- Non-production warns and continues.
+- Read-path keeps `verification_status=unavailable` for trust gaps, and adds
+  optional `verification_reason` (`trust_material_missing` /
+  `trust_material_invalid`) so clients can tell config errors from crypto
+  `failed` / reserved `tsa_network_unavailable`.
+- RFC3161 crypto path remains `-digest` (unchanged by this hardening).
+
 ---
 
 ## Environment / exposure note (checked scope only)

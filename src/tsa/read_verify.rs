@@ -7,7 +7,11 @@ use sha2::{Digest, Sha256};
 use sqlx::PgPool;
 use uuid::Uuid;
 
-use super::types::TsaVerificationStatus;
+use super::trust_config::{
+    check_tsa_configuration, freetsa_trust_path_options_from_env,
+    verification_reason_for_config_error, TsaConfigError,
+};
+use super::types::{TsaVerificationOutcome, TsaVerificationReason, TsaVerificationStatus};
 use super::verify::verify_tsa_attestation;
 use super::{TsaAttestation, TsaTrustLevel};
 
@@ -58,20 +62,20 @@ pub fn cached_status_if_fresh(
 }
 
 /// Fresh verification of token bytes against `merkle_root` (hex SHA-256).
-pub fn verify_token_fresh(token: &[u8], merkle_root_hex: &str) -> TsaVerificationStatus {
+pub fn verify_token_fresh(token: &[u8], merkle_root_hex: &str) -> TsaVerificationOutcome {
     if is_evident_stub_json_token(token) {
         return verify_stub_token(token, merkle_root_hex);
     }
     verify_rfc3161_token(token, merkle_root_hex)
 }
 
-fn verify_stub_token(token: &[u8], merkle_root_hex: &str) -> TsaVerificationStatus {
+fn verify_stub_token(token: &[u8], merkle_root_hex: &str) -> TsaVerificationOutcome {
     if !stubs_allowed_in_current_env() {
-        return TsaVerificationStatus::Failed;
+        return TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed);
     }
 
     let Some(tsr_hash) = stub_sha256_from_token_bytes(token) else {
-        return TsaVerificationStatus::Failed;
+        return TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed);
     };
 
     let att = TsaAttestation {
@@ -84,8 +88,8 @@ fn verify_stub_token(token: &[u8], merkle_root_hex: &str) -> TsaVerificationStat
     };
 
     match verify_tsa_attestation(&att, merkle_root_hex) {
-        super::types::TsaStatus::Verified => TsaVerificationStatus::Verified,
-        _ => TsaVerificationStatus::Failed,
+        super::types::TsaStatus::Verified => TsaVerificationOutcome::verified(),
+        _ => TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed),
     }
 }
 
@@ -95,32 +99,52 @@ fn stub_sha256_from_token_bytes(token: &[u8]) -> Option<String> {
     payload.get("sha256")?.as_str().map(str::to_string)
 }
 
-fn verify_rfc3161_token(token: &[u8], merkle_root_hex: &str) -> TsaVerificationStatus {
+fn reason_from_config_error(err: &TsaConfigError) -> TsaVerificationReason {
+    match verification_reason_for_config_error(err) {
+        "trust_material_invalid" => TsaVerificationReason::TrustMaterialInvalid,
+        _ => TsaVerificationReason::TrustMaterialMissing,
+    }
+}
+
+fn verify_rfc3161_token(token: &[u8], merkle_root_hex: &str) -> TsaVerificationOutcome {
     #[cfg(test)]
     if let Some(status) = test_hooks::take_der_override(token, merkle_root_hex) {
-        return status;
+        return match status {
+            TsaVerificationStatus::Verified => TsaVerificationOutcome::verified(),
+            TsaVerificationStatus::VerifiedCached => TsaVerificationOutcome::verified_cached(),
+            TsaVerificationStatus::Failed => {
+                TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed)
+            }
+            TsaVerificationStatus::Unavailable => {
+                TsaVerificationOutcome::unavailable(TsaVerificationReason::TrustMaterialMissing)
+            }
+        };
     }
 
     let Ok(hash) = hex::decode(merkle_root_hex) else {
-        return TsaVerificationStatus::Failed;
+        return TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed);
     };
     if hash.len() != 32 {
-        return TsaVerificationStatus::Failed;
+        return TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed);
     }
 
     // (1) Structural + message-imprint — independent of DB.
     if notary_tsa::parse_and_validate_tsr(token, &hash).is_err() {
-        return TsaVerificationStatus::Failed;
+        return TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed);
     }
 
-    // (2) OpenSSL CA chain check — same trust bundle as write-path FreeTSA smoke.
-    let Some((ca, untrusted)) = notary_tsa::freetsa_trust_paths() else {
-        return TsaVerificationStatus::Unavailable;
-    };
+    // (2) Trust material must be configured before OpenSSL CA chain check.
+    // Missing/invalid local trust files → `unavailable` + reason (not a TSA network outage).
+    let (ca, untrusted) = freetsa_trust_path_options_from_env();
+    if let Err(err) = check_tsa_configuration(ca.as_deref(), untrusted.as_deref()) {
+        return TsaVerificationOutcome::unavailable(reason_from_config_error(&err));
+    }
+    let ca = ca.expect("checked");
+    let untrusted = untrusted.expect("checked");
 
     match notary_tsa::verify_tsr_bytes(token, &hash, &ca, &untrusted) {
-        Ok(()) => TsaVerificationStatus::Verified,
-        Err(_) => TsaVerificationStatus::Failed,
+        Ok(()) => TsaVerificationOutcome::verified(),
+        Err(_) => TsaVerificationOutcome::failed(TsaVerificationReason::VerificationFailed),
     }
 }
 
@@ -131,15 +155,18 @@ pub async fn resolve_and_cache_tsa_verification(
     merkle_root: &str,
     token: &[u8],
     cache: &CachedTsaVerification,
-) -> Result<TsaVerificationStatus, sqlx::Error> {
+) -> Result<TsaVerificationOutcome, sqlx::Error> {
     let current_sha = token_sha256_hex(token);
 
     if let Some(cached) = cached_status_if_fresh(cache, &current_sha) {
-        return Ok(cached);
+        return Ok(TsaVerificationOutcome {
+            status: cached,
+            reason: None,
+        });
     }
 
     let outcome = verify_token_fresh(token, merkle_root);
-    persist_verification_cache(pool, chain_id, merkle_root, &current_sha, outcome).await?;
+    persist_verification_cache(pool, chain_id, merkle_root, &current_sha, outcome.status).await?;
     Ok(outcome)
 }
 
@@ -252,7 +279,7 @@ mod tests {
         let root = "aa".repeat(32);
         let token = stub_token_bytes(&root);
         assert_eq!(
-            verify_token_fresh(&token, &root),
+            verify_token_fresh(&token, &root).status,
             TsaVerificationStatus::Verified
         );
         std::env::remove_var("DEV_MODE");
@@ -265,9 +292,11 @@ mod tests {
         std::env::remove_var("APP_ENV");
         let root = "bb".repeat(32);
         let token = stub_token_bytes(&root);
+        let outcome = verify_token_fresh(&token, &root);
+        assert_eq!(outcome.status, TsaVerificationStatus::Failed);
         assert_eq!(
-            verify_token_fresh(&token, &root),
-            TsaVerificationStatus::Failed
+            outcome.reason,
+            Some(TsaVerificationReason::VerificationFailed)
         );
     }
 
@@ -277,7 +306,7 @@ mod tests {
         let root = "cc".repeat(32);
         let token = vec![0x30, 0x03, 0x01, 0x01, 0xff];
         assert_eq!(
-            verify_token_fresh(&token, &root),
+            verify_token_fresh(&token, &root).status,
             TsaVerificationStatus::Failed
         );
     }
@@ -289,7 +318,7 @@ mod tests {
         let root = "dd".repeat(32);
         let token = vec![0x30, 0x82, 0x01, 0x00]; // non-stub bytes; hook short-circuits
         assert_eq!(
-            verify_token_fresh(&token, &root),
+            verify_token_fresh(&token, &root).status,
             TsaVerificationStatus::Verified
         );
         assert_eq!(test_hooks::openssl_calls(), 1);

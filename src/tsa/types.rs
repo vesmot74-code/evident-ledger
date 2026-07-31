@@ -42,6 +42,79 @@ pub enum TsaVerificationStatus {
     Unavailable,
 }
 
+/// Additive diagnostic for API clients; does not change `verification_status` vocabulary.
+///
+/// Distinguishes deployment misconfiguration from crypto failure / external outage
+/// without introducing a new top-level status (backward compatible).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TsaVerificationReason {
+    TrustMaterialMissing,
+    TrustMaterialInvalid,
+    TsaNetworkUnavailable,
+    VerificationFailed,
+}
+
+impl TsaVerificationReason {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::TrustMaterialMissing => "trust_material_missing",
+            Self::TrustMaterialInvalid => "trust_material_invalid",
+            Self::TsaNetworkUnavailable => "tsa_network_unavailable",
+            Self::VerificationFailed => "verification_failed",
+        }
+    }
+}
+
+/// Read-path verification result: stable status + optional reason.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TsaVerificationOutcome {
+    pub status: TsaVerificationStatus,
+    pub reason: Option<TsaVerificationReason>,
+}
+
+impl TsaVerificationOutcome {
+    pub fn verified() -> Self {
+        Self {
+            status: TsaVerificationStatus::Verified,
+            reason: None,
+        }
+    }
+
+    pub fn verified_cached() -> Self {
+        Self {
+            status: TsaVerificationStatus::VerifiedCached,
+            reason: None,
+        }
+    }
+
+    pub fn failed(reason: TsaVerificationReason) -> Self {
+        Self {
+            status: TsaVerificationStatus::Failed,
+            reason: Some(reason),
+        }
+    }
+
+    pub fn unavailable(reason: TsaVerificationReason) -> Self {
+        Self {
+            status: TsaVerificationStatus::Unavailable,
+            reason: Some(reason),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        self.status.as_str()
+    }
+
+    pub fn is_failure(self) -> bool {
+        self.status.is_failure()
+    }
+
+    pub fn cache_value(self) -> Option<&'static str> {
+        self.status.cache_value()
+    }
+}
+
 impl TsaVerificationStatus {
     pub fn as_str(self) -> &'static str {
         match self {
