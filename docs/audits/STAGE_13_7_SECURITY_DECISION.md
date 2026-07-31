@@ -23,12 +23,34 @@ Baseline: `stage-13.7-release-candidate` @ `75cfc12`
 
 | Finding | Decision | Rationale |
 |---|---|---|
-| SEC-003 | **Fix before RC** | Legacy `POST /events` exposes ownership via **403** + ownership wording for foreign `chain_id`; v1 maps same case to **404**. Align legacy with v1: `foreign object == not found`. Target: Stage 13.7.2-B. |
+| SEC-003 | **RESOLVED** | Legacy `POST /events` no longer exposes ownership via **403** + ownership wording. Local `map_legacy_events_error` maps `ChainAccessDenied` and `ChainNotFound` to identical HTTP **404** `{"error":"not_found"}`. Shared `LedgerError::IntoResponse` unchanged. |
 | SEC-004 | **Partial fix before RC** | Argon2id storage is correct; increase minimum password length to **12** characters before RC. Deferred (backlog): password breach blacklist / compromised-password database. |
 | SEC-005 | **Accept for pilot** | Auth status codes already unified; remote timing exploitation is hard; pilot threat model does not justify blocking RC. Deferred: constant-time login hardening / dummy hash verification for unknown users. |
 | SEC-006 | **Accept for pilot** | Confirmed: `identity_keys.fingerprint` has DB `UNIQUE` — duplicate fingerprint registration blocked. Remaining risk is challenge consumption atomicity (`used_at` is application-level). Deferred: atomic challenge consume + identity key insert transaction. |
 | SEC-007 | **Fix before RC** | Low-cost consistency: add login rate-limit headers (`Retry-After` + rate-limit metadata) similar to public API throttling. Target: Stage 13.7.2-B. |
 | SEC-008 | **Accept for pilot** | Tampering is detectable cryptographically; schema does not prevent UPDATE/DELETE. DB admin/operator compromise is outside current pilot threat model. Follow-up docs: update `SECURITY.md` / `THREAT_MODEL.md` in a later documentation hardening stage. |
+
+### SEC-003 observation (implementation)
+
+Legacy `POST /events` auto-claims unseen `chain_id` through existing
+`INSERT … ON CONFLICT DO NOTHING` behavior in `ensure_chain_access_in_tx`.
+
+Therefore chain existence observability through a successful first claim
+(HTTP 200 on a fresh UUID) is a **separate** product/security design
+consideration.
+
+This remediation only closes ownership **error** disclosure:
+
+```text
+403 + ownership wording  →  generic 404 { "error": "not_found" }
+```
+
+for `LedgerError::ChainAccessDenied` and defensive `ChainNotFound` mapping on
+the legacy `/events` handler only.
+
+Out of scope for SEC-003: changing auto-claim / first-writer-wins behavior.
+
+**Status:** RESOLVED (Stage 13.7.2-B — legacy `/events` mapper + regression tests).
 
 ---
 
@@ -38,7 +60,7 @@ Baseline: `stage-13.7-release-candidate` @ `75cfc12`
 |---|---|---|---|
 | SEC-001 | Error leakage (`/verify`) | Fix before RC | Blocks RC until fixed |
 | SEC-002 | Error leakage (`/chains`, `/account`) | Fix before RC | Blocks RC until fixed |
-| SEC-003 | Authz oracle (legacy `/events`) | Fix before RC | Blocks RC until fixed |
+| SEC-003 | Authz oracle (legacy `/events`) | **RESOLVED** | Closed |
 | SEC-004 | Password min length → 12 | Partial fix before RC | Blocks RC until partial fix done |
 | SEC-005 | Login timing | Accept for pilot | Accepted risk |
 | SEC-006 | Identity challenge race | Accept for pilot | Accepted risk |
@@ -96,14 +118,12 @@ Accepted pilot risks (do not block RC once blockers above are closed):
 
 ---
 
-## Stage 13.7.2-B worklist (implementation — not this step)
+## Stage 13.7.2-B worklist
 
-1. SEC-001 / SEC-002 — opaque error envelopes for legacy `/verify`, `/chains`, `/account`
-2. SEC-003 — legacy `/events` foreign chain → not found (v1 semantics)
-3. SEC-004 — password minimum length 12
-4. SEC-007 — login `Retry-After` + rate-limit headers
-
-Do **not** mix accepted-risk documentation commits with the 13.7.2-B fix commit unless explicitly requested.
+1. SEC-001 / SEC-002 — opaque error envelopes for legacy `/verify`, `/chains`, `/account` — **done** (`e4fa355`)
+2. SEC-003 — legacy `/events` ownership error disclosure → generic 404 — **done** (this commit)
+3. SEC-004 — password minimum length 12 — pending
+4. SEC-007 — login `Retry-After` + rate-limit headers — pending
 
 ---
 
