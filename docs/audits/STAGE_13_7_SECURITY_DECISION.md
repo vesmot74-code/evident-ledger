@@ -123,7 +123,7 @@ Accepted pilot risks (do not block RC once blockers above are closed):
 1. SEC-001 / SEC-002 — opaque error envelopes for legacy `/verify`, `/chains`, `/account` — **done** (`e4fa355`)
 2. SEC-003 — legacy `/events` ownership error disclosure → generic 404 — **done** (`a1a626e`)
 3. SEC-004 — password minimum length 12 — **done** (`69df13a`)
-4. SEC-007 — login `Retry-After` on rate-limit 429 — **done** (`fd1c759`)
+4. SEC-007 — login `Retry-After` on rate-limit 429 — **done** (`ed4cd62`)
 
 ### SEC-004 resolution notes
 
@@ -140,7 +140,7 @@ Login rate-limit HTTP 429 includes `Retry-After` derived from the shared
 `FixedWindowLimiter` decision (`retry_after_secs`), consistent with public API
 throttling. Rate-limit threshold and window were not changed.
 
-**Commit:** `fd1c759d9ec024e2c76e7f10b23845c4fcfebd40`
+**Commit:** `ed4cd629eff465f5b8215e788a3f0dd614801dc7`
 
 ---
 
