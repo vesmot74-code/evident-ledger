@@ -158,7 +158,7 @@ async fn register_and_login(app: &axum::Router, email: &str) -> String {
         auth_request(
             "POST",
             "/auth/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
         ),
     )
     .await;
@@ -168,7 +168,7 @@ async fn register_and_login(app: &axum::Router, email: &str) -> String {
         auth_request(
             "POST",
             "/auth/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
         ),
     )
     .await;

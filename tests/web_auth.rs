@@ -121,7 +121,7 @@ async fn register_new_email_creates_account_with_password_hash() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -156,7 +156,7 @@ async fn register_existing_api_only_email_returns_conflict() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -178,7 +178,7 @@ async fn register_existing_web_email_returns_conflict() {
     let req = peer_request(
         "POST",
         "/register",
-        Some(json!({ "email": email, "password": "securepass1" })),
+        Some(json!({ "email": email, "password": "securepass12" })),
         None,
         None,
     );
@@ -189,7 +189,7 @@ async fn register_existing_web_email_returns_conflict() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "otherpass1" })),
+            Some(json!({ "email": email, "password": "otherpass123" })),
             None,
             None,
         ),
@@ -216,7 +216,7 @@ async fn set_password_with_api_key_succeeds_for_api_only_account() {
         peer_request(
             "POST",
             "/set-password",
-            Some(json!({ "password": "newsecure1" })),
+            Some(json!({ "password": "newsecure12x" })),
             Some(&registered.api_key),
             None,
         ),
@@ -245,7 +245,7 @@ async fn set_password_without_api_key_returns_unauthorized() {
         peer_request(
             "POST",
             "/set-password",
-            Some(json!({ "password": "newsecure1" })),
+            Some(json!({ "password": "newsecure12x" })),
             None,
             None,
         ),
@@ -270,7 +270,7 @@ async fn set_password_when_already_set_returns_conflict() {
         peer_request(
             "POST",
             "/set-password",
-            Some(json!({ "password": "firstpass1" })),
+            Some(json!({ "password": "firstpass123" })),
             Some(&registered.api_key),
             None,
         ),
@@ -282,7 +282,7 @@ async fn set_password_when_already_set_returns_conflict() {
         peer_request(
             "POST",
             "/set-password",
-            Some(json!({ "password": "secondpass1" })),
+            Some(json!({ "password": "secondpass12" })),
             Some(&registered.api_key),
             None,
         ),
@@ -305,7 +305,7 @@ async fn login_with_valid_password_sets_cookie() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -317,7 +317,7 @@ async fn login_with_valid_password_sets_cookie() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -343,7 +343,7 @@ async fn login_with_wrong_password_returns_unauthorized() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -355,7 +355,7 @@ async fn login_with_wrong_password_returns_unauthorized() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "wrongpass1" })),
+            Some(json!({ "email": email, "password": "wrongpass12x" })),
             None,
             None,
         ),
@@ -376,7 +376,7 @@ async fn login_with_unknown_email_returns_unauthorized() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": "missing@example.com", "password": "securepass1" })),
+            Some(json!({ "email": "missing@example.com", "password": "securepass12" })),
             None,
             None,
         ),
@@ -401,7 +401,7 @@ async fn login_api_only_account_returns_unauthorized() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -424,7 +424,7 @@ async fn me_with_valid_session_returns_profile() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -435,7 +435,7 @@ async fn me_with_valid_session_returns_profile() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -470,7 +470,7 @@ async fn logout_deletes_session() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -481,7 +481,7 @@ async fn logout_deletes_session() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -517,7 +517,7 @@ async fn me_with_expired_session_returns_unauthorized() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -528,7 +528,7 @@ async fn me_with_expired_session_returns_unauthorized() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -562,7 +562,7 @@ async fn login_rate_limit_blocks_eleventh_attempt() {
         peer_request(
             "POST",
             "/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             None,
         ),
@@ -575,7 +575,7 @@ async fn login_rate_limit_blocks_eleventh_attempt() {
             peer_request(
                 "POST",
                 "/login",
-                Some(json!({ "email": email, "password": "wrongpass1" })),
+                Some(json!({ "email": email, "password": "wrongpass12x" })),
                 None,
                 None,
             ),
@@ -589,7 +589,7 @@ async fn login_rate_limit_blocks_eleventh_attempt() {
         peer_request(
             "POST",
             "/login",
-            Some(json!({ "email": email, "password": "wrongpass1" })),
+            Some(json!({ "email": email, "password": "wrongpass12x" })),
             None,
             None,
         ),
@@ -597,6 +597,106 @@ async fn login_rate_limit_blocks_eleventh_attempt() {
     .await;
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(body["error"]["code"], "rate_limited");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn register_rejects_eleven_char_password() {
+    let pool = test_pool().await;
+    let email = format!("web-short-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = auth_app(test_state(pool.clone()));
+
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/register",
+            Some(json!({ "email": email, "password": "12345678901" })), // 11
+            None,
+            None,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_request");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn register_accepts_twelve_char_password() {
+    let pool = test_pool().await;
+    let email = format!("web-ok12-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let app = auth_app(test_state(pool.clone()));
+
+    let (status, _, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/register",
+            Some(json!({ "email": email, "password": "123456789012" })), // 12
+            None,
+            None,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::CREATED);
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn set_password_rejects_eleven_char_password() {
+    let pool = test_pool().await;
+    let email = format!("api-setpw-short-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let registered = accounts::register_account(&pool, &email)
+        .await
+        .expect("register");
+
+    let app = auth_app(test_state(pool.clone()));
+    let (status, body, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/set-password",
+            Some(json!({ "password": "12345678901" })), // 11
+            Some(&registered.api_key),
+            None,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::BAD_REQUEST);
+    assert_eq!(body["error"]["code"], "invalid_request");
+    cleanup_email(&pool, &email).await;
+}
+
+#[tokio::test]
+async fn set_password_accepts_twelve_char_password() {
+    let pool = test_pool().await;
+    let email = format!("api-setpw-ok12-{}@example.com", Uuid::new_v4());
+    cleanup_email(&pool, &email).await;
+    let registered = accounts::register_account(&pool, &email)
+        .await
+        .expect("register");
+
+    let app = auth_app(test_state(pool.clone()));
+    let (status, _, _) = call(
+        app,
+        peer_request(
+            "POST",
+            "/set-password",
+            Some(json!({ "password": "123456789012" })), // 12
+            Some(&registered.api_key),
+            None,
+        ),
+    )
+    .await;
+
+    assert_eq!(status, StatusCode::OK);
     cleanup_email(&pool, &email).await;
 }
 
