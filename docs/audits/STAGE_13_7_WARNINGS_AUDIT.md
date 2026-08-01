@@ -5,21 +5,24 @@
 | Field | Value |
 |-------|-------|
 | Branch | `stage-13.7-release-candidate` |
-| Commit SHA | `aaa9d3e03373248b1f8ee9d0d235d41d868a423d` |
-| Commit subject | `docs: align operational docs with typed startup exit codes` |
-| `git status` | clean (matches `origin/stage-13.7-release-candidate`) |
+| Part A evidence commit | `abeae66` (`docs: record Stage 13.7 TSA startup guard runtime validation`) |
+| Part B audit baseline (`git rev-parse HEAD` after Part A) | `abeae66` / classification commit `fa95d7e` |
 | Date | 2026-08-02 |
 | Toolchain | `rustc 1.96.0` / `cargo 1.96.0` |
 | Crate edition | `2021` (`Cargo.toml`) |
+| `git status` (Part B) | clean after evidence push; warnings audit docs-only |
 
-Relevant prior commits (context only):
+RC history intent:
 
-- `68747cf` startup typed exit codes
-- `7de624e` live-server integration test fixtures
-- `4b620a3` RC test stabilization docs
-- `aaa9d3e` operational docs exit-code alignment
+```
+aaa9d3e
+  |
+  +--> abeae66  TSA startup guards evidence
+  |
+  +--> fa95d7e  warnings audit (no Rust changes)
+```
 
-**This audit does not modify Rust sources.** No `cargo fix`, dependency upgrades, or refactors were applied.
+**This audit does not modify Rust sources.** No `cargo fix`, dependency upgrades, or refactors were applied. **Autofix: NOT RUN.**
 
 ---
 
@@ -66,6 +69,18 @@ The server binary (`src/main.rs`) compiles application modules via `mod …` rat
 | C. Dependency | **1 crate** (`sqlx-postgres 0.7.4`, multiple internal sites) | Soft future-compat risk |
 | D. Potential release blockers | **0 hard** | No security/correctness blockers identified for current edition 2021 build |
 
+### Classification (lint categories)
+
+| Category | Count | Action |
+|----------|------:|--------|
+| unused imports | 32 | safe candidate |
+| unused variables | 8 | review |
+| unused mut | 9 | safe candidate |
+| dead code | 152 | review |
+| deprecated API | 0 | investigate (none observed) |
+| future incompatibility | 1 crate (`sqlx-postgres 0.7.4`) | separate |
+| clippy warnings | 0 (clippy not run) | separate |
+
 Lint mix (first-party unique):
 
 | Lint | Count |
@@ -74,6 +89,8 @@ Lint mix (first-party unique):
 | `unused_imports` | 32 |
 | `unused_mut` | 9 |
 | `unused_variables` | 8 |
+
+Severity: all observed first-party warnings are **compile-time unused-code hygiene** (no behavioral / security diagnostics). Dependency future-incompat is **soft** on edition 2021.
 
 ---
 
@@ -209,6 +226,12 @@ Unique warnings when building `--lib` (clearest production signal):
 
 ## Decision
 
+### Autofix
+
+**NOT RUN** for this RC audit commit.
+
+Rationale: classification shows no hard release blockers; mass `cargo fix` would exceed the >15-file safety gate once bin-target noise is included. Safe import-only cleanup remains optional follow-up under the Autofix Policy (imports / unused bindings only).
+
 ### Fix before stable
 
 **Required:** none (no hard blockers).
@@ -225,6 +248,14 @@ Unique warnings when building `--lib` (clearest production signal):
 2. Bin-target warning inflation from `mod`-embedded server binary (architectural; separate refactor if ever pursued).
 3. `sqlx` 0.7 → 0.8+ migration for future-incompat (**C**) as its own tracked work item.
 4. Vendor `notary-pdf` / `notary-tsa` dead helpers.
+
+### Part B revalidation (post–Part A)
+
+After `abeae66` was on the branch, re-ran:
+
+- `cargo build` — PASS (same warning profile: lib 7, bin `evident-ledger` 146)
+- `cargo test --no-run` — PASS
+- `cargo report future-incompatibilities` — `sqlx-postgres v0.7.4` only (id `1`)
 
 ---
 
