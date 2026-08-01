@@ -29,9 +29,7 @@ fn evident_api_key() -> String {
 fn account_id_for_api_key(api_key: &str) -> Uuid {
     dotenvy::dotenv().ok();
     let database_url = common::live_server_database_url();
-    let mut hasher = Sha256::new();
-    hasher.update(api_key.as_bytes());
-    let key_hash = format!("{:x}", hasher.finalize());
+    let key_hash = evident_ledger::auth::api_key::hash_api_key_for_lookup(api_key);
     let rt = tokio::runtime::Runtime::new().expect("runtime");
     rt.block_on(async {
         let pool = sqlx::PgPool::connect(&database_url).await.expect("db");

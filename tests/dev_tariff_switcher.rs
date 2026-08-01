@@ -8,8 +8,6 @@ use std::fs;
 use std::path::PathBuf;
 use uuid::Uuid;
 
-const CHAIN_ID: &str = "7aa1b5b0-94ff-4956-8a5e-114e54dae100";
-
 fn evident_api_key() -> String {
     if let Ok(key) = std::env::var("EVIDENT_API_KEY") {
         let key = key.trim().to_string();
@@ -50,8 +48,7 @@ fn tsa_mode_from_capabilities(client: &EvidentClient) -> String {
         .to_string()
 }
 
-fn commit_status(file_body: &str) -> reqwest::StatusCode {
-    let chain_uuid = Uuid::parse_str(CHAIN_ID).unwrap();
+fn commit_status(chain_uuid: Uuid, file_body: &str) -> reqwest::StatusCode {
     let _client = EvidentClient::new("http://127.0.0.1:3000");
     let mut hasher = Sha256::new();
     hasher.update(file_body.as_bytes());
@@ -77,6 +74,7 @@ fn commit_status(file_body: &str) -> reqwest::StatusCode {
 fn dev_tariff_switcher_end_to_end() {
     let client = EvidentClient::new("http://127.0.0.1:3000");
     let account_id = account_id_from_capabilities(&client);
+    let chain_uuid = Uuid::new_v4();
 
     let caps = client.fetch_capabilities().expect("capabilities");
     assert!(
@@ -114,7 +112,7 @@ fn dev_tariff_switcher_end_to_end() {
     let to_free = client
         .dev_change_plan(account_id, "free")
         .expect("vault→free change-plan");
-    let status_free = commit_status("tariff-switcher-test-free-commit");
+    let status_free = commit_status(chain_uuid, "tariff-switcher-test-free-commit");
     eprintln!(
         "Test 2: {:?}, tsa_mode={}, commit HTTP {}",
         to_free,
@@ -131,7 +129,7 @@ fn dev_tariff_switcher_end_to_end() {
     let back_vault = client
         .dev_change_plan(account_id, "vault")
         .expect("free→vault change-plan");
-    let status_vault = commit_status("tariff-switcher-test-vault-commit");
+    let status_vault = commit_status(chain_uuid, "tariff-switcher-test-vault-commit");
     eprintln!(
         "Test 3: {:?}, tsa_mode={}, commit HTTP {}",
         back_vault,
