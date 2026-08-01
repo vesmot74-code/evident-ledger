@@ -8,26 +8,49 @@ pub struct ServerSigner {
     pub verifying_key: VerifyingKey,
 }
 
+#[derive(Debug)]
+pub enum SigningError {
+    ReadFailed(std::io::Error),
+    InvalidKeyLength,
+    CreateDirFailed(std::io::Error),
+    WriteFailed(std::io::Error),
+}
+
+impl std::fmt::Display for SigningError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            SigningError::ReadFailed(e) => write!(f, "failed to read signing key: {e}"),
+            SigningError::InvalidKeyLength => write!(f, "invalid signing key length"),
+            SigningError::CreateDirFailed(e) => {
+                write!(f, "failed to create signing key directory: {e}")
+            }
+            SigningError::WriteFailed(e) => write!(f, "failed to write signing key: {e}"),
+        }
+    }
+}
+
 impl ServerSigner {
-    pub fn load_or_create(path: &str) -> Self {
+    pub fn load_or_create(path: &str) -> Result<Self, SigningError> {
         let path_ref = Path::new(path);
         if path_ref.exists() {
-            let bytes = std::fs::read(path).expect("Failed to read signing key");
-            let array: [u8; 32] = bytes.try_into().expect("Invalid key length");
+            let bytes = std::fs::read(path).map_err(SigningError::ReadFailed)?;
+            let array: [u8; 32] = bytes
+                .try_into()
+                .map_err(|_| SigningError::InvalidKeyLength)?;
             let signing_key = SigningKey::from_bytes(&array);
             let verifying_key = signing_key.verifying_key();
-            return Self {
+            return Ok(Self {
                 signing_key,
                 verifying_key,
-            };
+            });
         }
         let signing_key = SigningKey::generate(&mut OsRng);
         if let Some(parent) = path_ref.parent() {
             if !parent.as_os_str().is_empty() {
-                std::fs::create_dir_all(parent).expect("Failed to create signing key directory");
+                std::fs::create_dir_all(parent).map_err(SigningError::CreateDirFailed)?;
             }
         }
-        std::fs::write(path, signing_key.to_bytes()).expect("Failed to write signing key");
+        std::fs::write(path, signing_key.to_bytes()).map_err(SigningError::WriteFailed)?;
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -46,10 +69,10 @@ impl ServerSigner {
             display.display()
         );
         let verifying_key = signing_key.verifying_key();
-        Self {
+        Ok(Self {
             signing_key,
             verifying_key,
-        }
+        })
     }
 
     pub fn sign_root(&self, chain_id: &str, merkle_root: &str, chain_head: &str) -> String {
@@ -141,7 +164,8 @@ mod tests {
             &std::env::temp_dir()
                 .join(format!("evident-signing-test-{}.bin", Uuid::new_v4()))
                 .to_string_lossy(),
-        );
+        )
+        .expect("test signer");
         let merkle_root = "b".repeat(64);
         let chain_head = Uuid::new_v4().to_string();
         let chain_id = Uuid::new_v4().to_string();

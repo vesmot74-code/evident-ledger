@@ -129,7 +129,7 @@ async fn legacy_hash_attestation_pdf_returns_410() {
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
-    ));
+    ).expect("test signer"));
     let config = {
         common::setup_test_env();
         evident_ledger::config::AppConfig::from_env()
@@ -165,7 +165,7 @@ async fn public_verify_returns_existence_only_fields() {
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
-    ));
+    ).expect("test signer"));
     let state = common::test_app_state(pool.clone());
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
@@ -214,7 +214,7 @@ async fn public_certificate_pdf_has_no_private_fields() {
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
-    ));
+    ).expect("test signer"));
     let state = common::test_app_state(pool.clone());
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 
@@ -271,7 +271,7 @@ async fn cross_account_same_hash_reveals_no_multi_tenant_metadata() {
 
     let signer = Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
         "signing_key.bin",
-    ));
+    ).expect("test signer"));
     let state = common::test_app_state(pool.clone());
     let port = spawn_server(public_app(state, generous_rate_limits())).await;
 

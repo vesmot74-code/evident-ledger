@@ -4,13 +4,22 @@ use std::env;
 use uuid::Uuid;
 
 pub async fn create_pool() -> PgPool {
-    let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
+    let database_url = match env::var("DATABASE_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            eprintln!("STARTUP_ERROR database: DATABASE_URL must be set");
+            std::process::exit(3);
+        }
+    };
 
     PgPoolOptions::new()
         .max_connections(10)
         .connect(&database_url)
         .await
-        .expect("DB connection failed")
+        .unwrap_or_else(|err| {
+            eprintln!("STARTUP_ERROR database: connection failed: {}", err);
+            std::process::exit(3);
+        })
 }
 
 /// Resolve `TEST_DATABASE_URL` and refuse connecting to the non-test `ledger` database.

@@ -54,7 +54,7 @@ fn state_with_paddle(pool: sqlx::PgPool, paddle: Arc<MockPaddleClient>) -> AppSt
         pool,
         Arc::new(evident_ledger::signing::ServerSigner::load_or_create(
             "signing_key.bin",
-        )),
+        ).expect("test signer")),
         evident_ledger::config::AppConfig::from_env(),
         paddle,
     )

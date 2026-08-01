@@ -51,27 +51,37 @@ async fn main() {
     let (ca_path, untrusted_path) = tsa::freetsa_trust_path_options_from_env();
     if let Err(err) = tsa::check_tsa_configuration(ca_path.as_deref(), untrusted_path.as_deref()) {
         let app_env = std::env::var("APP_ENV").ok();
-        let production = tsa::is_production_tsa_env(config.environment.as_str(), app_env.as_deref());
+        let production =
+            tsa::is_production_tsa_env(config.environment.as_str(), app_env.as_deref());
         tsa::enforce_tsa_trust_at_startup(production, &err);
     }
 
     let signer = if config.environment == "production" {
         if !std::path::Path::new(&config.signing_key_path).exists() {
-            panic!(
-                "Production signing key missing: {}",
+            eprintln!(
+                "STARTUP_ERROR signing: Production signing key missing: {}",
                 config.signing_key_path_display().display()
             );
+            std::process::exit(2);
         }
-        Arc::new(signing::ServerSigner::load_or_create(
-            &config.signing_key_path,
-        ))
+        match signing::ServerSigner::load_or_create(&config.signing_key_path) {
+            Ok(signer) => Arc::new(signer),
+            Err(err) => {
+                eprintln!("STARTUP_ERROR signing: {}", err);
+                std::process::exit(2);
+            }
+        }
     } else {
         if std::env::var("SIGNING_KEY_PATH").is_err() {
             eprintln!("WARNING: SIGNING_KEY_PATH is not set. Using local development signing key.");
         }
-        Arc::new(signing::ServerSigner::load_or_create(
-            &config.signing_key_path,
-        ))
+        match signing::ServerSigner::load_or_create(&config.signing_key_path) {
+            Ok(signer) => Arc::new(signer),
+            Err(err) => {
+                eprintln!("STARTUP_ERROR signing: {}", err);
+                std::process::exit(2);
+            }
+        }
     };
 
     println!("Public key: {}", signer.public_key_hex());
@@ -144,11 +154,20 @@ async fn main() {
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Evident Ledger running on http://{}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
+    let listener = match tokio::net::TcpListener::bind(addr).await {
+        Ok(listener) => listener,
+        Err(err) => {
+            eprintln!("STARTUP_ERROR network: failed to bind {}: {}", addr, err);
+            std::process::exit(5);
+        }
+    };
     axum::serve(
         listener,
         app.into_make_service_with_connect_info::<SocketAddr>(),
     )
     .await
-    .unwrap();
+    .unwrap_or_else(|err| {
+        eprintln!("SERVER_RUNTIME_ERROR: {}", err);
+        std::process::exit(27);
+    });
 }
