@@ -9,6 +9,13 @@ pub enum CoreError {
     InvalidHashLength(usize),
     #[error("unsupported hash algorithm")]
     UnsupportedAlgorithm,
+    /// Network / TLS / DNS / timeout (typed at the HTTP client boundary).
+    #[error("TSA transport error: {0}")]
+    Transport(String),
+    /// Protocol / malformed response / digest mismatch / HTTP status rejection.
+    #[error("TSA protocol error: {0}")]
+    Protocol(String),
+    /// Fallback when the underlying error type could not be classified.
     #[error("invalid RFC3161 response: {0}")]
     InvalidResponse(String),
 }
@@ -52,7 +59,7 @@ pub fn parse_and_validate_tsr(tsr: &[u8], expected_hash: &[u8]) -> Result<Parsed
 
     let validation = validate_tsa_bytes_for_hash(tsr, expected_hash)?;
     if !validation.is_valid() {
-        return Err(CoreError::InvalidResponse(
+        return Err(CoreError::Protocol(
             "RFC3161 imprint validation failed".into(),
         ));
     }
@@ -135,8 +142,76 @@ pub fn request_external_timestamp(url: &str, hash: &[u8]) -> Result<ParsedTsr, C
     }
     let hash_hex = hex::encode(hash);
     let response = tsp_http_client::request_timestamp_for_digest(url, &hash_hex)
-        .map_err(|e| CoreError::InvalidResponse(e.to_string()))?;
+        .map_err(map_tsp_http_box_error)?;
     parse_tsr(response.as_der_encoded())
+}
+
+/// Classify `tsp_http_client` / `ureq` errors by Rust type (no string matching).
+pub fn classify_tsp_http_box_error(err: Box<dyn std::error::Error + 'static>) -> CoreError {
+    map_tsp_http_box_error(err)
+}
+
+/// Classify a concrete `ureq::Error` (no string matching).
+pub fn classify_ureq_error(err: &ureq::Error) -> CoreError {
+    map_ureq_error(err)
+}
+
+/// Classify a concrete `tsp_http_client::Error` (no string matching).
+pub fn classify_tsp_http_client_error(err: &tsp_http_client::Error) -> CoreError {
+    map_tsp_http_client_error(err)
+}
+
+fn map_tsp_http_box_error(err: Box<dyn std::error::Error + 'static>) -> CoreError {
+    // Prefer concrete TSP protocol errors when present.
+    if let Some(tsp_err) = err.downcast_ref::<tsp_http_client::Error>() {
+        return map_tsp_http_client_error(tsp_err);
+    }
+
+    // Transport errors from ureq (used inside tsp-http-client).
+    if let Some(ureq_err) = err.downcast_ref::<ureq::Error>() {
+        return map_ureq_error(ureq_err);
+    }
+
+    // Bare IO errors occasionally surface without ureq wrapping.
+    if let Some(io_err) = err.downcast_ref::<std::io::Error>() {
+        return CoreError::Transport(io_err.to_string());
+    }
+
+    CoreError::InvalidResponse(err.to_string())
+}
+
+fn map_tsp_http_client_error(err: &tsp_http_client::Error) -> CoreError {
+    match err {
+        tsp_http_client::Error::InvalidDigest => CoreError::InvalidResponse(err.to_string()),
+        tsp_http_client::Error::RequestNotAccepted(_)
+        | tsp_http_client::Error::InvalidServerResponse
+        | tsp_http_client::Error::DigestMismatch => CoreError::Protocol(err.to_string()),
+    }
+}
+
+fn map_ureq_error(err: &ureq::Error) -> CoreError {
+    match err {
+        ureq::Error::Timeout(_)
+        | ureq::Error::HostNotFound
+        | ureq::Error::ConnectionFailed
+        | ureq::Error::Io(_)
+        | ureq::Error::Tls(_) => CoreError::Transport(err.to_string()),
+
+        ureq::Error::StatusCode(_)
+        | ureq::Error::Http(_)
+        | ureq::Error::BadUri(_)
+        | ureq::Error::Protocol(_)
+        | ureq::Error::RedirectFailed
+        | ureq::Error::InvalidProxyUrl
+        | ureq::Error::BodyExceedsLimit(_)
+        | ureq::Error::TooManyRedirects
+        | ureq::Error::RequireHttpsOnly(_)
+        | ureq::Error::LargeResponseHeader(_, _) => CoreError::Protocol(err.to_string()),
+
+        // `ureq::Error` is `#[non_exhaustive]`. Feature-gated TLS/cookie/json
+        // variants and future variants stay unclassified (RequestFailed via map).
+        _ => CoreError::InvalidResponse(err.to_string()),
+    }
 }
 
 /// Normalize provider label for public verify surface.
@@ -203,7 +278,7 @@ fn parse_tsr(tsr: &[u8]) -> Result<ParsedTsr, CoreError> {
     let wrapper = TimeStampResponse::new(tsr.to_vec());
     let datetime = wrapper
         .datetime()
-        .map_err(|e| CoreError::InvalidResponse(e.to_string()))?;
+        .map_err(|e| CoreError::Protocol(e.to_string()))?;
     Ok(ParsedTsr {
         token: tsr.to_vec(),
         timestamp: datetime.timestamp() as u64,
@@ -235,5 +310,69 @@ mod tests {
         let result = validate_tsa_token_for_hash(&token, Some(&hash)).unwrap();
         assert!(result.is_valid());
         assert_eq!(result.provider, "stub");
+    }
+
+    #[test]
+    fn test_transport_timeout() {
+        let err = ureq::Error::Timeout(ureq::Timeout::Global);
+        let classified = classify_ureq_error(&err);
+        assert!(
+            matches!(classified, CoreError::Transport(_)),
+            "timeout must be Transport, got {classified:?}"
+        );
+    }
+
+    #[test]
+    fn test_transport_connection_failure() {
+        let refused = ureq::Error::ConnectionFailed;
+        assert!(matches!(
+            classify_ureq_error(&refused),
+            CoreError::Transport(_)
+        ));
+
+        let dns = ureq::Error::HostNotFound;
+        assert!(matches!(classify_ureq_error(&dns), CoreError::Transport(_)));
+    }
+
+    #[test]
+    fn test_digest_mismatch() {
+        let err = tsp_http_client::Error::DigestMismatch;
+        let classified = classify_tsp_http_client_error(&err);
+        assert!(
+            matches!(classified, CoreError::Protocol(_)),
+            "DigestMismatch must be Protocol, got {classified:?}"
+        );
+        assert!(!matches!(classified, CoreError::Transport(_)));
+    }
+
+    #[test]
+    fn test_protocol_rejection() {
+        let rejected = tsp_http_client::Error::RequestNotAccepted(Some("denied".into()));
+        assert!(matches!(
+            classify_tsp_http_client_error(&rejected),
+            CoreError::Protocol(_)
+        ));
+
+        let invalid = tsp_http_client::Error::InvalidServerResponse;
+        assert!(matches!(
+            classify_tsp_http_client_error(&invalid),
+            CoreError::Protocol(_)
+        ));
+    }
+
+    #[test]
+    fn test_box_digest_mismatch_preserves_protocol() {
+        let boxed: Box<dyn std::error::Error + 'static> =
+            Box::new(tsp_http_client::Error::DigestMismatch);
+        let classified = classify_tsp_http_box_error(boxed);
+        assert!(matches!(classified, CoreError::Protocol(_)));
+    }
+
+    #[test]
+    fn test_box_ureq_timeout_preserves_transport() {
+        let boxed: Box<dyn std::error::Error + 'static> =
+            Box::new(ureq::Error::Timeout(ureq::Timeout::Connect));
+        let classified = classify_tsp_http_box_error(boxed);
+        assert!(matches!(classified, CoreError::Transport(_)));
     }
 }

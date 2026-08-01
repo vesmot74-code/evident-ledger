@@ -4,6 +4,8 @@
 //! stage 12 ships with stub attestation so bundles stay offline-verifiable.
 
 mod attest;
+#[cfg(test)]
+mod error_classify;
 mod job_store;
 mod read_verify;
 mod trust_config;

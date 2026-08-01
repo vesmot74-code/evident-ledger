@@ -41,6 +41,6 @@ pub async fn stamp_chain(pool: &PgPool, chain_id: Uuid, merkle_root: &str, head_
                 Err(e) => eprintln!("TSA: db error: {}", e),
             }
         }
-        Err(e) => eprintln!("TSA: request failed: {}", e),
+        Err(e) => eprintln!("TSA: request failed: {e}"),
     }
 }
