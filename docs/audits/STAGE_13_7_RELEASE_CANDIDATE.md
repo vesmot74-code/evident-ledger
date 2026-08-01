@@ -80,6 +80,26 @@ No evidence of `FREETSA_*` configuration was found in the local repository’s `
 
 ---
 
+## Final RC evidence references
+
+Before RC approval, the following evidence documents must be reviewed:
+
+- `docs/audits/STAGE_13_7_FINAL_REVIEW.md`
+- `docs/audits/STAGE_13_7_TSA_STARTUP_GUARDS_EVIDENCE.md`
+- `docs/audits/STAGE_13_7_WARNINGS_AUDIT.md`
+
+Historical validation records:
+
+- `docs/audits/STAGE_13_7_STARTUP_VALIDATION.md`
+
+The historical startup validation document is retained for traceability and is
+superseded in scope by the expanded RC evidence document.
+
+Note:
+`STAGE_13_7_FINAL_REVIEW.md` reviewed the state as of PR #3 (`5bbcebc`)
+and predates the expanded TSA evidence and warnings audit. Its "merge-ready"
+verdict applies to that PR's scope only, not to full RC approval.
+
 ## RC decision
 
 **RC: TSA blocker resolved, pending final release checklist**

@@ -1,5 +1,16 @@
 # Stage 13.7 TSA Startup Validation
 
+> Historical validation record from PR #3 (`5bbcebc`).
+>
+> This document records the initial manual startup validation performed during
+> TSA trust hardening review.
+>
+> The expanded RC startup guard evidence is maintained separately in:
+>
+> `docs/audits/STAGE_13_7_TSA_STARTUP_GUARDS_EVIDENCE.md`
+>
+> This document remains part of the audit history and is not replaced.
+
 Date: 2026-07-31
 
 ## Production fail-closed validation

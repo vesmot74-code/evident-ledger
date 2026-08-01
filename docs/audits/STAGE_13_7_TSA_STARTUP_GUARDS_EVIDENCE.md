@@ -1,5 +1,25 @@
 # Stage 13.7 TSA Startup Guards Evidence
 
+## Scope clarification
+
+This document is the expanded RC evidence record for Stage 13.7 startup guard
+validation.
+
+Earlier manual validation was recorded in:
+`docs/audits/STAGE_13_7_STARTUP_VALIDATION.md`
+
+That document remains the historical PR #3 validation record.
+
+This document extends the evidence scope with the final startup guard matrix,
+including:
+
+- configuration validation ordering;
+- production fail-closed behavior;
+- non-production warning behavior;
+- signing key startup requirements;
+- TSA trust material validation;
+- network bind failure handling.
+
 Manual RC runtime validation of startup guards and FreeTSA trust configuration.
 
 ## Environment
