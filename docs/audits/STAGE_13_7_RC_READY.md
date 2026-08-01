@@ -196,3 +196,21 @@ Before creating `v1.2.0-rc1`:
 - `docs/audits/STAGE_13_7_TSA_STARTUP_GUARDS_EVIDENCE.md`
 - `docs/audits/STAGE_13_7_STARTUP_VALIDATION.md`
 - `docs/audits/STAGE_13_7_WARNINGS_AUDIT.md`
+
+---
+
+## Versioning note
+
+This RC is tagged `v1.2.0-rc1`, continuing directly from `v0.13.7` (merge-base
+`4d8e8de`), which already included the Stage 13.7 TSA trust hardening PR
+(`87a320f`, `5bbcebc`) documented in `STAGE_13_7_STARTUP_VALIDATION.md` and
+`STAGE_13_7_FINAL_REVIEW.md`.
+
+The version moves from `0.13.x` to `1.2.0` to reflect that the TSA
+verification contract, startup guard behavior, and RFC3161 semantics are now
+finalized and evidence-backed — the project's first release with a stable,
+publicly documented API/verification contract.
+
+`docs/releases/v0.13.7-rc1.md` describes an earlier, separate RC scope
+(security fixes SEC-001–SEC-004, SEC-007) and remains valid historical
+release documentation for that tag; it is unrelated to this version jump.
