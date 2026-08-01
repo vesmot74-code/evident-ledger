@@ -33,8 +33,8 @@ Evident Ledger running on http://0.0.0.0:3000
 
 | Log / behavior | Meaning |
 |---|---|
-| Panic: `DEV_MODE cannot be enabled in production` | Bad env mix |
-| Panic: `SIGNING_KEY_PATH must be set` / refusing auto-create | Missing production key path |
+| `STARTUP_ERROR config: DEV_MODE cannot be enabled…` (exit `4`) | Bad env mix |
+| `STARTUP_ERROR config: SIGNING_KEY_PATH must be set…` (exit `4`) / `STARTUP_ERROR signing: Production signing key missing…` (exit `2`) | Missing production key path / file |
 | `WARNING: created new server signing key` | Unexpected new trust anchor — **stop** and investigate ([SIGNING_KEY_OPERATIONS.md](SIGNING_KEY_OPERATIONS.md)) |
 | `Dev mode: enabled` | Must not appear in pilot production-like runs |
 | `DB connection failed` | Postgres / `DATABASE_URL` |
