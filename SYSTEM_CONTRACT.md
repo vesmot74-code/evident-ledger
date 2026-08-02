@@ -641,7 +641,23 @@ Available in Vault plan.
 
 Includes:
 
-- encrypted server backup
+- server-side backup storage with plan-gated access control
+
+Encryption-at-rest is not currently implemented.
+
+### Vault Layer Status
+
+Implemented:
+
+- server-side backup snapshots
+- plan-based access control
+- backup persistence model
+
+Not implemented:
+
+- encryption-at-rest for backup payloads
+- customer-managed encryption keys
+- encrypted backup archives
 
 ## Identity
 
@@ -789,6 +805,6 @@ See [ROADMAP.md](ROADMAP.md) for the full split between frozen architecture, evo
 
 Summary:
 
-- Vault Layer: planned
+- Vault Layer: partially implemented — server-side backup snapshots and plan-gated access exist today; encryption-at-rest is **not** implemented (see §14 Vault Layer Status). Remaining Vault product work (encryption, key management, restore UX) remains planned.
 - Identity Layer: contract frozen (Stage 9.0 — [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md)); implementation Stages 9.1–9.5
 - Billing Layer: implemented (Stages 8.2–8.3)

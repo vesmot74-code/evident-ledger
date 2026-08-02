@@ -41,7 +41,7 @@ The following may change **without** architecture review, provided [SECURITY.md]
 
 Work after the architecture freeze. Does not relax security invariants without explicit documentation updates.
 
-- **Vault / Backup** — encrypted server backup, restore workflows
+- **Vault / Backup** — server-side backup storage with plan-gated access (implemented); encryption-at-rest and related key management remain planned; restore workflows
 - **Identity / Signer** — user identity binding, enhanced trust tiers
 - **Billing / Tariffs** — plan enforcement, qualified TSA availability
 - **External integrations** — third-party APIs, webhooks
