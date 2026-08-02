@@ -98,7 +98,7 @@ impl Rfc3161Client {
                     last_err = Some(map_core_error(err));
                 }
                 Err(err) => {
-                    last_err = Some(TsaError::RequestFailed(err.to_string()));
+                    last_err = Some(classify_join_error(err));
                 }
             }
         }
@@ -154,10 +154,88 @@ struct DisabledTsaProvider;
 #[async_trait]
 impl TsaProvider for DisabledTsaProvider {
     async fn timestamp(&self, _hash: &[u8]) -> Result<TsaResponse, TsaError> {
-        Err(TsaError::RequestFailed("TSA subsystem is disabled".into()))
+        Err(TsaError::Disabled)
     }
 }
 
 fn map_core_error(err: CoreError) -> TsaError {
+    match err {
+        CoreError::Transport(msg) => TsaError::Transport(msg),
+        CoreError::Protocol(msg) => TsaError::Protocol(msg),
+        CoreError::InvalidHashLength(n) => {
+            TsaError::RequestFailed(format!("unsupported hash length for SHA-256: {n}"))
+        }
+        CoreError::UnsupportedAlgorithm => {
+            TsaError::RequestFailed("unsupported hash algorithm".into())
+        }
+        CoreError::InvalidResponse(msg) => TsaError::RequestFailed(msg),
+    }
+}
+
+/// Map core classification onto public `TsaError` (no string matching).
+pub fn classify_core_error(err: CoreError) -> TsaError {
+    map_core_error(err)
+}
+
+/// JoinError is local runtime failure, never Transport/Protocol.
+pub fn classify_join_error(err: tokio::task::JoinError) -> TsaError {
     TsaError::RequestFailed(err.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{HashAlgorithm, TsaConfig, TsaMode};
+    use crate::core::CoreError;
+    use crate::TsaError;
+
+    #[test]
+    fn test_join_error() {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .expect("runtime");
+        let join_err = rt.block_on(async {
+            tokio::task::spawn_blocking(|| panic!("forced join failure"))
+                .await
+                .expect_err("join must fail")
+        });
+        let mapped = classify_join_error(join_err);
+        assert!(
+            matches!(mapped, TsaError::RequestFailed(_)),
+            "JoinError must be RequestFailed, got {mapped:?}"
+        );
+        assert!(!matches!(mapped, TsaError::Transport(_)));
+        assert!(!matches!(mapped, TsaError::Protocol(_)));
+    }
+
+    #[tokio::test]
+    async fn test_disabled_provider() {
+        let cfg = TsaConfig {
+            enabled: false,
+            mode: TsaMode::External,
+            provider_url: "https://example.invalid/tsr".into(),
+            timeout_secs: 1,
+            retries: 1,
+            hash_alg: HashAlgorithm::Sha256,
+        };
+        let provider = build_tsa_provider(&cfg);
+        let err = provider
+            .timestamp(&[0u8; 32])
+            .await
+            .expect_err("disabled provider must err");
+        assert!(matches!(err, TsaError::Disabled));
+    }
+
+    #[test]
+    fn test_core_transport_maps_to_tsa_transport() {
+        let err = classify_core_error(CoreError::Transport("x".into()));
+        assert!(matches!(err, TsaError::Transport(_)));
+    }
+
+    #[test]
+    fn test_core_protocol_maps_to_tsa_protocol() {
+        let err = classify_core_error(CoreError::Protocol("x".into()));
+        assert!(matches!(err, TsaError::Protocol(_)));
+    }
 }

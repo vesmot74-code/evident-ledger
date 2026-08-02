@@ -15,8 +15,12 @@ pub enum PasswordError {
     InvalidHash,
 }
 
+/// Minimum length for new passwords (register / set-password / reset).
+/// Does not apply to login verification of existing hashes.
+pub const MIN_PASSWORD_CHARS: usize = 12;
+
 pub fn validate_password(password: &str) -> bool {
-    password.chars().count() >= 8
+    password.chars().count() >= MIN_PASSWORD_CHARS
 }
 
 fn argon2_instance() -> Result<Argon2<'static>, PasswordError> {
@@ -56,5 +60,15 @@ mod tests {
         assert!(!hash.contains(password));
         assert!(verify_password(password, &hash).expect("verify"));
         assert!(!verify_password("wrong_password", &hash).expect("verify"));
+    }
+
+    #[test]
+    fn validate_password_rejects_eleven_chars() {
+        assert!(!validate_password("12345678901")); // 11
+    }
+
+    #[test]
+    fn validate_password_accepts_twelve_chars() {
+        assert!(validate_password("123456789012")); // 12
     }
 }

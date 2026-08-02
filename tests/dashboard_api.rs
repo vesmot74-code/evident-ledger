@@ -114,7 +114,7 @@ async fn register_and_login(_pool: &sqlx::PgPool, app: &axum::Router, email: &st
         peer_request(
             "POST",
             "/auth/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
         ),
     )
@@ -125,7 +125,7 @@ async fn register_and_login(_pool: &sqlx::PgPool, app: &axum::Router, email: &st
         peer_request(
             "POST",
             "/auth/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
         ),
     )
@@ -410,7 +410,7 @@ async fn session_cookie_has_required_security_attributes() {
         peer_request(
             "POST",
             "/auth/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
         ),
     )
@@ -421,7 +421,7 @@ async fn session_cookie_has_required_security_attributes() {
         peer_request(
             "POST",
             "/auth/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
         ),
     )

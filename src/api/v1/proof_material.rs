@@ -331,7 +331,7 @@ mod tests {
 
     #[test]
     fn empty_prefix_yields_pending_proof_status() {
-        let signer = ServerSigner::load_or_create("target/test_proof_pending_signing.key");
+        let signer = ServerSigner::load_or_create("target/test_proof_pending_signing.key").expect("test signer");
         let chain_id = Uuid::new_v4();
         let event_id = Uuid::new_v4();
 
@@ -360,7 +360,7 @@ mod tests {
 
     #[test]
     fn empty_prefix_non_empty_signature_is_failed() {
-        let signer = ServerSigner::load_or_create("target/test_empty_prefix_sig.key");
+        let signer = ServerSigner::load_or_create("target/test_empty_prefix_sig.key").expect("test signer");
         let chain_id = Uuid::new_v4();
         let event_id = Uuid::new_v4();
 
@@ -420,7 +420,7 @@ mod tests {
 
     #[test]
     fn invalid_persisted_signature_read_path_is_failed() {
-        let signer = ServerSigner::load_or_create("target/test_invalid_persisted_sig.key");
+        let signer = ServerSigner::load_or_create("target/test_invalid_persisted_sig.key").expect("test signer");
         let chain_id = Uuid::new_v4();
         let e1 = Uuid::new_v4();
         let parent = Uuid::nil();
@@ -439,7 +439,7 @@ mod tests {
 
     #[test]
     fn snapshot_at_event_one_is_stable_when_chain_grows() {
-        let signer = ServerSigner::load_or_create("target/test_proof_snapshot_signing.key");
+        let signer = ServerSigner::load_or_create("target/test_proof_snapshot_signing.key").expect("test signer");
         let chain_id = Uuid::new_v4();
         let e1 = Uuid::new_v4();
         let e2 = Uuid::new_v4();
@@ -460,7 +460,7 @@ mod tests {
 
     #[test]
     fn persisted_signature_matches_commit_time_recompute() {
-        let signer = ServerSigner::load_or_create("target/test_persisted_sig_signing.key");
+        let signer = ServerSigner::load_or_create("target/test_persisted_sig_signing.key").expect("test signer");
         let chain_id = Uuid::new_v4();
         let e1 = Uuid::new_v4();
         let parent = Uuid::nil();

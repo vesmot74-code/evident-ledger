@@ -21,7 +21,7 @@ Severity legend: **High** / **Medium** / **Low**.
 | | |
 |--|--|
 | **Was** | `DEV_MODE=true` could be left on in production (insecure cookies + tariff switcher). |
-| **Now** | `ENVIRONMENT=production` + `DEV_MODE` (or `APP_ENV=development`) → startup panic: `DEV_MODE cannot be enabled in production environment`. |
+| **Now** | `ENVIRONMENT=production` + `DEV_MODE` (or `APP_ENV=development`) → `CONFIG_ERROR` (exit `4`): `DEV_MODE cannot be enabled in production environment`. |
 | **Verify** | `DEV_MODE=true` + `ENVIRONMENT=development` starts; + `ENVIRONMENT=production` fails. |
 
 ### SIGNING_KEY_PATH
@@ -91,9 +91,11 @@ Severity legend: **High** / **Medium** / **Low**.
 
 ---
 
-## Startup panics (expected fail-fast)
+## Startup fail-fast exits (typed exit codes)
 
-- Missing `DATABASE_URL` or DB connect failure
-- Missing `PADDLE_WEBHOOK_SECRET`, `PADDLE_API_KEY`, or `PADDLE_CLIENT_TOKEN` outside test builds
-- `DEV_MODE` enabled while `ENVIRONMENT=production`
-- Failure to bind `:3000`
+Fail-fast behavior is unchanged; mechanisms use categorical exit codes (see [STARTUP_EXIT_CODES.md](design/STARTUP_EXIT_CODES.md)):
+
+- Missing `DATABASE_URL` or DB connect failure → `DATABASE_ERROR` (exit `3`)
+- Missing `PADDLE_WEBHOOK_SECRET`, `PADDLE_API_KEY`, or `PADDLE_CLIENT_TOKEN` outside test builds → `CONFIG_ERROR` (exit `4`)
+- `DEV_MODE` enabled while `ENVIRONMENT=production` → `CONFIG_ERROR` (exit `4`)
+- Failure to bind `:3000` → `NETWORK_ERROR` (exit `5`)

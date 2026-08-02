@@ -48,6 +48,8 @@ path = "evident-report"
 
 [dev-dependencies]
 wiremock = "0.6"
+ureq = "3"
+tsp-http-client = "0.1"
 
 [[bin]]
 name = "evident-ledger"

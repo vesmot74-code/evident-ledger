@@ -31,18 +31,18 @@ impl JsonTsaProvider {
             .json(&TimestampRequest { hash: hash_hex })
             .send()
             .await
-            .map_err(|e| TsaError::RequestFailed(e.to_string()))?;
+            .map_err(map_reqwest_error)?;
 
         if !response.status().is_success() {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
-            return Err(TsaError::RequestFailed(format!("HTTP {status}: {body}")));
+            return Err(TsaError::Protocol(format!("HTTP {status}: {body}")));
         }
 
         let body: TimestampResponseBody = response
             .json()
             .await
-            .map_err(|e| TsaError::RequestFailed(e.to_string()))?;
+            .map_err(|e| TsaError::Protocol(e.to_string()))?;
 
         let token = base64::Engine::decode(&base64::engine::general_purpose::STANDARD, &body.token)
             .unwrap_or_else(|_| body.token.into_bytes());
@@ -102,6 +102,17 @@ impl TsaProvider for JsonTsaProvider {
 
         Err(last_err.expect("at least one attempt"))
     }
+}
+
+/// Classify reqwest failures by typed predicates (no string matching).
+fn map_reqwest_error(err: reqwest::Error) -> TsaError {
+    if err.is_timeout() || err.is_connect() {
+        return TsaError::Transport(err.to_string());
+    }
+    if let Some(status) = err.status() {
+        return TsaError::Protocol(format!("HTTP {status}"));
+    }
+    TsaError::RequestFailed(err.to_string())
 }
 
 /// Backward-compatible alias.

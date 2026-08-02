@@ -32,7 +32,8 @@ impl AppConfig {
                 .unwrap_or(false);
 
         if dev_mode && environment == "production" {
-            panic!("DEV_MODE cannot be enabled in production environment");
+            eprintln!("STARTUP_ERROR config: DEV_MODE cannot be enabled in production environment");
+            std::process::exit(4);
         }
 
         let signing_key_from_env = env::var("SIGNING_KEY_PATH")
@@ -41,7 +42,10 @@ impl AppConfig {
             .filter(|v| !v.is_empty());
 
         if environment == "production" && signing_key_from_env.is_none() {
-            panic!("SIGNING_KEY_PATH must be set in production environment");
+            eprintln!(
+                "STARTUP_ERROR config: SIGNING_KEY_PATH must be set in production environment"
+            );
+            std::process::exit(4);
         }
 
         let signing_key_path = signing_key_from_env.unwrap_or_else(|| "signing_key.bin".into());
@@ -57,7 +61,8 @@ impl AppConfig {
             }
             #[cfg(not(test))]
             {
-                panic!("PADDLE_WEBHOOK_SECRET must be set");
+                eprintln!("STARTUP_ERROR config: PADDLE_WEBHOOK_SECRET must be set");
+                std::process::exit(4);
             }
         });
 
@@ -68,7 +73,8 @@ impl AppConfig {
             }
             #[cfg(not(test))]
             {
-                panic!("PADDLE_API_KEY must be set");
+                eprintln!("STARTUP_ERROR config: PADDLE_API_KEY must be set");
+                std::process::exit(4);
             }
         });
 
@@ -82,7 +88,8 @@ impl AppConfig {
             }
             #[cfg(not(test))]
             {
-                panic!("PADDLE_CLIENT_TOKEN must be set");
+                eprintln!("STARTUP_ERROR config: PADDLE_CLIENT_TOKEN must be set");
+                std::process::exit(4);
             }
         });
 

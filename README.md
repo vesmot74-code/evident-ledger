@@ -18,11 +18,19 @@ Don't just take our word for it. Review the type of evidence package generated b
 
 ## Evidence Artifacts
 
-* 📄 **[Evidence Snapshot](docs/samples/evidence_snapshot.pdf)**  
-  Complete verification summary containing ledger integrity information, cryptographic proofs, and verification metadata.
+### Local Evidence Reports (CLI, owner access)
 
-* 🛡️ **[Hash Attestation Certificate](docs/samples/hash-attestation-66d244d59319785d.pdf)**  
-  Independent certificate demonstrating hash registration and timestamp evidence.
+* 📄 **[Evidence Snapshot](docs/samples/evidence_snapshot.pdf)**  
+  Full verification report generated locally via `evident report generate`.
+  Contains complete ledger integrity information, cryptographic proofs, and
+  verification metadata. Requires access to the local proof/chain data.
+
+### Public Certificate (HTTP, no authentication)
+
+* 🛡️ **[Public Certificate](docs/samples/public-certificate-sample.pdf)**  
+  Existence-only confirmation available at `GET /public/verify/:public_proof_id/certificate.pdf`.
+  Discloses registration time, TSA class, and integrity state only — no
+  chain, event, or Merkle data, per [SECURITY.md](SECURITY.md).
 
 ---
 
@@ -134,6 +142,12 @@ Initialize local identity:
 ./target/release/evident init
 ```
 
+Set your API key (create one in Dashboard → Account → API Keys):
+
+```bash
+export EVIDENT_API_KEY=<your_api_key>
+```
+
 Create a chain:
 
 ```bash
@@ -150,6 +164,12 @@ Verify independently:
 
 ```bash
 ./target/release/evident verify ~/.evident/proofs/<chain_id>/proof.json
+```
+
+Or verify using the latest local proof for a chain:
+
+```bash
+./target/release/evident verify --chain <chain_id>
 ```
 
 Optional report:
@@ -224,7 +244,7 @@ Details: [docs/IDENTITY_MODEL.md](docs/IDENTITY_MODEL.md).
 | `evident` | Primary CLI (init, commit, verify, account, keys, report) |
 | `evident-ledger` | HTTP API / Dashboard server |
 | `evident-verify` | Standalone verification binary |
-| Sample PDFs | [Evidence Snapshot](docs/samples/evidence_snapshot.pdf), [Hash Attestation](docs/samples/hash-attestation-66d244d59319785d.pdf) |
+| Sample PDFs | [Evidence Snapshot (local)](docs/samples/evidence_snapshot.pdf), [Public Certificate (HTTP)](docs/samples/public-certificate-sample.pdf) |
 
 Build release binaries:
 

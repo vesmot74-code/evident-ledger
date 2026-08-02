@@ -37,12 +37,12 @@ Template: [`.env.example`](../.env.example).
 
 | Variable | Purpose |
 |----------|---------|
-| `DATABASE_URL` | Postgres connection string. Startup expects this; process panics if missing or unreachable. |
+| `DATABASE_URL` | Postgres connection string. Startup expects this; process exits with `DATABASE_ERROR` (exit `3`) if missing or unreachable. |
 | `ENVIRONMENT` | `development` or `production`. Defaults to `development` if unset. |
 | `SIGNING_KEY_PATH` | **Required for production** (enforced at startup). Absolute path to the server Ed25519 signing key file. |
-| `PADDLE_API_KEY` | Server-side Paddle API key. **Required** — panic if unset (non-test). |
-| `PADDLE_WEBHOOK_SECRET` | HMAC secret for `POST /paddle/webhook`. **Required** — panic if unset. |
-| `PADDLE_CLIENT_TOKEN` | Public Paddle.js client token for Dashboard overlay. **Required** — panic if unset. |
+| `PADDLE_API_KEY` | Server-side Paddle API key. **Required** — `CONFIG_ERROR` (exit `4`) if unset (non-test). |
+| `PADDLE_WEBHOOK_SECRET` | HMAC secret for `POST /paddle/webhook`. **Required** — `CONFIG_ERROR` (exit `4`) if unset. |
+| `PADDLE_CLIENT_TOKEN` | Public Paddle.js client token for Dashboard overlay. **Required** — `CONFIG_ERROR` (exit `4`) if unset. |
 
 ### Optional / recommended
 
@@ -61,8 +61,8 @@ Template: [`.env.example`](../.env.example).
 |------|----------|
 | `SIGNING_KEY_PATH` set | Use that path exactly (no silent fallback). |
 | unset + `ENVIRONMENT=development` | Fallback to `./signing_key.bin` relative to process CWD. |
-| unset + `ENVIRONMENT=production` | Startup panic: `SIGNING_KEY_PATH must be set in production environment`. |
-| path missing + `ENVIRONMENT=production` | Startup panic — refuses to auto-create a new key. |
+| unset + `ENVIRONMENT=production` | `CONFIG_ERROR` (exit `4`): `SIGNING_KEY_PATH must be set in production environment`. |
+| path missing + `ENVIRONMENT=production` | `SIGNING_ERROR` (exit `2`) — refuses to auto-create a new key. |
 
 In development, if a new key file is created, the server logs:
 
@@ -72,7 +72,7 @@ WARNING: created new server signing key at <full-path>
 
 ### DEV_MODE guard
 
-Startup **panics** when:
+Startup exits with `CONFIG_ERROR` (exit `4`) when:
 
 ```text
 DEV_MODE=true (or APP_ENV=development)
@@ -80,7 +80,9 @@ AND
 ENVIRONMENT=production
 ```
 
-Message: `DEV_MODE cannot be enabled in production environment`
+Message: `STARTUP_ERROR config: DEV_MODE cannot be enabled in production environment`
+
+Categorical startup exit codes (config / database / signing / network / TSA / runtime) are listed in [STARTUP_EXIT_CODES.md](design/STARTUP_EXIT_CODES.md).
 
 ### Not environment-configured today
 
@@ -208,7 +210,7 @@ curl -s -o /dev/null -w '%{http_code}\n' \
   -d '{}'
 ```
 
-Database readiness: if `DATABASE_URL` is wrong, the process exits at startup (`DB connection failed`).
+Database readiness: if `DATABASE_URL` is missing or unreachable, the process exits at startup with `DATABASE_ERROR` (exit `3`, `STARTUP_ERROR database: …`).
 
 ---
 

@@ -1678,6 +1678,8 @@ dependencies = [
  "tower 0.4.13",
  "tracing",
  "tracing-subscriber",
+ "tsp-http-client",
+ "ureq",
  "uuid",
  "wiremock",
 ]
@@ -3142,6 +3144,7 @@ dependencies = [
  "toml",
  "tracing",
  "tsp-http-client",
+ "ureq",
  "x509-tsp",
 ]
 

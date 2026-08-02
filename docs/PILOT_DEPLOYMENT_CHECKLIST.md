@@ -95,7 +95,7 @@ Environment: production
 Evident Ledger running on http://0.0.0.0:3000
 ```
 
-- [ ] No panic (`DEV_MODE`/`SIGNING_KEY_PATH`/Paddle/DB).
+- [ ] No startup exit (`CONFIG_ERROR` / `SIGNING_ERROR` / `DATABASE_ERROR` for `DEV_MODE` / `SIGNING_KEY_PATH` / Paddle / DB).
 - [ ] No `Dev mode: enabled` banner.
 - [ ] No `WARNING: created new server signing key`.
 - [ ] Public key matches the backed-up trust anchor.

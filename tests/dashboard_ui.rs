@@ -134,7 +134,7 @@ async fn register_and_login(app: &axum::Router, email: &str) -> String {
         peer_request(
             "POST",
             "/auth/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             &[],
         ),
@@ -146,7 +146,7 @@ async fn register_and_login(app: &axum::Router, email: &str) -> String {
         peer_request(
             "POST",
             "/auth/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             &[],
         ),
@@ -456,7 +456,7 @@ async fn register_flow_creates_account_and_duplicate_returns_conflict() {
         peer_request(
             "POST",
             "/auth/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             &[],
         ),
@@ -478,7 +478,7 @@ async fn register_flow_creates_account_and_duplicate_returns_conflict() {
         peer_request(
             "POST",
             "/auth/register",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             &[],
         ),
@@ -574,7 +574,7 @@ async fn logout_redirects_to_login_and_blocks_dashboard() {
         peer_request(
             "POST",
             "/auth/login",
-            Some(json!({ "email": email, "password": "securepass1" })),
+            Some(json!({ "email": email, "password": "securepass12" })),
             None,
             &[],
         ),

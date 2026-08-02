@@ -83,7 +83,7 @@ mod tests {
     }
 
     fn anchored_fixture() -> (ServerSigner, Uuid, Uuid, Vec<EventRow>, String, String) {
-        let signer = ServerSigner::load_or_create("target/test_chain_verify_signing.key");
+        let signer = ServerSigner::load_or_create("target/test_chain_verify_signing.key").expect("test signer");
         let chain_id = Uuid::new_v4();
         let e1 = Uuid::new_v4();
         let prefix = vec![row(e1, Uuid::nil(), 1, &"aa".repeat(32))];

@@ -357,40 +357,26 @@ Use query parameter (hash only — no file upload in v1):
 GET /v1/verify/{event_id}?file_hash=<hex>
 ```
 
-| Condition              | Result                                      |
-| ---------------------- | ------------------------------------------- |
-| `file_hash` provided   | `file.status` calculated (`VALID` / `TAMPERED`) |
-| `file_hash` omitted    | `file.status` = `NOT_PERFORMED` (not an error) |
+| Condition            | Result |
+| -------------------- | ------ |
+| `file_hash` provided | `file.provided=true`; `file.provided_hash` echoes the normalized query value; `file.is_valid_file_hash` is `true` or `false` |
+| `file_hash` omitted  | `file.provided=false`; `file.provided_hash=null`; `file.is_valid_file_hash=null` (not an error) |
 
 Omitting `file_hash` is expected behavior: chain verification still runs when
 proof is anchored; file comparison is simply skipped.
 
+There is **no** `file.status` enum. The contract uses `provided` /
+`provided_hash` / `is_valid_file_hash` only (see [VERIFY_MODEL.md](VERIFY_MODEL.md)
+Layer 3).
+
 ### Response shape (anchored proof)
 
-The response exposes **two independent objects** — `chain` and `file`. There is
+The response exposes independent `chain` and `file` objects. There is
 **no** top-level combined `valid` field.
 
-```json
-{
-  "event_id": "",
-  "chain_id": "",
-  "sequence": 0,
-  "proof_status": "anchored",
-  "chain": {
-    "valid": true,
-    "merkle_valid": true,
-    "signature_valid": true,
-    "errors": []
-  },
-  "file": {
-    "status": "NOT_PERFORMED"
-  },
-  "tsa": null,
-  "request_id": ""
-}
-```
+Implementation source: `src/api/v1/verify.rs` (anchored branch JSON builder).
 
-With `?file_hash=<hex>` when hash matches:
+When `file_hash` is omitted:
 
 ```json
 {
@@ -405,21 +391,65 @@ With `?file_hash=<hex>` when hash matches:
     "errors": []
   },
   "file": {
-    "status": "VALID"
+    "provided": false,
+    "provided_hash": null,
+    "is_valid_file_hash": null
   },
-  "tsa": null,
+  "identity_signature": null,
   "request_id": ""
 }
 ```
 
-### TSA
+With `?file_hash=<hex>` when the hash matches the stored event hash:
 
-`tsa` follows the same rule as §6: `null` when no TSA token exists for the
-**prefix Merkle root** used in verification. The API MUST NOT fabricate TSA
-information.
+```json
+{
+  "event_id": "",
+  "chain_id": "",
+  "sequence": 0,
+  "proof_status": "anchored",
+  "chain": {
+    "valid": true,
+    "merkle_valid": true,
+    "signature_valid": true,
+    "errors": []
+  },
+  "file": {
+    "provided": true,
+    "provided_hash": "<normalized-hex>",
+    "is_valid_file_hash": true
+  },
+  "identity_signature": null,
+  "request_id": ""
+}
+```
 
-When present, `tsa` uses the same object shape as §6 (`timestamp`, `serial`,
-`token_bytes`, `verification_status`).
+`identity_signature` may be an object when an identity signature is present on
+the event; detailed identity wire semantics are defined in
+[IDENTITY_MODEL.md](IDENTITY_MODEL.md) (documentation alignment deferred).
+
+### TSA on `/v1/verify`
+
+`GET /v1/verify/{event_id}` does **not** include a `tsa` field in the JSON
+response.
+
+TSA still participates in proof-state resolution before the anchored body is
+returned:
+
+- Read-path verification runs inside `resolve_proof_state` (same as proof).
+- `verification_status=failed` sets a failure signal → `proof_status=failed` →
+  HTTP **422** `proof_generation_failed` (no verification body).
+- `verification_status=unavailable` does **not** by itself fail the proof;
+  verify may still return HTTP **200** with `proof_status=anchored` when
+  merkle + signature are valid.
+
+Detailed TSA token fields (`timestamp`, `serial`, `token_bytes`,
+`verification_status`) are returned only on
+[§6 GET /v1/proof/{event_id}](#6-get-v1proofevent_id) when proof is anchored.
+
+`verification_status` values (proof response): `verified`, `verified_cached`,
+`failed`, `unavailable`. Digest write/read semantics:
+[VERIFY_MODEL.md](VERIFY_MODEL.md) (RFC3161 TSA verification).
 
 ### Chain vs file verification
 
@@ -428,20 +458,20 @@ Chain verification and file verification are independent.
 The API MUST NOT expose a combined validity state at the top level.
 
 - `chain.valid` MUST NOT imply file verification.
-- `file.status` MUST NOT affect `chain.valid`.
-- A response with `chain.valid=true` and `file.status=NOT_PERFORMED` is valid.
+- `file.is_valid_file_hash` MUST NOT affect `chain.valid`.
+- A response with `chain.valid=true` and `file.provided=false` is valid.
 
 See SYSTEM_CONTRACT §4.1 and §4.2.
 
-### `file.status` enum
+### `file` field semantics
 
-| Value         | Meaning                           |
-| ------------- | --------------------------------- |
-| NOT_PERFORMED | No file comparison executed       |
-| VALID         | Submitted hash matches event hash |
-| TAMPERED      | Submitted hash differs            |
+| Field | Type | Meaning |
+| ----- | ---- | ------- |
+| `provided` | boolean | Whether a `file_hash` query parameter was supplied |
+| `provided_hash` | string \| null | Echo of the normalized query hash, or `null` when omitted |
+| `is_valid_file_hash` | boolean \| null | `true`/`false` when compared; `null` when not provided |
 
-No other `file.status` values are valid.
+No other `file` fields are part of the current `/v1/verify` contract.
 
 ### Pending / failed proof behavior
 

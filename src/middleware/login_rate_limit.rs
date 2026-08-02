@@ -24,7 +24,11 @@ pub async fn login_rate_limit_middleware(
     let decision = state.login.check(client_key, std::time::Instant::now());
 
     if !decision.allowed {
-        return ApiError::RateLimited.into_response();
+        let mut response = ApiError::RateLimited.into_response();
+        if let Ok(value) = decision.retry_after_secs.to_string().parse() {
+            response.headers_mut().insert(header::RETRY_AFTER, value);
+        }
+        return response;
     }
 
     let mut response = next.run(request).await;
