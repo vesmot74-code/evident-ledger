@@ -8,6 +8,12 @@ It describes verification layers, disclosure rules, and architectural boundaries
 
 - [SECURITY.md](../SECURITY.md) — threat model, security assumptions, public API guarantees, security controls, and **security invariants** (architectural truths that survive implementation changes).
 - [SYSTEM_CONTRACT.md](../SYSTEM_CONTRACT.md) — ownership model, public/private API boundary, materialization, and system-wide contracts.
+- [proof_v1.schema.md](proof_v1.schema.md) — immutable core proof schema.
+- [PROOF_V1_TSA_ALIGNMENT.md](audits/PROOF_V1_TSA_ALIGNMENT.md) — TSA as external attestation layer (Option A).
+
+**Contract rule:** TSA attestation is not part of `proof_v1` core schema.
+It is an external cryptographic timestamp layer. Nested `proof` objects with
+`version: "proof_v1"` must not gain TSA fields without a `proof_v2` bump.
 
 ---
 

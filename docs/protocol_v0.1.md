@@ -122,16 +122,30 @@ CLI             → orchestration layer (no business logic)
 
 ## Proof model
 
-The canonical proof artifact contains:
+The immutable core proof format is **`proof_v1`**
+(see [proof_v1.schema.md](proof_v1.schema.md)).
+
+Core artifact fields:
 
 ```text
-chain_id
-root_hash
-tsa_timestamp
-tsa_signature
-event_count
-verification_status
+version / chain_id / head_event_id
+events[]
+proof.{ root, chain_head, signature, public_key, leaves_count, type }
 ```
+
+Server signature covers `(root + chain_id + head_event_id)` only.
+
+### TSA attestation boundary
+
+TSA attestation is **not** part of the `proof_v1` core schema.
+It is an external cryptographic timestamp layer (RFC3161) that attests an
+already-sealed merkle digest.
+
+Runtime representation keeps TSA beside the core proof (sibling `tsa` object /
+`tsa_tokens` table), never inside the nested `proof` object with
+`version: "proof_v1"`.
+
+See [PROOF_V1_TSA_ALIGNMENT.md](audits/PROOF_V1_TSA_ALIGNMENT.md).
 
 ## Output guarantee
 

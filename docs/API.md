@@ -307,6 +307,11 @@ When a TSA row exists, `tsa` is an object:
 }
 ```
 
+**Contract rule:** `tsa` is an external attestation layer beside the proof
+response — not a field of the immutable `proof_v1` core schema
+([proof_v1.schema.md](proof_v1.schema.md)). See
+[PROOF_V1_TSA_ALIGNMENT.md](audits/PROOF_V1_TSA_ALIGNMENT.md).
+
 `verification_status` is one of `verified`, `verified_cached`, `failed`,
 `unavailable` (see ADR_TSA_READ_PATH_VERIFICATION).
 
