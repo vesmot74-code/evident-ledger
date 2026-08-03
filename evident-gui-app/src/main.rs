@@ -27,7 +27,7 @@ mod desktop_auth;
 /// Переопределяется переменной окружения EVIDENT_SERVER_URL,
 /// например EVIDENT_SERVER_URL=https://api.evident-ledger.com
 fn server_url() -> String {
-    std::env::var("EVIDENT_SERVER_URL").unwrap_or_else(|_| "http://127.0.0.1:3000".to_string())
+    std::env::var("EVIDENT_SERVER_URL").unwrap_or_else(|_| "https://evident-ledger.com".to_string())
 }
 
 fn authed_client() -> EvidentClient {
@@ -519,6 +519,43 @@ impl App {
         }
     }
 
+    /// Atomically updates `verify_status` and `verify_details` so they stay consistent.
+    ///
+    /// Invariant:
+    /// - `None`    ↔ `Empty` | `Verifying` | `NoProjectSelected`
+    /// - `Valid`   ↔ `ProofValid`
+    /// - `Invalid` ↔ error/empty details, never `ProofValid`
+    /// - `Partial` ↔ warning/error details, never `ProofValid`
+    fn set_verify_outcome(&mut self, status: VerifyStatus, details: VerifyDetailsState) {
+        let details = match status {
+            VerifyStatus::None => match details {
+                VerifyDetailsState::Empty
+                | VerifyDetailsState::Verifying
+                | VerifyDetailsState::NoProjectSelected => details,
+                _ => VerifyDetailsState::Empty,
+            },
+            VerifyStatus::Valid => VerifyDetailsState::ProofValid,
+            VerifyStatus::Invalid => match details {
+                VerifyDetailsState::ProofValid
+                | VerifyDetailsState::Verifying
+                | VerifyDetailsState::Empty => VerifyDetailsState::Empty,
+                other => other,
+            },
+            VerifyStatus::Partial => match details {
+                VerifyDetailsState::ProofValid
+                | VerifyDetailsState::Verifying
+                | VerifyDetailsState::Empty => VerifyDetailsState::Empty,
+                other => other,
+            },
+        };
+        self.verify_status = status;
+        self.verify_details = details;
+    }
+
+    fn clear_verify_outcome(&mut self) {
+        self.set_verify_outcome(VerifyStatus::None, VerifyDetailsState::Empty);
+    }
+
     fn render_status(&self) -> String {
         if let Some(text) = &self.status_localized {
             return self.render_ui_text(text);
@@ -576,6 +613,20 @@ impl App {
         let json = serde_json::to_string_pretty(&map).map_err(|e| e.to_string())?;
         fs::create_dir_all(proofs_dir).map_err(|e| e.to_string())?;
         fs::write(proofs_dir.join("local_copies.json"), json).map_err(|e| e.to_string())
+    }
+
+    /// Canonical path for comparing a save destination with the source.
+    /// If `dest` does not exist yet, canonicalize its parent and join the file name.
+    fn resolve_save_dest_canonical(dest: &Path) -> Result<PathBuf, String> {
+        if dest.exists() {
+            return fs::canonicalize(dest).map_err(|e| e.to_string());
+        }
+        let parent = match dest.parent() {
+            Some(p) if !p.as_os_str().is_empty() => p,
+            _ => Path::new("."),
+        };
+        let parent_canonical = fs::canonicalize(parent).map_err(|e| e.to_string())?;
+        Ok(parent_canonical.join(dest.file_name().unwrap_or_default()))
     }
 
     /// Loads the most complete locally saved proof snapshot for a project,
@@ -1341,13 +1392,32 @@ impl App {
                     .iter()
                     .any(|e| e.local_integrity_ok.is_none());
 
-                self.verify_status = if !local_chain_ok {
-                    VerifyStatus::Invalid
+                if !local_chain_ok {
+                    self.set_verify_outcome(
+                        VerifyStatus::Invalid,
+                        VerifyDetailsState::Warning(
+                            self.tr(
+                                "Локальная цепочка событий нарушена",
+                                "Local event chain is broken",
+                            )
+                            .to_string(),
+                        ),
+                    );
                 } else if local_tampered {
-                    VerifyStatus::Partial
+                    self.set_verify_outcome(
+                        VerifyStatus::Partial,
+                        VerifyDetailsState::Warning(
+                            self.tr(
+                                "Локальная копия файла изменена относительно зафиксированного хэша",
+                                "Local file copy differs from the committed hash",
+                            )
+                            .to_string(),
+                        ),
+                    );
                 } else {
-                    VerifyStatus::Valid
-                };
+                    // Local chain OK — headline Valid; details follow Valid↔ProofValid.
+                    self.set_verify_outcome(VerifyStatus::Valid, VerifyDetailsState::ProofValid);
+                }
 
                 // Not stored files are normal and don't affect verify_status,
                 // but worth surfacing separately if needed later:
@@ -1367,7 +1437,7 @@ impl App {
                     .to_string();
             }
             None => {
-                self.verify_status = VerifyStatus::None;
+                self.clear_verify_outcome();
                 self.status = self
                     .tr(
                         "⚠️ Локальные данные проекта не найдены",
@@ -1436,7 +1506,16 @@ impl App {
                     );
 
                     if !sig_valid {
-                        self.verify_status = VerifyStatus::Invalid;
+                        self.set_verify_outcome(
+                            VerifyStatus::Invalid,
+                            VerifyDetailsState::Warning(
+                                self.tr(
+                                    "Подпись недействительна — ключ сервера мог измениться",
+                                    "Signature is invalid — the server key may have changed",
+                                )
+                                .to_string(),
+                            ),
+                        );
                         self.status = self
                             .tr(
                                 "❌ Подпись недействительна — ключ сервера мог измениться. \
@@ -1627,16 +1706,17 @@ impl App {
 
     fn do_verify(&mut self, ctx: &egui::Context) {
         if self.selected_project.is_empty() {
-            self.verify_status = VerifyStatus::Invalid;
-            self.verify_details = VerifyDetailsState::NoProjectSelected;
+            self.set_verify_outcome(
+                VerifyStatus::Invalid,
+                VerifyDetailsState::NoProjectSelected,
+            );
             return;
         }
 
         let projects_dir = match self.projects_dir() {
             Ok(dir) => dir,
             Err(err) => {
-                self.verify_status = VerifyStatus::Partial;
-                self.verify_details = VerifyDetailsState::Warning(err);
+                self.set_verify_outcome(VerifyStatus::Partial, VerifyDetailsState::Warning(err));
                 return;
             }
         };
@@ -1645,30 +1725,37 @@ impl App {
         let project_json = match fs::read_to_string(&project_file) {
             Ok(contents) => contents,
             Err(e) => {
-                self.verify_status = VerifyStatus::Partial;
-                self.verify_details = VerifyDetailsState::ReadProjectFailed(e.to_string());
+                self.set_verify_outcome(
+                    VerifyStatus::Partial,
+                    VerifyDetailsState::ReadProjectFailed(e.to_string()),
+                );
                 return;
             }
         };
         let project: Project = match serde_json::from_str(&project_json) {
             Ok(project) => project,
             Err(e) => {
-                self.verify_status = VerifyStatus::Partial;
-                self.verify_details = VerifyDetailsState::ParseProjectFailed(e.to_string());
+                self.set_verify_outcome(
+                    VerifyStatus::Partial,
+                    VerifyDetailsState::ParseProjectFailed(e.to_string()),
+                );
                 return;
             }
         };
         let chain_id = match Uuid::parse_str(&project.chain_id) {
             Ok(id) => id,
             Err(_) => {
-                self.verify_status = VerifyStatus::Partial;
-                self.verify_details = VerifyDetailsState::InvalidChainId;
+                self.set_verify_outcome(
+                    VerifyStatus::Partial,
+                    VerifyDetailsState::InvalidChainId,
+                );
                 return;
             }
         };
 
         self.loading_verify_chain = true;
-        self.verify_details = VerifyDetailsState::Verifying;
+        // Clear any leftover Invalid/ProofValid pair while the request is in flight.
+        self.set_verify_outcome(VerifyStatus::None, VerifyDetailsState::Verifying);
 
         let tx = self.tx_resp.clone();
         let ctx = ctx.clone();
@@ -2019,17 +2106,22 @@ impl eframe::App for App {
                     match res {
                         Ok(result) => {
                             if result.valid {
-                                self.verify_status = VerifyStatus::Valid;
-                                self.verify_details = VerifyDetailsState::ProofValid;
+                                self.set_verify_outcome(
+                                    VerifyStatus::Valid,
+                                    VerifyDetailsState::ProofValid,
+                                );
                             } else {
-                                self.verify_status = VerifyStatus::Invalid;
-                                self.verify_details =
-                                    VerifyDetailsState::ServerErrors(result.errors.join("; "));
+                                self.set_verify_outcome(
+                                    VerifyStatus::Invalid,
+                                    VerifyDetailsState::ServerErrors(result.errors.join("; ")),
+                                );
                             }
                         }
                         Err(e) => {
-                            self.verify_status = VerifyStatus::Partial;
-                            self.verify_details = VerifyDetailsState::VerifyFailed(e);
+                            self.set_verify_outcome(
+                                VerifyStatus::Partial,
+                                VerifyDetailsState::VerifyFailed(e),
+                            );
                         }
                     }
                 }
@@ -2221,6 +2313,8 @@ impl eframe::App for App {
                                 .tr("✅ Фиксация завершена", "✅ Commit complete")
                                 .to_string();
                             self.commit_success = true;
+                            // Fresh Result must not inherit leftover panel/verify outcomes.
+                            self.clear_verify_outcome();
                             self.screen = Screen::Result;
                             self.load_projects();
                         }
@@ -3770,36 +3864,121 @@ ui.add_space(12.0);
                             .button(self.tr("💾 Сохранить копию файла", "💾 Save local copy"))
                             .clicked()
                     {
-                   let default_name = Path::new(&self.file_path)
+                        let default_name = Path::new(&self.file_path)
                             .file_name()
                             .map(|n| n.to_string_lossy().to_string())
                             .unwrap_or_else(|| "document".to_string());
 
-                        if let Some(dest) = rfd::FileDialog::new()
-                            .set_file_name(&default_name)
-                            .save_file()
-                        {
-                     match fs::copy(&self.file_path, &dest) {
-                                Ok(_) => {
-                                    let saved = self.projects_dir().and_then(|projects_dir| {
-                                        let project_name = if self.project_mode == ProjectMode::New
+                        'save_local_copy: {
+                            let Some(dest) = rfd::FileDialog::new()
+                                .set_file_name(&default_name)
+                                .save_file()
+                            else {
+                                break 'save_local_copy;
+                            };
+
+                            let source = Path::new(&self.file_path);
+
+                            // Snapshot size BEFORE copy — after a same-path bug the
+                            // source is already zero and cannot be used as a baseline.
+                            let source_size = match fs::metadata(source) {
+                                Ok(meta) => meta.len(),
+                                Err(err) => {
+                                    self.status = format!("⚠️ {err}");
+                                    break 'save_local_copy;
+                                }
+                            };
+
+                            let source_canonical = match fs::canonicalize(source) {
+                                Ok(path) => path,
+                                Err(err) => {
+                                    self.status = format!("⚠️ {err}");
+                                    break 'save_local_copy;
+                                }
+                            };
+                            let dest_canonical = match Self::resolve_save_dest_canonical(&dest) {
+                                Ok(path) => path,
+                                Err(err) => {
+                                    self.status = format!("⚠️ {err}");
+                                    break 'save_local_copy;
+                                }
+                            };
+                            if source_canonical == dest_canonical {
+                                self.status = self
+                                    .tr(
+                                        "⚠️ Нельзя сохранить копию поверх исходного файла — выберите другое имя или папку",
+                                        "⚠️ Cannot save a copy over the original file — choose a different name or folder",
+                                    )
+                                    .to_string();
+                                break 'save_local_copy;
+                            }
+
+                            #[cfg(unix)]
+                            {
+                                use std::os::unix::fs::MetadataExt;
+                                if dest.exists() {
+                                    match (fs::metadata(source), fs::metadata(&dest)) {
+                                        (Ok(src_meta), Ok(dst_meta))
+                                            if src_meta.dev() == dst_meta.dev()
+                                                && src_meta.ino() == dst_meta.ino() =>
                                         {
-                                            &self.project_name
-                                        } else {
-                                            &self.selected_project
-                                        };
-                                        let proofs_dir =
-                                            projects_dir.join(project_name).join("proofs");
-                                        Self::save_local_copy(&proofs_dir, &self.event_id, &dest)
-                                    });
-                                    match saved {
-                                        Ok(()) => {
                                             self.status = self
-                                                .tr("✅ Копия сохранена", "✅ Local copy saved")
+                                                .tr(
+                                                    "⚠️ Нельзя сохранить копию поверх исходного файла — выберите другое имя или папку",
+                                                    "⚠️ Cannot save a copy over the original file — choose a different name or folder",
+                                                )
                                                 .to_string();
+                                            break 'save_local_copy;
                                         }
-                                        Err(err) => self.status = format!("⚠️ {err}"),
+                                        (Err(err), _) | (_, Err(err)) => {
+                                            self.status = format!("⚠️ {err}");
+                                            break 'save_local_copy;
+                                        }
+                                        _ => {}
                                     }
+                                }
+                            }
+
+                            let copied = match fs::copy(source, &dest) {
+                                Ok(n) => n,
+                                Err(err) => {
+                                    self.status = format!("⚠️ {err}");
+                                    break 'save_local_copy;
+                                }
+                            };
+                            let dest_size = match fs::metadata(&dest) {
+                                Ok(meta) => meta.len(),
+                                Err(err) => {
+                                    self.status = format!("⚠️ {err}");
+                                    break 'save_local_copy;
+                                }
+                            };
+                            if copied != source_size || dest_size != source_size {
+                                self.status = format!(
+                                    "{} (source={source_size}, copied={copied}, dest={dest_size})",
+                                    self.tr(
+                                        "⚠️ Ошибка экспорта: размер копии не совпал с исходником",
+                                        "⚠️ Export failed: copy size does not match the source",
+                                    )
+                                );
+                                break 'save_local_copy;
+                            }
+
+                            // Register the copy only after size validation succeeds.
+                            let saved = self.projects_dir().and_then(|projects_dir| {
+                                let project_name = if self.project_mode == ProjectMode::New {
+                                    &self.project_name
+                                } else {
+                                    &self.selected_project
+                                };
+                                let proofs_dir = projects_dir.join(project_name).join("proofs");
+                                Self::save_local_copy(&proofs_dir, &self.event_id, &dest)
+                            });
+                            match saved {
+                                Ok(()) => {
+                                    self.status = self
+                                        .tr("✅ Копия сохранена", "✅ Local copy saved")
+                                        .to_string();
                                 }
                                 Err(err) => self.status = format!("⚠️ {err}"),
                             }
@@ -3823,7 +4002,16 @@ ui.add_space(12.0);
                         ui.colored_label(COLOR_PARTIAL, self.tr("⚠️ ЧАСТИЧНО", "⚠️ PARTIAL"));
                         ui.colored_label(COLOR_PARTIAL, self.render_verify_details());
                     }
-                    _ => {}
+                    VerifyStatus::None => {
+                        ui.colored_label(
+                            COLOR_BORDER,
+                            self.tr("○ НЕ ПРОВЕРЕНО", "○ NOT VERIFIED"),
+                        );
+                        let details = self.render_verify_details();
+                        if !details.is_empty() {
+                            ui.colored_label(COLOR_BORDER, details);
+                        }
+                    }
                 }
 
                 ui.add_space(12.0);
@@ -3838,7 +4026,7 @@ ui.add_space(12.0);
                     self.selected_file_hash.clear();
                     self.event_id.clear();
                     self.proof_path.clear();
-                    self.verify_status = VerifyStatus::None;
+                    self.clear_verify_outcome();
                     self.step = Step::Idle;
                     self.project_name.clear();
                     self.selected_project.clear();

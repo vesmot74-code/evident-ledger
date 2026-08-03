@@ -45,3 +45,4 @@ cookies.txt
 
 # Local freeze backups (do not commit)
 .local-backups/
+signing_key.bin.base64
