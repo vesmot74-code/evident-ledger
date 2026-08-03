@@ -9,6 +9,9 @@ pub struct AppConfig {
     /// Filesystem path to the server Ed25519 signing key.
     pub signing_key_path: String,
     pub trust_proxy_headers: bool,
+    /// When false, Paddle secrets are optional and billing webhook/checkout are disabled.
+    /// Default: true (existing production installs unchanged).
+    pub paddle_enabled: bool,
     pub paddle_webhook_secret: String,
     pub paddle_api_key: String,
     pub paddle_api_base_url: String,
@@ -54,50 +57,67 @@ impl AppConfig {
             .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
             .unwrap_or(false);
 
-        let paddle_webhook_secret = env::var("PADDLE_WEBHOOK_SECRET").unwrap_or_else(|_| {
-            #[cfg(test)]
-            {
-                return "test-paddle-webhook-secret".into();
-            }
-            #[cfg(not(test))]
-            {
-                eprintln!("STARTUP_ERROR config: PADDLE_WEBHOOK_SECRET must be set");
-                std::process::exit(4);
-            }
-        });
+        let paddle_enabled = env::var("PADDLE_ENABLED")
+            .map(|v| matches!(v.to_lowercase().as_str(), "1" | "true" | "yes"))
+            .unwrap_or(true);
 
-        let paddle_api_key = env::var("PADDLE_API_KEY").unwrap_or_else(|_| {
-            #[cfg(test)]
-            {
-                return "test-paddle-api-key".into();
-            }
-            #[cfg(not(test))]
-            {
-                eprintln!("STARTUP_ERROR config: PADDLE_API_KEY must be set");
-                std::process::exit(4);
-            }
-        });
+        let paddle_webhook_secret = if paddle_enabled {
+            env::var("PADDLE_WEBHOOK_SECRET").unwrap_or_else(|_| {
+                #[cfg(test)]
+                {
+                    return "test-paddle-webhook-secret".into();
+                }
+                #[cfg(not(test))]
+                {
+                    eprintln!("STARTUP_ERROR config: PADDLE_WEBHOOK_SECRET must be set");
+                    std::process::exit(4);
+                }
+            })
+        } else {
+            String::new()
+        };
+
+        let paddle_api_key = if paddle_enabled {
+            env::var("PADDLE_API_KEY").unwrap_or_else(|_| {
+                #[cfg(test)]
+                {
+                    return "test-paddle-api-key".into();
+                }
+                #[cfg(not(test))]
+                {
+                    eprintln!("STARTUP_ERROR config: PADDLE_API_KEY must be set");
+                    std::process::exit(4);
+                }
+            })
+        } else {
+            String::new()
+        };
 
         let paddle_api_base_url =
             env::var("PADDLE_API_BASE_URL").unwrap_or_else(|_| "https://api.paddle.com".into());
 
-        let paddle_client_token = env::var("PADDLE_CLIENT_TOKEN").unwrap_or_else(|_| {
-            #[cfg(test)]
-            {
-                return "test_paddle_client_token".into();
-            }
-            #[cfg(not(test))]
-            {
-                eprintln!("STARTUP_ERROR config: PADDLE_CLIENT_TOKEN must be set");
-                std::process::exit(4);
-            }
-        });
+        let paddle_client_token = if paddle_enabled {
+            env::var("PADDLE_CLIENT_TOKEN").unwrap_or_else(|_| {
+                #[cfg(test)]
+                {
+                    return "test_paddle_client_token".into();
+                }
+                #[cfg(not(test))]
+                {
+                    eprintln!("STARTUP_ERROR config: PADDLE_CLIENT_TOKEN must be set");
+                    std::process::exit(4);
+                }
+            })
+        } else {
+            String::new()
+        };
 
         Self {
             dev_mode,
             environment,
             signing_key_path,
             trust_proxy_headers,
+            paddle_enabled,
             paddle_webhook_secret,
             paddle_api_key,
             paddle_api_base_url,
@@ -120,6 +140,7 @@ impl AppConfig {
             environment: "development".into(),
             signing_key_path: "signing_key.bin".into(),
             trust_proxy_headers: false,
+            paddle_enabled: true,
             paddle_webhook_secret: "test-paddle-webhook-secret".into(),
             paddle_api_key: "test-paddle-api-key".into(),
             paddle_api_base_url: "https://api.paddle.com".into(),

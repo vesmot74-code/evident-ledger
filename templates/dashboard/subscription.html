@@ -2,9 +2,11 @@
 {% block title %}Subscription{% endblock %}
 {% block nav_subscription %}active{% endblock %}
 {% block head_extra %}
+{% if !paddle_client_token.is_empty() %}
 <meta name="paddle-client-token" content="{{ paddle_client_token }}">
 <meta name="paddle-environment" content="{{ paddle_environment }}">
 <script src="https://cdn.paddle.com/paddle/v2/paddle.js" data-paddle-sdk></script>
+{% endif %}
 {% endblock %}
 {% block header_meta %}
 <span class="plan-chip">{{ plan_display }}</span>

@@ -94,6 +94,9 @@ async fn main() {
         println!("Dev mode: enabled (tariff switcher available)");
     }
     println!("Environment: {}", config.environment);
+    if !config.paddle_enabled {
+        println!("Paddle billing: disabled (PADDLE_ENABLED=false)");
+    }
 
     let pool = db::create_pool().await;
     let state = state::AppState::new(pool, signer, config.clone());
@@ -115,7 +118,7 @@ async fn main() {
         .route("/", axum::routing::get(web::landing::index))
         .with_state(state.clone());
 
-    let app = axum::Router::new()
+    let mut app = axum::Router::new()
         .merge(landing)
         .route(
             "/verify-ui",
@@ -148,8 +151,11 @@ async fn main() {
             "/dashboard",
             dashboard_ui.merge(dashboard_api).merge(dashboard_billing),
         )
-        .nest("/paddle", api::paddle_webhook::router(state.clone()))
         .nest("/public", public_routes);
+
+    if config.paddle_enabled {
+        app = app.nest("/paddle", api::paddle_webhook::router(state.clone()));
+    }
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 3000));
     println!("Evident Ledger running on http://{}", addr);
