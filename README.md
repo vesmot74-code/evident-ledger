@@ -97,7 +97,6 @@ Anyone with the proof package can independently verify integrity.
 
 No access to the original database is required.
 
-![Verification](docs/assets/verification.png)
 
 ---
 
