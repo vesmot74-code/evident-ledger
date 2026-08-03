@@ -1,5 +1,23 @@
 # Changelog
 
+## Versioning note (2026-08)
+
+This repository currently has three parallel release-candidate lines,
+covering different scopes of the same `stage-13.7-release-candidate` /
+`stage-14` work:
+
+- `v1.2.0-rc1` — contract milestone: TSA/RFC3161 verification hardening,
+  fail-closed startup guards, warnings audit. This is the version referenced
+  in the project's public write-up.
+- `v0.13.7-rc2` — adds TSA proof-boundary formalization and identity/billing
+  governance findings on top of the above.
+- `v0.13.8-rc1` — adds signing-key operational governance (ADR +
+  readiness audit) on top of `v0.13.7-rc2`.
+
+`0.13.x` is the working line converging toward the next `1.x`. All three
+tags remain valid historical pre-releases; `v0.13.8-rc1` is the most
+complete snapshot as of this note.
+
 ## [Unreleased]
 
 ### Changed
