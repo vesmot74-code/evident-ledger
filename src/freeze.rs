@@ -17,6 +17,13 @@ pub struct Event {
     pub event_type: String,
 }
 
+/// Legacy/non-authoritative structure. Superseded by the frozen `proof_v1`
+/// contract (see docs/proof_v1.schema.md and
+/// docs/audits/PROOF_V1_TSA_ALIGNMENT.md). Not used by export_proof,
+/// ProofFile, or evident-verify. Do not construct in new code.
+#[deprecated(
+    note = "superseded by proof_v1; see docs/audits/PROOF_V1_TSA_ALIGNMENT.md"
+)]
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Proof {
     pub chain_id: String,
@@ -78,12 +85,14 @@ pub fn append_event_log(path: &Path, event: &Event) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(deprecated)]
 pub fn load_latest_proof(dir: &Path, chain_id: &str) -> Option<Proof> {
     let path = dir.join(chain_id).join("proof.json");
     let content = fs::read_to_string(path).ok()?;
     serde_json::from_str(&content).ok()
 }
 
+#[allow(deprecated)]
 pub fn write_proof(path: &Path, proof: &Proof) -> std::io::Result<()> {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
@@ -95,6 +104,7 @@ pub fn write_proof(path: &Path, proof: &Proof) -> std::io::Result<()> {
 }
 
 #[cfg(test)]
+#[allow(deprecated)]
 mod tests {
     use super::*;
 
