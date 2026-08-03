@@ -86,6 +86,11 @@ fn evident_dir() -> PathBuf {
     PathBuf::from(home).join(".evident")
 }
 
+fn server_url() -> String {
+    std::env::var("EVIDENT_SERVER_URL")
+        .unwrap_or_else(|_| "https://evident-ledger.com".to_string())
+}
+
 #[derive(Debug, Clone, Copy)]
 enum KeySource {
     Env,
@@ -460,7 +465,7 @@ fn run() -> Result<(), CliError> {
 
 fn evident_client() -> Result<EvidentClient, CliError> {
     let _ = load_api_key()?;
-    Ok(EvidentClient::new("http://127.0.0.1:3000"))
+    Ok(EvidentClient::new(&server_url()))
 }
 
 fn cmd_backup(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
@@ -636,7 +641,7 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
         CliError::Usage("Error: invalid chain id. Expected a UUID.".into())
     })?;
 
-    let client = evident_ledger::client::EvidentClient::new("http://127.0.0.1:3000");
+    let client = evident_ledger::client::EvidentClient::new(&server_url());
     let (commit, proof_path, file_hash) = client
         .submit_event(chain_uuid, &bytes)
         .map_err(map_client_error)?;
@@ -659,7 +664,7 @@ fn fetch_capabilities_best_effort() -> Option<serde_json::Value> {
 
     let client = reqwest::blocking::Client::new();
     client
-        .get("http://127.0.0.1:3000/account/capabilities")
+        .get(format!("{}/account/capabilities", server_url()))
         .header("X-API-KEY", &api_key)
         .send()
         .ok()?
@@ -846,7 +851,7 @@ fn cmd_new_chain() -> Result<(), CliError> {
     let api_key = load_api_key()?;
 
     let req = client
-        .post("http://127.0.0.1:3000/chains")
+        .post(format!("{}/chains", server_url()))
         .header("X-API-KEY", &api_key);
     let response = req.send()?;
     let status = response.status();
@@ -864,14 +869,15 @@ fn cmd_account() -> Result<(), CliError> {
     let client = reqwest::blocking::Client::new();
     let api_key = load_api_key()?;
 
+    let base = server_url();
     let capabilities: serde_json::Value = client
-        .get("http://127.0.0.1:3000/account/capabilities")
+        .get(format!("{base}/account/capabilities"))
         .header("X-API-KEY", &api_key)
         .send()?
         .json()?;
 
     let usage: serde_json::Value = client
-        .get("http://127.0.0.1:3000/account/usage")
+        .get(format!("{base}/account/usage"))
         .header("X-API-KEY", &api_key)
         .send()?
         .json()?;
@@ -938,7 +944,7 @@ fn cmd_account_info() -> Result<(), CliError> {
 
     let client = reqwest::blocking::Client::new();
     let response = client
-        .get("http://127.0.0.1:3000/account/capabilities")
+        .get(format!("{}/account/capabilities", server_url()))
         .header("X-API-KEY", &api_key)
         .send()?;
 
@@ -1015,7 +1021,7 @@ fn cmd_key_status() -> Result<(), CliError> {
     let api_key = load_api_key()?;
 
     let response = client
-        .get("http://127.0.0.1:3000/account/key-status")
+        .get(format!("{}/account/key-status", server_url()))
         .header("X-API-KEY", &api_key)
         .send()?;
 
@@ -1073,7 +1079,7 @@ fn cmd_key_info() -> Result<(), CliError> {
 fn cmd_status(chain_id: &str) -> Result<(), CliError> {
     let client = reqwest::blocking::Client::new();
     let response = client
-        .get(format!("http://127.0.0.1:3000/verify/{chain_id}"))
+        .get(format!("{}/verify/{chain_id}", server_url()))
         .send()?;
     let status = response.status();
     let body = response.text()?;
