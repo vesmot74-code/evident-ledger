@@ -1,3 +1,4 @@
+use base64::Engine;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use rand::rngs::OsRng;
 use sha2::{Digest, Sha256};
@@ -29,14 +30,30 @@ impl std::fmt::Display for SigningError {
     }
 }
 
+/// Accept either a raw 32-byte Ed25519 seed or the same seed Base64-encoded
+/// (UTF-8), as produced by Render Secret Files when binary upload is unavailable.
+fn decode_signing_key_material(bytes: &[u8]) -> Result<[u8; 32], SigningError> {
+    if bytes.len() == 32 {
+        return bytes
+            .try_into()
+            .map_err(|_| SigningError::InvalidKeyLength);
+    }
+
+    let text = std::str::from_utf8(bytes).map_err(|_| SigningError::InvalidKeyLength)?;
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(text.trim())
+        .map_err(|_| SigningError::InvalidKeyLength)?;
+    decoded
+        .try_into()
+        .map_err(|_| SigningError::InvalidKeyLength)
+}
+
 impl ServerSigner {
     pub fn load_or_create(path: &str) -> Result<Self, SigningError> {
         let path_ref = Path::new(path);
         if path_ref.exists() {
             let bytes = std::fs::read(path).map_err(SigningError::ReadFailed)?;
-            let array: [u8; 32] = bytes
-                .try_into()
-                .map_err(|_| SigningError::InvalidKeyLength)?;
+            let array = decode_signing_key_material(&bytes)?;
             let signing_key = SigningKey::from_bytes(&array);
             let verifying_key = signing_key.verifying_key();
             return Ok(Self {
@@ -188,5 +205,51 @@ mod tests {
             &signature_hex,
             &public_key_hex,
         ));
+    }
+
+    #[test]
+    fn load_or_create_accepts_raw_32_byte_key() {
+        let seed = SigningKey::generate(&mut OsRng).to_bytes();
+        let path = std::env::temp_dir().join(format!("evident-raw-key-{}.bin", Uuid::new_v4()));
+        std::fs::write(&path, seed).expect("write raw key");
+
+        let signer = ServerSigner::load_or_create(path.to_str().unwrap()).expect("load raw key");
+        assert_eq!(signer.signing_key.to_bytes(), seed);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_or_create_accepts_base64_encoded_32_byte_key() {
+        let seed = SigningKey::generate(&mut OsRng).to_bytes();
+        let encoded = base64::engine::general_purpose::STANDARD.encode(seed);
+        // Simulate Render Secret File: Base64 text plus trailing newline (45 bytes).
+        let path = std::env::temp_dir().join(format!("evident-b64-key-{}.bin", Uuid::new_v4()));
+        std::fs::write(&path, format!("{encoded}\n")).expect("write base64 key");
+
+        let signer = ServerSigner::load_or_create(path.to_str().unwrap()).expect("load base64 key");
+        assert_eq!(signer.signing_key.to_bytes(), seed);
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn load_or_create_rejects_invalid_key_length() {
+        let path = std::env::temp_dir().join(format!("evident-bad-key-{}.bin", Uuid::new_v4()));
+        std::fs::write(&path, b"not-a-valid-key").expect("write bad key");
+
+        match ServerSigner::load_or_create(path.to_str().unwrap()) {
+            Err(SigningError::InvalidKeyLength) => {}
+            Ok(_) => panic!("expected InvalidKeyLength, got Ok"),
+            Err(other) => panic!("expected InvalidKeyLength, got {other}"),
+        }
+        let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn decode_accepts_render_sample_base64() {
+        // Contents of the Render Secret File that previously failed with length 45.
+        let sample = b"6KKIGzBiQYWMOumUxSX9BuOnDv8Xa+EqHj6gigKTSYU=\n";
+        let seed = decode_signing_key_material(sample).expect("decode sample");
+        assert_eq!(seed.len(), 32);
+        let _ = SigningKey::from_bytes(&seed);
     }
 }
