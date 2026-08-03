@@ -59,7 +59,11 @@
       });
 
       if (response.ok) {
-        window.location.href = '/dashboard/ui';
+        const params = new URLSearchParams(window.location.search);
+        const next = params.get('next');
+        // Relative internal paths only — open-redirect protection.
+        const safe = next && next.startsWith('/') && !next.startsWith('//') && !next.includes('://');
+        window.location.href = safe ? next : '/dashboard/ui';
         return;
       }
 

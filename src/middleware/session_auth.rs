@@ -48,11 +48,25 @@ pub async fn session_auth_middleware(
     next.run(request).await
 }
 
+fn percent_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len());
+    for b in s.bytes() {
+        match b {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                out.push(b as char)
+            }
+            _ => out.push_str(&format!("%{b:02X}")),
+        }
+    }
+    out
+}
+
 pub async fn session_ui_auth_middleware(
     State(state): State<AppState>,
     mut request: Request<Body>,
     next: Next,
 ) -> Response {
+    use axum::extract::OriginalUri;
     use axum::response::Redirect;
 
     let cookie_header = request
@@ -61,7 +75,19 @@ pub async fn session_ui_auth_middleware(
         .and_then(|value| value.to_str().ok());
 
     let Some(user) = optional_session_user(&state, cookie_header).await else {
-        return Redirect::to("/login").into_response();
+        // Prefer OriginalUri: nested /dashboard routers strip the nest prefix from
+        // request.uri(), which would lose /dashboard in the post-login return path.
+        let uri = request
+            .extensions()
+            .get::<OriginalUri>()
+            .map(|OriginalUri(u)| u)
+            .unwrap_or_else(|| request.uri());
+        let original = uri
+            .path_and_query()
+            .map(|pq| pq.as_str())
+            .unwrap_or("/dashboard/ui");
+        let target = format!("/login?next={}", percent_encode(original));
+        return Redirect::to(&target).into_response();
     };
 
     request.extensions_mut().insert(user);
