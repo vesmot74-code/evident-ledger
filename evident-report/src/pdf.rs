@@ -333,7 +333,7 @@ pub fn write_pdf(
     add_events(&mut ctx, verification);
     add_proof_block(&mut ctx, proof);
     add_tsa_details_block(&mut ctx, proof);
-    add_verification_scope(&mut ctx);
+    add_verification_scope(&mut ctx, proof, verification);
     add_instructions(&mut ctx);
     add_signature_block(&mut ctx);
 
@@ -474,15 +474,38 @@ fn add_tsa_details_block(ctx: &mut Ctx, proof: &ProofData) {
     }
 }
 
-fn add_verification_scope(ctx: &mut Ctx) {
+/// Status labels for §6. Uses the same `verification.is_valid` as §2 for
+/// chain / hashes / signature — no separate verification-model fields exist.
+/// TSA presence follows §5 (`proof.tsa.is_some()`), not `is_valid`.
+fn verification_scope_labels(is_valid: bool, tsa_present: bool) -> [&'static str; 4] {
+    let pass_or_fail = if is_valid { "[PASS]" } else { "[FAIL]" };
+    let tsa_status = if tsa_present { "[PASS]" } else { "[N/A]" };
+    [pass_or_fail, pass_or_fail, pass_or_fail, tsa_status]
+}
+
+fn add_verification_scope(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationContext) {
+    // Path 4 (TZ Stage C): no granular fields on VerificationContext — bind the
+    // three integrity lines to the same is_valid as §2; TSA to proof.tsa presence.
+    let [chain_status, hashes_status, sig_status, tsa_status] =
+        verification_scope_labels(verification.is_valid, proof.tsa.is_some());
+
     ctx.heading("6. VERIFICATION SCOPE");
     ctx.raw_line("This report confirms:", 9.0);
     ctx.gap();
-    ctx.raw_line("[PASS] Integrity of the registered ledger chain", 9.0);
-    ctx.raw_line("[PASS] Consistency of recorded evidence hashes", 9.0);
-    ctx.raw_line("[PASS] Validity of the cryptographic signature", 9.0);
     ctx.raw_line(
-        "[PASS] Presence or absence of external timestamp evidence",
+        &format!("{chain_status} Integrity of the registered ledger chain"),
+        9.0,
+    );
+    ctx.raw_line(
+        &format!("{hashes_status} Consistency of recorded evidence hashes"),
+        9.0,
+    );
+    ctx.raw_line(
+        &format!("{sig_status} Validity of the cryptographic signature"),
+        9.0,
+    );
+    ctx.raw_line(
+        &format!("{tsa_status} Presence or absence of external timestamp evidence"),
         9.0,
     );
     ctx.gap();
@@ -523,4 +546,127 @@ fn add_signature_block(ctx: &mut Ctx) {
         ),
         9.0,
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::verification_scope_labels;
+    use crate::{
+        generate_report, EventSummary, FileStatus, ProofData, TsaData, VerificationContext,
+    };
+    use chrono::Utc;
+    use std::fs;
+
+    fn sample_proof(with_tsa: bool) -> ProofData {
+        ProofData {
+            chain_id: "11111111-1111-1111-1111-111111111111".into(),
+            head_event_id: "22222222-2222-2222-2222-222222222222".into(),
+            events: vec![EventSummary {
+                event_id: "22222222-2222-2222-2222-222222222222".into(),
+                file_hash: "ab".repeat(32),
+                sequence: Some(1),
+            }],
+            root: "cd".repeat(32),
+            signature: "ef".repeat(64),
+            public_key: "aa".repeat(32),
+            tsa: with_tsa.then_some(TsaData {
+                timestamp: 1_700_000_000,
+                serial: "1".into(),
+                token_bytes: 100,
+            }),
+            created_at: Some(Utc::now()),
+        }
+    }
+
+    fn sample_verification(is_valid: bool) -> VerificationContext {
+        VerificationContext {
+            is_valid,
+            verified_at: Utc::now(),
+            first_failure_sequence: if is_valid { None } else { Some(1) },
+            first_failure_error: if is_valid {
+                None
+            } else {
+                Some("test failure".into())
+            },
+            files: vec![FileStatus {
+                file_name: "doc.txt".into(),
+                chain_valid: is_valid,
+                local_integrity_ok: None,
+            }],
+        }
+    }
+
+    #[test]
+    fn scope_all_pass_when_valid_with_tsa() {
+        let labels = verification_scope_labels(true, true);
+        assert_eq!(labels, ["[PASS]", "[PASS]", "[PASS]", "[PASS]"]);
+    }
+
+    #[test]
+    fn scope_integrity_fail_when_invalid_tsa_independent() {
+        let with_tsa = verification_scope_labels(false, true);
+        assert_eq!(with_tsa, ["[FAIL]", "[FAIL]", "[FAIL]", "[PASS]"]);
+
+        let without_tsa = verification_scope_labels(false, false);
+        assert_eq!(without_tsa, ["[FAIL]", "[FAIL]", "[FAIL]", "[N/A]"]);
+    }
+
+    #[test]
+    fn scope_valid_without_tsa_uses_na_for_timestamp_line() {
+        let labels = verification_scope_labels(true, false);
+        assert_eq!(labels, ["[PASS]", "[PASS]", "[PASS]", "[N/A]"]);
+    }
+
+    #[test]
+    fn generated_pdf_section2_and_scope_agree_when_invalid() {
+        let dir = std::env::temp_dir().join("evident-report-scope");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(format!("invalid_scope-{}.pdf", std::process::id()));
+        let proof = sample_proof(true);
+        let verification = sample_verification(false);
+        generate_report(&proof.chain_id, &proof, &verification, &path).expect("pdf");
+
+        // Prefer pdftotext (literal UTF-8 may not appear in raw PDF bytes).
+        let extracted = std::process::Command::new("pdftotext")
+            .arg(&path)
+            .arg("-")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+
+        let text = match extracted {
+            Some(t) => t,
+            None => {
+                // CI without poppler: label helper already covers Case 1/2.
+                eprintln!("pdftotext unavailable; skipping PDF text assertions");
+                return;
+            }
+        };
+
+        assert!(
+            text.contains("[FAIL] LEDGER INTEGRITY: INVALID"),
+            "§2 must show INVALID"
+        );
+        assert!(
+            text.contains("[FAIL] Integrity of the registered ledger chain"),
+            "§6 chain line must FAIL when is_valid=false"
+        );
+        assert!(
+            text.contains("[FAIL] Consistency of recorded evidence hashes"),
+            "§6 hashes line must FAIL when is_valid=false"
+        );
+        assert!(
+            text.contains("[FAIL] Validity of the cryptographic signature"),
+            "§6 signature line must FAIL when is_valid=false"
+        );
+        assert!(
+            text.contains("[PASS] Presence or absence of external timestamp evidence"),
+            "§6 TSA line follows presence, not is_valid"
+        );
+        assert!(
+            !text.contains("[PASS] Validity of the cryptographic signature"),
+            "§6 must not keep static PASS on signature when invalid"
+        );
+    }
 }
