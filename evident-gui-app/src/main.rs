@@ -7,8 +7,8 @@ use evident_ledger::service::backup_restore::{
 };
 use evident_ledger::service::backup_snapshot::parse_snapshot;
 use evident_report::{
-    generate_registration_snapshot, generate_report, EventSummary, FileStatus, ProofData,
-    TsaData as ReportTsaData, VerificationContext,
+    generate_registration_snapshot, generate_report, EventReportScope, EventSummary, FileStatus,
+    ProofData, TsaData as ReportTsaData, VerificationContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -841,6 +841,14 @@ impl App {
             .and_then(|t| t.timestamp)
             .and_then(|ts| Utc.timestamp_opt(ts, 0).single());
 
+        let chain_length = proof.events.len().max(1);
+        let head_label = proof
+            .events
+            .iter()
+            .find(|e| e.event_id == proof.head_event_id)
+            .map(|e| format!("EVENT_{:03}", e.sequence))
+            .unwrap_or_else(|| format!("EVENT_{:03}", chain_length));
+
         let proof_data = ProofData {
             chain_id: proof.chain_id.clone(),
             head_event_id: proof.head_event_id.clone(),
@@ -850,6 +858,11 @@ impl App {
             public_key: proof.proof.public_key.clone(),
             tsa: tsa_complete,
             created_at,
+            event_report_scope: Some(EventReportScope {
+                evidence_item_label: format!("EVENT_{:03}", event.sequence),
+                chain_head_label: head_label,
+                proof_events_count: chain_length,
+            }),
         };
 
         let verify_valid_now = event.valid && fresh_local_integrity_ok != Some(false);
@@ -923,6 +936,7 @@ impl App {
             public_key: proof.proof.public_key.clone(),
             tsa: tsa_complete,
             created_at,
+            event_report_scope: None,
         }
     }
 
@@ -1135,6 +1149,7 @@ impl App {
             public_key: proof.proof.public_key.clone(),
             tsa: tsa_complete,
             created_at,
+            event_report_scope: None,
         };
 
         let first_failure = events.iter().find(|e| !e.valid);

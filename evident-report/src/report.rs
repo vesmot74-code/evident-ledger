@@ -1,5 +1,17 @@
 use chrono::{DateTime, Utc};
 
+/// Presentation-only scope for event-level PDFs (Stage A1).
+/// Distinguishes the single evidence item shown from the chain-head crypto snapshot.
+#[derive(Debug, Clone)]
+pub struct EventReportScope {
+    /// e.g. `EVENT_001`
+    pub evidence_item_label: String,
+    /// e.g. `EVENT_003` — chain head at report generation
+    pub chain_head_label: String,
+    /// Number of events included in the Merkle root / signature (full chain).
+    pub proof_events_count: usize,
+}
+
 #[derive(Debug, Clone)]
 pub struct ProofData {
     pub chain_id: String,
@@ -10,6 +22,8 @@ pub struct ProofData {
     pub public_key: String,
     pub tsa: Option<TsaData>,
     pub created_at: Option<DateTime<Utc>>,
+    /// When set, PDF renders event-level scope notes (not used for project snapshots).
+    pub event_report_scope: Option<EventReportScope>,
 }
 
 #[derive(Debug, Clone)]

@@ -351,17 +351,16 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
     ctx.gap();
     ctx.raw_line(&format!("Chain Identifier: {}", proof.chain_id), 10.0);
 
+    if let Some(scope) = &proof.event_report_scope {
+        add_event_report_scope_note(ctx, scope);
+    }
+
     let (trusted_timestamp_text, external_tsa_note) = match proof.created_at {
         Some(ts) => (ts.format("%Y-%m-%d %H:%M:%S UTC").to_string(), None),
         None => (
             "Not Available".to_string(),
             Some("No RFC3161 timestamp was attached to this ledger state."),
         ),
-    };
-    let covered_events_text = if proof.events.is_empty() {
-        "none".to_string()
-    } else {
-        format!("1-{}", proof.events.len())
     };
 
     ctx.heading("1. EVIDENCE SNAPSHOT");
@@ -372,7 +371,25 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
     if let Some(note) = external_tsa_note {
         ctx.raw_line(note, 9.0);
     }
-    ctx.raw_line(&format!("Events Covered: {}", covered_events_text), 10.0);
+
+    if let Some(scope) = &proof.event_report_scope {
+        // Event-level PDF: keep evidence presentation and crypto coverage separate.
+        ctx.raw_line("Evidence Items Presented: 1", 10.0);
+        ctx.raw_line(
+            &format!(
+                "Cryptographic Proof Scope: Events 1-{}",
+                scope.proof_events_count
+            ),
+            10.0,
+        );
+    } else {
+        let covered_events_text = if proof.events.is_empty() {
+            "none".to_string()
+        } else {
+            format!("1-{}", proof.events.len())
+        };
+        ctx.raw_line(&format!("Events Covered: {}", covered_events_text), 10.0);
+    }
 
     ctx.heading("2. CURRENT VERIFICATION");
     ctx.raw_line(
@@ -394,6 +411,36 @@ fn add_header(ctx: &mut Ctx, proof: &ProofData, verification: &VerificationConte
             ctx.wrapped_block(&format!("Failure Reason: {}", err), 9.0);
         }
     }
+}
+
+fn add_event_report_scope_note(ctx: &mut Ctx, scope: &crate::EventReportScope) {
+    ctx.gap();
+    ctx.heading("NOTE ON REPORT SCOPE");
+    ctx.wrapped_block(
+        "This report presents one registered evidence item from the ledger. \
+         The cryptographic proof shown below represents the state of the \
+         complete ledger chain at the time this report was generated. \
+         It does not represent the historical chain state at the exact moment \
+         the individual event was originally recorded.",
+        9.0,
+    );
+    ctx.gap();
+    ctx.raw_line(&format!("Evidence item: {}", scope.evidence_item_label), 9.0);
+    ctx.raw_line(
+        &format!(
+            "Current chain head at report generation: {}",
+            scope.chain_head_label
+        ),
+        9.0,
+    );
+    ctx.raw_line(
+        &format!(
+            "Events included in cryptographic proof: 1-{}",
+            scope.proof_events_count
+        ),
+        9.0,
+    );
+    ctx.gap();
 }
 
 fn add_events(ctx: &mut Ctx, verification: &VerificationContext) {
@@ -575,6 +622,7 @@ mod tests {
                 token_bytes: 100,
             }),
             created_at: Some(Utc::now()),
+            event_report_scope: None,
         }
     }
 
@@ -668,5 +716,97 @@ mod tests {
             !text.contains("[PASS] Validity of the cryptographic signature"),
             "§6 must not keep static PASS on signature when invalid"
         );
+    }
+
+    #[test]
+    fn event_level_pdf_separates_evidence_item_from_crypto_scope() {
+        let dir = std::env::temp_dir().join("evident-report-event-scope");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(format!("event_scope-{}.pdf", std::process::id()));
+
+        let mut proof = sample_proof(true);
+        proof.root = "aa".repeat(32);
+        proof.signature = "bb".repeat(64);
+        proof.public_key = "cc".repeat(32);
+        proof.event_report_scope = Some(crate::EventReportScope {
+            evidence_item_label: "EVENT_001".into(),
+            chain_head_label: "EVENT_003".into(),
+            proof_events_count: 3,
+        });
+        let verification = sample_verification(true);
+        generate_report(&proof.chain_id, &proof, &verification, &path).expect("pdf");
+
+        let extracted = std::process::Command::new("pdftotext")
+            .arg(&path)
+            .arg("-")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let Some(text) = extracted else {
+            eprintln!("pdftotext unavailable; skipping PDF text assertions");
+            return;
+        };
+
+        assert!(text.contains("NOTE ON REPORT SCOPE"));
+        assert!(text.contains("Evidence item: EVENT_001"));
+        assert!(text.contains("Current chain head at report generation: EVENT_003"));
+        assert!(text.contains("Events included in cryptographic proof: 1-3"));
+        assert!(text.contains("Evidence Items Presented: 1"));
+        assert!(text.contains("Cryptographic Proof Scope: Events 1-3"));
+        assert!(
+            !text.contains("Events Covered:"),
+            "event PDF must not use the combined Events Covered field"
+        );
+        // Crypto values unchanged (still from ProofData).
+        assert!(text.contains(&format!("Merkle Root: {}", proof.root)));
+        assert!(text.contains(&proof.signature[..64]));
+        assert!(text.contains(&proof.public_key[..32]));
+    }
+
+    #[test]
+    fn project_level_pdf_keeps_events_covered_field() {
+        let dir = std::env::temp_dir().join("evident-report-project-scope");
+        let _ = fs::create_dir_all(&dir);
+        let path = dir.join(format!("project_scope-{}.pdf", std::process::id()));
+
+        let mut proof = sample_proof(true);
+        proof.events = vec![
+            EventSummary {
+                event_id: "a".into(),
+                file_hash: "11".repeat(32),
+                sequence: Some(1),
+            },
+            EventSummary {
+                event_id: "b".into(),
+                file_hash: "22".repeat(32),
+                sequence: Some(2),
+            },
+            EventSummary {
+                event_id: "c".into(),
+                file_hash: "33".repeat(32),
+                sequence: Some(3),
+            },
+        ];
+        proof.event_report_scope = None;
+        let verification = sample_verification(true);
+        generate_report(&proof.chain_id, &proof, &verification, &path).expect("pdf");
+
+        let extracted = std::process::Command::new("pdftotext")
+            .arg(&path)
+            .arg("-")
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .map(|o| String::from_utf8_lossy(&o.stdout).into_owned());
+        let Some(text) = extracted else {
+            eprintln!("pdftotext unavailable; skipping PDF text assertions");
+            return;
+        };
+
+        assert!(text.contains("Events Covered: 1-3"));
+        assert!(!text.contains("NOTE ON REPORT SCOPE"));
+        assert!(!text.contains("Cryptographic Proof Scope:"));
+        assert!(!text.contains("Evidence Items Presented:"));
     }
 }
