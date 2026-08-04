@@ -7,7 +7,7 @@ use evident_ledger::proof_format::{
     UNSUPPORTED_PROOF_FORMAT_MESSAGE,
 };
 use evident_ledger::service::verification::check_event_structure;
-use evident_ledger::signing::verify_root;
+use evident_ledger::signing::{classify_signature, SignatureCheckResult};
 
 #[derive(Deserialize)]
 struct ProofFile {
@@ -111,16 +111,23 @@ fn main() {
         }
     };
 
-    let sig_valid = verify_root(
+    match classify_signature(
+        &proof_file.proof.public_key,
+        &trusted_public_key,
         &proof_file.chain_id,
         &proof_file.proof.root,
         &proof_file.proof.chain_head,
         &proof_file.proof.signature,
-        &trusted_public_key,
-    );
-    if !sig_valid {
-        eprintln!("FAIL: signature invalid (untrusted key or tampered data)");
-        ok = false;
+    ) {
+        SignatureCheckResult::Valid => {}
+        SignatureCheckResult::UntrustedSignerIdentity { .. } => {
+            eprintln!("FAIL: untrusted signer identity (server key mismatch)");
+            ok = false;
+        }
+        SignatureCheckResult::SignatureInvalid { .. } => {
+            eprintln!("FAIL: cryptographic signature verification failed");
+            ok = false;
+        }
     }
 
     // 2. leaves_count

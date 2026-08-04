@@ -1497,33 +1497,112 @@ impl App {
 
             match trusted_public_key {
                 Some(key) => {
-                    let sig_valid = evident_ledger::signing::verify_root(
+                    use evident_ledger::signing::{classify_signature, SignatureCheckResult};
+
+                    match classify_signature(
+                        &proof.proof.public_key,
+                        &key,
                         &proof.chain_id,
                         &proof.proof.root,
                         &proof.proof.chain_head,
                         &proof.proof.signature,
-                        &key,
-                    );
-
-                    if !sig_valid {
-                        self.set_verify_outcome(
-                            VerifyStatus::Invalid,
-                            VerifyDetailsState::Warning(
-                                self.tr(
-                                    "Подпись недействительна — ключ сервера мог измениться",
-                                    "Signature is invalid — the server key may have changed",
+                    ) {
+                        SignatureCheckResult::Valid => {}
+                        SignatureCheckResult::UntrustedSignerIdentity {
+                            pinned_key,
+                            proof_key,
+                        } => {
+                            let pinned_fp = &pinned_key[..32.min(pinned_key.len())];
+                            let proof_fp = &proof_key[..32.min(proof_key.len())];
+                            let details = if self.lang == Lang::Ru {
+                                format!(
+                                    "Доказательство подписано другой серверной идентичностью \
+                                     (доверенный: {pinned_fp}…, в доказательстве: {proof_fp}…)"
                                 )
-                                .to_string(),
-                            ),
-                        );
-                        self.status = self
-                            .tr(
-                                "❌ Подпись недействительна — ключ сервера мог измениться. \
-                                 Если вы уверены, что это ожидаемо, обновите доверенный ключ вручную.",
-                                "❌ Signature is invalid — the server key may have changed. \
-                                 If this is expected, update the trusted key manually."
-                            )
-                            .to_string();
+                            } else {
+                                format!(
+                                    "Proof signed by a different server identity \
+                                     (trusted: {pinned_fp}…, in proof: {proof_fp}…)"
+                                )
+                            };
+                            self.set_verify_outcome(
+                                VerifyStatus::Invalid,
+                                VerifyDetailsState::Warning(details),
+                            );
+                            self.status = if self.lang == Lang::Ru {
+                                format!(
+                                    "❌ Проверка не пройдена.\n\
+                                     Причина:\n\
+                                     Доказательство подписано другой серверной идентичностью.\n\
+                                     Доверенный ключ сервера:\n\
+                                     {pinned_key}\n\
+                                     Ключ подписи в доказательстве:\n\
+                                     {proof_key}\n\
+                                     Это доказательство нельзя проверить против текущей \
+                                     доверенной идентичности сервера.\n\
+                                     Возможные причины:\n\
+                                     - доказательство создано на другом сервере/окружении\n\
+                                     - ключ подписи сервера был заменён\n\
+                                     - файл доверенной идентичности относится к другому серверу"
+                                )
+                            } else {
+                                format!(
+                                    "❌ Verification failed.\n\
+                                     Reason:\n\
+                                     The proof was signed by a different server identity.\n\
+                                     Trusted server key:\n\
+                                     {pinned_key}\n\
+                                     Signing key in the proof:\n\
+                                     {proof_key}\n\
+                                     This proof cannot be verified against the current trusted \
+                                     server identity.\n\
+                                     Possible causes:\n\
+                                     - the proof was created on another server/environment\n\
+                                     - the server signing key was replaced\n\
+                                     - the trusted identity file belongs to another server"
+                                )
+                            };
+                        }
+                        SignatureCheckResult::SignatureInvalid { server_identity } => {
+                            let details = if self.lang == Lang::Ru {
+                                "Ошибка проверки криптографической подписи".to_string()
+                            } else {
+                                "Cryptographic signature verification failed".to_string()
+                            };
+                            self.set_verify_outcome(
+                                VerifyStatus::Invalid,
+                                VerifyDetailsState::Warning(details),
+                            );
+                            self.status = if self.lang == Lang::Ru {
+                                format!(
+                                    "❌ Проверка не пройдена.\n\
+                                     Причина:\n\
+                                     Ошибка проверки криптографической подписи.\n\
+                                     Идентичность сервера:\n\
+                                     {server_identity}\n\
+                                     Ожидалось, что доказательство подписано этой серверной \
+                                     идентичностью, но подпись не совпадает.\n\
+                                     Возможные причины:\n\
+                                     - файл доказательства был изменён\n\
+                                     - данные доказательства повреждены\n\
+                                     - неполная передача файла"
+                                )
+                            } else {
+                                format!(
+                                    "❌ Verification failed.\n\
+                                     Reason:\n\
+                                     Cryptographic signature verification failed.\n\
+                                     Server identity:\n\
+                                     {server_identity}\n\
+                                     The proof was expected to be signed by this server identity, \
+                                     but the signature does not match.\n\
+                                     Possible causes:\n\
+                                     - the proof file was modified\n\
+                                     - the proof data is corrupted\n\
+                                     - incomplete file transfer"
+                                )
+                            };
+                        }
                     }
                 }
                 None => {
