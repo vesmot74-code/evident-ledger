@@ -10,6 +10,32 @@ Evident Ledger transforms business documents, software artifacts, datasets, AI m
 
 Designed for regulated industries, AI development, software engineering, and compliance workflows, Evident Ledger creates cryptographic proof that a record existed in a specific form at a specific point in time across jurisdictions.
 
+## Project Status
+
+Evident Ledger publishes release-candidate milestones while continuing
+development on `main`.
+
+The `main` branch is the current public baseline. Advanced security
+hardening, TSA verification improvements, identity signing, and release
+governance work from the release-candidate lines has been merged into
+`main`. Development on `main` continues beyond those tagged RCs toward
+the next stable release.
+
+Published release candidates:
+
+- `v1.2.0-rc1` — TSA/RFC3161 verification hardening and fail-closed startup guards.
+- `v0.13.8-rc1` — signing key governance and related security lifecycle work.
+- `v0.13.7-rc2` — previous release-candidate milestone (TSA proof-boundary and identity/billing findings).
+
+These versions are published as Git tags and GitHub Releases. They remain
+valid historical pre-releases and are ancestors of `main`; treat `main`
+(and future stable tags) as the source of truth for current code, while
+Releases document the RC milestones.
+
+See published candidates in the
+[GitHub Releases](https://github.com/vesmot74-code/evident-ledger/releases)
+section.
+
 ---
 
 # ⚡ Quick Start: See it in Action
