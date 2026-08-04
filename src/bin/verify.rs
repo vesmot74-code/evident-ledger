@@ -122,6 +122,14 @@ fn main() {
         SignatureCheckResult::Valid => {}
         SignatureCheckResult::UntrustedSignerIdentity { .. } => {
             eprintln!("FAIL: untrusted signer identity (server key mismatch)");
+            let base = std::env::var("EVIDENT_SERVER_URL")
+                .unwrap_or_else(|_| "https://evident-ledger.com".to_string());
+            eprintln!(
+                "To trust the current server identity, update:\n\
+                 ~/.evident/server_identity.pub\n\
+                 Example:\n\
+                 curl -s {base}/identity | jq -r .public_key > ~/.evident/server_identity.pub"
+            );
             ok = false;
         }
         SignatureCheckResult::SignatureInvalid { .. } => {

@@ -70,6 +70,11 @@ enum VerifyDetailsState {
     ParseProjectFailed(String),
     InvalidChainId,
     Warning(String),
+    /// Pinned server identity does not match the proof signer (Stage B / D1).
+    UntrustedSignerIdentity {
+        pinned_key: String,
+        proof_key: String,
+    },
     VerifyFailed(String),
     ServerErrors(String),
 }
@@ -510,6 +515,12 @@ impl App {
                 .tr("⚠️ Неправильный chain_id", "⚠️ Invalid chain_id")
                 .to_string(),
             VerifyDetailsState::Warning(detail) => format!("⚠️ {detail}"),
+            VerifyDetailsState::UntrustedSignerIdentity { .. } => self
+                .tr(
+                    "⚠️ Ключ сервера изменился",
+                    "⚠️ Server key has changed",
+                )
+                .to_string(),
             VerifyDetailsState::VerifyFailed(detail) => format!(
                 "{}: {}",
                 self.tr("⚠️ Ошибка проверки", "⚠️ Verification error"),
@@ -554,6 +565,71 @@ impl App {
 
     fn clear_verify_outcome(&mut self) {
         self.set_verify_outcome(VerifyStatus::None, VerifyDetailsState::Empty);
+    }
+
+    /// Explicit user action: replace pinned server identity from GET /identity, then re-verify.
+    /// Does not auto-trust without this call; pin is the only trust source (Stage B model).
+    fn refresh_trusted_server_key(&mut self, ctx: &egui::Context) {
+        let client = EvidentClient::new(server_url());
+        let new_key = match client.fetch_identity() {
+            Ok(key) => key.trim().to_string(),
+            Err(_) => {
+                self.status = self
+                    .tr(
+                        "Не удалось получить ключ сервера.\nПроверьте подключение к серверу.",
+                        "Could not fetch the server key.\nCheck your connection to the server.",
+                    )
+                    .to_string();
+                return;
+            }
+        };
+
+        if new_key.is_empty() {
+            self.status = self
+                .tr(
+                    "Не удалось получить ключ сервера.\nПроверьте подключение к серверу.",
+                    "Could not fetch the server key.\nCheck your connection to the server.",
+                )
+                .to_string();
+            return;
+        }
+
+        let Some(path) = dirs::home_dir().map(|h| h.join(".evident").join("server_identity.pub"))
+        else {
+            self.status = self
+                .tr(
+                    "Не удалось сохранить ключ сервера (нет домашнего каталога).",
+                    "Could not save the server key (home directory missing).",
+                )
+                .to_string();
+            return;
+        };
+
+        if let Some(parent) = path.parent() {
+            let _ = fs::create_dir_all(parent);
+        }
+        if let Err(e) = fs::write(&path, &new_key) {
+            self.status = format!(
+                "{}: {e}",
+                self.tr(
+                    "Не удалось сохранить ключ сервера",
+                    "Could not save the server key"
+                )
+            );
+            return;
+        }
+
+        self.verify_project(ctx);
+
+        if matches!(self.verify_status, VerifyStatus::Valid | VerifyStatus::Partial) {
+            self.status = self
+                .tr(
+                    "✅ Ключ обновлён.\nПроверка повторена.",
+                    "✅ Key updated.\nVerification re-run.",
+                )
+                .to_string();
+        }
+        // If still Invalid, keep the outcome/status from verify_project — do not hide it.
     }
 
     fn render_status(&self) -> String {
@@ -1512,55 +1588,21 @@ impl App {
                             pinned_key,
                             proof_key,
                         } => {
-                            let pinned_fp = &pinned_key[..32.min(pinned_key.len())];
-                            let proof_fp = &proof_key[..32.min(proof_key.len())];
-                            let details = if self.lang == Lang::Ru {
-                                format!(
-                                    "Доказательство подписано другой серверной идентичностью \
-                                     (доверенный: {pinned_fp}…, в доказательстве: {proof_fp}…)"
-                                )
-                            } else {
-                                format!(
-                                    "Proof signed by a different server identity \
-                                     (trusted: {pinned_fp}…, in proof: {proof_fp}…)"
-                                )
-                            };
                             self.set_verify_outcome(
                                 VerifyStatus::Invalid,
-                                VerifyDetailsState::Warning(details),
+                                VerifyDetailsState::UntrustedSignerIdentity {
+                                    pinned_key: pinned_key.clone(),
+                                    proof_key: proof_key.clone(),
+                                },
                             );
                             self.status = if self.lang == Lang::Ru {
-                                format!(
-                                    "❌ Проверка не пройдена.\n\
-                                     Причина:\n\
-                                     Доказательство подписано другой серверной идентичностью.\n\
-                                     Доверенный ключ сервера:\n\
-                                     {pinned_key}\n\
-                                     Ключ подписи в доказательстве:\n\
-                                     {proof_key}\n\
-                                     Это доказательство нельзя проверить против текущей \
-                                     доверенной идентичности сервера.\n\
-                                     Возможные причины:\n\
-                                     - доказательство создано на другом сервере/окружении\n\
-                                     - ключ подписи сервера был заменён\n\
-                                     - файл доверенной идентичности относится к другому серверу"
-                                )
+                                "⚠️ Ключ сервера изменился. Обычно это происходит после \
+                                 планового обновления сервиса."
+                                    .to_string()
                             } else {
-                                format!(
-                                    "❌ Verification failed.\n\
-                                     Reason:\n\
-                                     The proof was signed by a different server identity.\n\
-                                     Trusted server key:\n\
-                                     {pinned_key}\n\
-                                     Signing key in the proof:\n\
-                                     {proof_key}\n\
-                                     This proof cannot be verified against the current trusted \
-                                     server identity.\n\
-                                     Possible causes:\n\
-                                     - the proof was created on another server/environment\n\
-                                     - the server signing key was replaced\n\
-                                     - the trusted identity file belongs to another server"
-                                )
+                                "⚠️ Server key has changed. This usually happens after a \
+                                 planned service update."
+                                    .to_string()
                             };
                         }
                         SignatureCheckResult::SignatureInvalid { server_identity } => {
@@ -3216,6 +3258,94 @@ impl eframe::App for App {
                 ui.add_space(12.0);
                 ui.label(&self.verification_report);
                 ui.add_space(12.0);
+
+                if let VerifyDetailsState::UntrustedSignerIdentity {
+                    pinned_key,
+                    proof_key,
+                } = self.verify_details.clone()
+                {
+                    egui::Frame::group(ui.style())
+                        .fill(egui::Color32::from_rgb(255, 251, 235))
+                        .stroke(egui::Stroke::new(1.0, COLOR_PARTIAL))
+                        .inner_margin(egui::Margin::same(12))
+                        .show(ui, |ui| {
+                            ui.set_max_width(ui.available_width());
+                            ui.label(
+                                egui::RichText::new(self.tr(
+                                    "⚠️ Ключ сервера изменился",
+                                    "⚠️ Server key has changed",
+                                ))
+                                .size(15.0)
+                                .strong()
+                                .color(COLOR_PARTIAL),
+                            );
+                            ui.add_space(6.0);
+                            ui.label(self.tr(
+                                "Сервер Evident Ledger, к которому подключён этот компьютер, \
+                                 использует другой ключ безопасности, чем раньше.\n\
+                                 Обычно это происходит после планового обновления сервиса.\n\n\
+                                 Если вы не уверены, что изменение ожидаемое — \
+                                 не обновляйте ключ и проверьте источник сервера.",
+                                "The Evident Ledger server this computer is connected to \
+                                 is using a different security key than before.\n\
+                                 This usually happens after a planned service update.\n\n\
+                                 If you are not sure the change is expected — \
+                                 do not update the key and verify the server source.",
+                            ));
+                            ui.add_space(10.0);
+                            if ui
+                                .add_sized(
+                                    [260.0, 32.0],
+                                    egui::Button::new(self.tr(
+                                        "Обновить доверенный ключ",
+                                        "Update trusted key",
+                                    )),
+                                )
+                                .clicked()
+                            {
+                                self.refresh_trusted_server_key(ui.ctx());
+                            }
+                            ui.add_space(8.0);
+                            egui::CollapsingHeader::new(self.tr(
+                                "Технические детали",
+                                "Technical details",
+                            ))
+                            .default_open(false)
+                            .id_salt("untrusted_identity_tech")
+                            .show(ui, |ui| {
+                                ui.set_max_width(ui.available_width());
+                                ui.label(self.tr(
+                                    "Доверенный ключ сервера:",
+                                    "Trusted server key:",
+                                ));
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&pinned_key).monospace().small(),
+                                    )
+                                    .wrap(),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(self.tr(
+                                    "Ключ подписи в доказательстве:",
+                                    "Signing key in the proof:",
+                                ));
+                                ui.add(
+                                    egui::Label::new(
+                                        egui::RichText::new(&proof_key).monospace().small(),
+                                    )
+                                    .wrap(),
+                                );
+                                ui.add_space(6.0);
+                                ui.label(self.tr(
+                                    "Проверка выполняется только против доверенной серверной \
+                                     identity.",
+                                    "Verification is performed only against the trusted server \
+                                     identity.",
+                                ));
+                            });
+                        });
+                    ui.add_space(12.0);
+                }
 
                 ui.label(self.tr("Цепочка событий:", "Event chain:"));
                 ui.add_space(8.0);
