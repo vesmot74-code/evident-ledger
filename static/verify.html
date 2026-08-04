@@ -167,16 +167,22 @@ footer a { color: var(--accent); text-decoration: none; }
         hashP: 'Хэш вычисляется локально (sha256sum / evident hash), сам файл никогда не отправляется на сервер.',
         verifyBtn: 'Проверить',
         resultH2: 'Результат проверки',
-        hashResultH2: 'Результат проверки хэша',
+        hashResultH2: 'Результат публичной проверки',
         dtStatus: 'Статус',
         dtEvents: 'Событий в цепочке',
+        dtIntegrity: 'Целостность',
+        dtTimestamp: 'Метка времени',
+        dtPublicProofId: 'Public proof ID',
         downloadPdf: '📄 Скачать PDF',
         backHome: '← На главную',
         statusValid: '✅ ВАЛИДНО',
         statusInvalid: '❌ НЕВАЛИДНО',
         reqError: '⚠️ Ошибка запроса: ',
-        hashFound: (n) => `✅ Найдено (${n} совпадение(-й))`,
-        hashNotFound: '❌ Не найдено',
+        evidenceFound: 'Evidence found',
+        statusRegistered: 'REGISTERED',
+        noEvidenceFound: 'No evidence found.',
+        noEvidenceDetail: 'This file hash is not registered in Evident Ledger.',
+        serviceUnavailable: 'Verification service unavailable.\nPlease try again later.',
         hashLabel: 'Хэш',
         chainIdLabel: 'Chain ID',
         sequenceLabel: 'Sequence',
@@ -195,16 +201,22 @@ footer a { color: var(--accent); text-decoration: none; }
         hashP: 'The hash is computed locally (sha256sum / evident hash) — the file itself is never sent to the server.',
         verifyBtn: 'Verify',
         resultH2: 'Verification Result',
-        hashResultH2: 'Hash Verification Result',
+        hashResultH2: 'Public Verification Result',
         dtStatus: 'Status',
         dtEvents: 'Events in chain',
+        dtIntegrity: 'Integrity',
+        dtTimestamp: 'Timestamp',
+        dtPublicProofId: 'Public proof ID',
         downloadPdf: '📄 Download PDF',
         backHome: '← Back home',
         statusValid: '✅ VALID',
         statusInvalid: '❌ INVALID',
         reqError: '⚠️ Request error: ',
-        hashFound: (n) => `✅ Found (${n} match${n === 1 ? '' : 'es'})`,
-        hashNotFound: '❌ Not found',
+        evidenceFound: 'Evidence found',
+        statusRegistered: 'REGISTERED',
+        noEvidenceFound: 'No evidence found.',
+        noEvidenceDetail: 'This file hash is not registered in Evident Ledger.',
+        serviceUnavailable: 'Verification service unavailable.\nPlease try again later.',
         hashLabel: 'Hash',
         chainIdLabel: 'Chain ID',
         sequenceLabel: 'Sequence',
@@ -292,45 +304,88 @@ footer a { color: var(--accent); text-decoration: none; }
       const dl = document.getElementById('hashResultDl');
       const pdfActions = document.getElementById('hashPdfActions');
       if (!hash) { return; }
+
+      // Public verify confirms existence of registered evidence only —
+      // not authorship, ownership, or document meaning.
+      pdfActions.style.display = 'none';
+
       try {
-        const resp = await fetch('/verify/hash', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ hash: hash })
-        });
-        const data = await resp.json();
+        const resp = await fetch(
+          `/public/verify?file_hash=${encodeURIComponent(hash)}`
+        );
+
+        let data = null;
+        try {
+          data = await resp.json();
+        } catch (_) {
+          data = null;
+        }
+
         resultSection.style.display = 'block';
 
         if (!resp.ok) {
-          dl.innerHTML = `<dt>${dict.dtStatus}</dt><dd class="status-invalid">⚠️ ${data.error || dict.reqError}</dd>`;
-          pdfActions.style.display = 'none';
+          dl.innerHTML =
+            `<dt>${dict.dtStatus}</dt>` +
+            `<dd class="status-invalid">${escapeHtml(dict.serviceUnavailable)}</dd>`;
           return;
         }
 
-        if (!data.found) {
-          dl.innerHTML = `<dt>${dict.dtStatus}</dt><dd class="status-invalid">${dict.hashNotFound}</dd>
-            <dt>${dict.hashLabel}</dt><dd class="mono">${hash}</dd>`;
-          pdfActions.style.display = 'none';
+        if (!data || data.exists !== true) {
+          dl.innerHTML =
+            `<dt>${dict.dtStatus}</dt>` +
+            `<dd class="status-invalid">${escapeHtml(dict.noEvidenceFound)}</dd>` +
+            `<dt></dt><dd>${escapeHtml(dict.noEvidenceDetail)}</dd>` +
+            `<dt>${dict.hashLabel}</dt><dd class="mono">${escapeHtml(hash)}</dd>`;
           return;
         }
 
-        let rows = `<dt>${dict.dtStatus}</dt><dd class="status-valid">${dict.hashFound(data.matches.length)}</dd>
-          <dt>${dict.hashLabel}</dt><dd class="mono">${hash}</dd>`;
-        data.matches.forEach((m, i) => {
-          rows += `<dt>${dict.chainIdLabel} #${i + 1}</dt><dd class="mono">${m.chain_id}</dd>
-            <dt>${dict.sequenceLabel} #${i + 1}</dt><dd>${m.sequence}</dd>
-            <dt>${dict.committedLabel} #${i + 1}</dt><dd>${m.created_at}</dd>`;
-        });
-        dl.innerHTML = rows;
+        const integrity = data.integrity || '—';
+        const integrityClass =
+          String(integrity).toUpperCase() === 'VALID' ? 'status-valid' : 'status-invalid';
+        const timestamp = formatPublicTimestamp(data.timestamp);
+        const proofId = data.public_proof_id || '—';
 
-        document.getElementById('hashPdfLink').href = `/verify/hash/${hash}/attestation.pdf`;
-        pdfActions.style.display = 'flex';
-      } catch (e) {
+        dl.innerHTML =
+          `<dt>${dict.dtStatus}</dt>` +
+          `<dd class="status-valid">${escapeHtml(dict.evidenceFound)} — ${escapeHtml(dict.statusRegistered)}</dd>` +
+          `<dt>${dict.dtIntegrity}</dt>` +
+          `<dd class="${integrityClass}">${escapeHtml(integrity)}</dd>` +
+          `<dt>${dict.dtTimestamp}</dt>` +
+          `<dd>${escapeHtml(timestamp)}</dd>` +
+          `<dt>${dict.dtPublicProofId}</dt>` +
+          `<dd class="mono">${escapeHtml(proofId)}</dd>` +
+          `<dt>${dict.hashLabel}</dt>` +
+          `<dd class="mono">${escapeHtml(hash)}</dd>`;
+      } catch (_) {
         resultSection.style.display = 'block';
-        dl.innerHTML = `<dt>${dict.dtStatus}</dt><dd class="status-invalid">${dict.reqError}${e}</dd>`;
+        dl.innerHTML =
+          `<dt>${dict.dtStatus}</dt>` +
+          `<dd class="status-invalid">${escapeHtml(dict.serviceUnavailable)}</dd>`;
         pdfActions.style.display = 'none';
       }
     }
+
+    function formatPublicTimestamp(raw) {
+      if (!raw) return '—';
+      const d = new Date(raw);
+      if (Number.isNaN(d.getTime())) return String(raw);
+      const yyyy = d.getUTCFullYear();
+      const mm = String(d.getUTCMonth() + 1).padStart(2, '0');
+      const dd = String(d.getUTCDate()).padStart(2, '0');
+      const hh = String(d.getUTCHours()).padStart(2, '0');
+      const mi = String(d.getUTCMinutes()).padStart(2, '0');
+      return `${yyyy}-${mm}-${dd} ${hh}:${mi} UTC`;
+    }
+
+    function escapeHtml(value) {
+      return String(value)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/\n/g, '<br>');
+    }
+
     document.getElementById('verifyHashBtn').addEventListener('click', verifyHash);
     document.getElementById('hashInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') verifyHash(); });
   </script>
