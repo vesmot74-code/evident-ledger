@@ -235,10 +235,38 @@ pub fn derive_lifecycle(
     }
 }
 
+/// Advancement rank for the Stage 1 lifecycle ladder (excludes reserved Revoked).
+fn lifecycle_rank(status: LifecycleStatus) -> u8 {
+    match status {
+        LifecycleStatus::Created => 0,
+        LifecycleStatus::Registered => 1,
+        LifecycleStatus::TsaConfirmed => 2,
+        LifecycleStatus::Certified => 3,
+        // Reserved terminal state: never auto-advanced by refresh; never downgraded.
+        LifecycleStatus::Revoked => 255,
+    }
+}
+
+/// Prefer the further-along status. Never moves backward on the CREATED→…→CERTIFIED
+/// ladder. `REVOKED` is sticky (reserved; not produced by [`derive_lifecycle`]).
+pub fn advance_lifecycle(current: LifecycleStatus, derived: LifecycleStatus) -> LifecycleStatus {
+    if current == LifecycleStatus::Revoked {
+        return LifecycleStatus::Revoked;
+    }
+    if lifecycle_rank(derived) >= lifecycle_rank(current) {
+        derived
+    } else {
+        current
+    }
+}
+
+/// Recompute TSA/lifecycle from proof + integrity, without downgrading an already
+/// advanced lifecycle (Stage 2.4 monotonicity).
 pub fn refresh_lifecycle(record: &mut EvidenceRecord, proof: &ProofFile) {
     let integrity = verify_evidence_integrity(record, proof);
     record.tsa_status = classify_tsa_status(proof.tsa.as_ref());
-    record.lifecycle_status = derive_lifecycle(&integrity, record.tsa_status);
+    let derived = derive_lifecycle(&integrity, record.tsa_status);
+    record.lifecycle_status = advance_lifecycle(record.lifecycle_status, derived);
 }
 
 /// Independent verification for an Evidence Record against a `proof_v1` artifact.
@@ -459,5 +487,82 @@ mod tests {
         let mut refreshed = record.clone();
         refresh_lifecycle(&mut refreshed, &proof);
         assert_eq!(refreshed.lifecycle_status, LifecycleStatus::Certified);
+    }
+
+    #[test]
+    fn test_certified_lifecycle_never_downgrades() {
+        let dir = tempdir().unwrap();
+        let key_path = dir.path().join("signing.key");
+        let signer = ServerSigner::load_or_create(key_path.to_str().unwrap()).unwrap();
+
+        let chain_id = Uuid::new_v4();
+        let event_id = Uuid::new_v4();
+        let file_hash = "c".repeat(64);
+        let leaf = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
+        let root = MerkleTree::build_merkle_root(&[leaf]);
+        let chain_head = event_id.to_string();
+        let signature = signer.sign_root(&chain_id.to_string(), &root, &chain_head);
+
+        let mut proof = ProofFile {
+            leaf_version: "leaf_v1".into(),
+            chain_id: chain_id.to_string(),
+            head_event_id: chain_head.clone(),
+            proof: ProofPayload {
+                root: root.clone(),
+                chain_head,
+                signature,
+                public_key: signer.public_key_hex(),
+                leaves_count: 1,
+                version: Some("proof_v1".into()),
+                proof_type: Some("merkle-root-v1".into()),
+            },
+            events: vec![EventLeaf {
+                sequence: 1,
+                event_id: event_id.to_string(),
+                parent_event_id: Uuid::nil().to_string(),
+                file_hash: file_hash.clone(),
+            }],
+            tsa: Some(TsaData {
+                timestamp: Some(1_700_000_000),
+                serial: Some("1".into()),
+                token_bytes: Some(128),
+            }),
+        };
+
+        let mut record = build_registered_record(
+            event_id,
+            chain_id,
+            &file_hash,
+            Some(1),
+            &EvidenceFileMeta::default(),
+            proof.tsa.as_ref(),
+            None,
+            Utc::now(),
+        );
+        record.lifecycle_status = LifecycleStatus::Certified;
+
+        // Happy path: still Certified.
+        refresh_lifecycle(&mut record, &proof);
+        assert_eq!(record.lifecycle_status, LifecycleStatus::Certified);
+
+        // Would-be downgrade path (tampered signature → derive would say Registered):
+        // monotonic refresh must keep CERTIFIED.
+        let mut chars: Vec<char> = proof.proof.signature.chars().collect();
+        chars[0] = if chars[0] == '0' { '1' } else { '0' };
+        proof.proof.signature = chars.into_iter().collect();
+        refresh_lifecycle(&mut record, &proof);
+        assert_eq!(
+            record.lifecycle_status,
+            LifecycleStatus::Certified,
+            "CERTIFIED must not regress when integrity later fails"
+        );
+        assert_eq!(
+            advance_lifecycle(LifecycleStatus::Certified, LifecycleStatus::Registered),
+            LifecycleStatus::Certified
+        );
+        assert_eq!(
+            advance_lifecycle(LifecycleStatus::Certified, LifecycleStatus::TsaConfirmed),
+            LifecycleStatus::Certified
+        );
     }
 }

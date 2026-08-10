@@ -219,6 +219,7 @@ pub fn verify_event_evidence(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::evidence_record::LifecycleStatus;
     use std::path::PathBuf;
     use tempfile::tempdir;
 
@@ -336,5 +337,44 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn test_verify_certified_is_idempotent() {
+        let (tmp, event_id, chain_id) = stage_dirs();
+        let evidence_dir = tmp.path().join("evidence");
+        let proofs_root = tmp.path().join("proofs");
+
+        let first = verify_event_evidence(&evidence_dir, &proofs_root, event_id, chain_id)
+            .expect("first verify");
+        assert!(first.integrity.is_valid());
+        assert_eq!(first.lifecycle, LifecycleStatus::Certified);
+
+        let before = crate::evidence_record::read_evidence_record(
+            &evidence_dir,
+            &evidence_id_for_event(event_id),
+        )
+        .unwrap();
+        assert_eq!(before.lifecycle_status, LifecycleStatus::Certified);
+        let before_json = serde_json::to_value(&before).unwrap();
+
+        let second = verify_event_evidence(&evidence_dir, &proofs_root, event_id, chain_id)
+            .expect("second verify");
+        assert!(second.integrity.is_valid());
+        assert_eq!(second.lifecycle, LifecycleStatus::Certified);
+        assert_eq!(second.lifecycle, first.lifecycle);
+
+        let after = crate::evidence_record::read_evidence_record(
+            &evidence_dir,
+            &evidence_id_for_event(event_id),
+        )
+        .unwrap();
+        assert_eq!(after.lifecycle_status, before.lifecycle_status);
+        assert_eq!(after.lifecycle_status, LifecycleStatus::Certified);
+        let after_json = serde_json::to_value(&after).unwrap();
+        assert_eq!(
+            before_json, after_json,
+            "idempotent verify must not alter EvidenceRecord fields"
+        );
     }
 }
