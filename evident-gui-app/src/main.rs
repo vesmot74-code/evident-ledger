@@ -219,6 +219,7 @@ struct App {
     proof_path: String,
     verify_status: VerifyStatus,
     verify_details: VerifyDetailsState,
+    certificate_status: CertificateStatus,
     commit_error: Option<String>,
     status_localized: Option<UiText>,
 
@@ -302,6 +303,7 @@ impl Default for App {
             proof_path: Default::default(),
             verify_status: Default::default(),
             verify_details: VerifyDetailsState::Empty,
+            certificate_status: CertificateStatus::None,
             commit_error: None,
             status_localized: None,
             verification_events: Default::default(),
@@ -375,6 +377,16 @@ enum VerifyStatus {
     Valid,
     Invalid,
     Partial,
+}
+
+/// Result of File Certificate PDF export (Stage 2.5) — separate from verify outcome.
+#[derive(Debug, Clone, PartialEq, Default)]
+enum CertificateStatus {
+    #[default]
+    None,
+    Generating,
+    Generated(PathBuf),
+    Failed(String),
 }
 
 #[derive(PartialEq, Default)]
@@ -733,6 +745,138 @@ impl App {
             }
         }
         best
+    }
+
+    /// Documents/Evident Certificates (or `$HOME/Documents/...` fallback).
+    fn certificates_output_dir() -> Result<PathBuf, String> {
+        if let Some(docs) = dirs::document_dir() {
+            return Ok(docs.join("Evident Certificates"));
+        }
+        let home = std::env::var("HOME").map_err(|_| {
+            "Cannot resolve Documents folder (dirs::document_dir and HOME unavailable)".to_string()
+        })?;
+        Ok(PathBuf::from(home)
+            .join("Documents")
+            .join("Evident Certificates"))
+    }
+
+    /// `certificate_{id}.pdf`, then `_1`, `_2`, … — never overwrite.
+    fn unique_certificate_pdf_path(dir: &Path, certificate_id: &str) -> PathBuf {
+        let primary = dir.join(format!("certificate_{certificate_id}.pdf"));
+        if !primary.exists() {
+            return primary;
+        }
+        for n in 1u32.. {
+            let candidate = dir.join(format!("certificate_{certificate_id}_{n}.pdf"));
+            if !candidate.exists() {
+                return candidate;
+            }
+        }
+        primary
+    }
+
+    fn resolve_certificate_event_id(&self) -> Option<String> {
+        if !self.event_id.is_empty() {
+            return Some(self.event_id.clone());
+        }
+        self.last_proof
+            .as_ref()
+            .map(|p| p.head_event_id.clone())
+            .filter(|s| !s.is_empty())
+    }
+
+    /// Stage 2.5: EvidenceRecord + ProofFile → `generate_file_certificate` → disk.
+    fn export_file_certificate_pdf(
+        evidence_dir: &Path,
+        event_id_str: &str,
+        proof: &client::ProofFile,
+    ) -> Result<PathBuf, String> {
+        let out_dir = Self::certificates_output_dir()?;
+        Self::export_file_certificate_pdf_to(evidence_dir, event_id_str, proof, &out_dir)
+    }
+
+    fn export_file_certificate_pdf_to(
+        evidence_dir: &Path,
+        event_id_str: &str,
+        proof: &client::ProofFile,
+        out_dir: &Path,
+    ) -> Result<PathBuf, String> {
+        let event_uuid = Uuid::parse_str(event_id_str)
+            .map_err(|_| format!("Invalid event id for certificate: {event_id_str}"))?;
+        let evidence_id =
+            evident_ledger::evidence_record::evidence_id_for_event(event_uuid);
+        let record = evident_ledger::evidence_record::read_evidence_record(
+            evidence_dir,
+            &evidence_id,
+        )
+        .map_err(|e| format!("Evidence record not found:\n{e}"))?;
+
+        if proof.chain_id != record.chain_id {
+            return Err(format!(
+                "Proof file does not match EvidenceRecord chain_id\n\
+                 evidence: {}\nproof: {}",
+                record.chain_id, proof.chain_id
+            ));
+        }
+        let leaf_ok = proof.events.iter().any(|e| {
+            e.event_id == record.event_id
+                && e.file_hash.eq_ignore_ascii_case(&record.sha256)
+        });
+        if !leaf_ok {
+            return Err(
+                "Proof file does not contain this EvidenceRecord event/hash".into(),
+            );
+        }
+
+        let bytes = evident_ledger::file_certificate_pdf::generate_file_certificate(
+            &record, proof,
+        )
+        .map_err(|e| format!("Certificate generation failed:\n{e}"))?;
+
+        fs::create_dir_all(out_dir)
+            .map_err(|e| format!("Certificate save failed:\n{e}"))?;
+        let path = Self::unique_certificate_pdf_path(out_dir, &record.certificate_id);
+        fs::write(&path, &bytes).map_err(|e| format!("Certificate save failed:\n{e}"))?;
+        Ok(path)
+    }
+
+    fn generate_certificate_from_project_proofs(
+        &mut self,
+        projects_dir: &Path,
+        project_name: &str,
+    ) {
+        self.certificate_status = CertificateStatus::Generating;
+        let Some(event_id) = self.resolve_certificate_event_id() else {
+            self.certificate_status = CertificateStatus::Failed(
+                "No event id available — commit or verify a project first".into(),
+            );
+            return;
+        };
+        let proofs_dir = projects_dir.join(project_name).join("proofs");
+        let Some(proof) = Self::load_local_proof(&proofs_dir) else {
+            self.certificate_status =
+                CertificateStatus::Failed("Proof file not found".into());
+            return;
+        };
+        let evidence_dir = evident_ledger::evidence_record::default_evidence_dir();
+        match Self::export_file_certificate_pdf(&evidence_dir, &event_id, &proof) {
+            Ok(path) => {
+                let _ = Command::new("open").arg(&path).spawn();
+                self.certificate_status = CertificateStatus::Generated(path.clone());
+                self.status = format!(
+                    "{}: {}",
+                    self.tr(
+                        "✅ Сертификат сохранён",
+                        "✅ Certificate saved"
+                    ),
+                    path.display()
+                );
+            }
+            Err(e) => {
+                self.certificate_status = CertificateStatus::Failed(e.clone());
+                self.status = format!("❌ {e}");
+            }
+        }
     }
 
     /// Builds the event list purely from local data — no server needed.
@@ -3620,13 +3764,45 @@ let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStat
                                         "❌ Нет данных для заключения — сначала выполните проверку",
                                         "❌ No data for a report — run verification first",
                                     )
-                              .to_string();
+                                    .to_string();
                             }
-                         }
-                     }
-                 });
+                        }
+                    }
 
-                 ui.allocate_ui(egui::vec2(600.0, 0.0), |ui| {
+                    if ui
+                        .add_sized(
+                            [260.0, 32.0],
+                            egui::Button::new(self.tr(
+                                "📜 Generate Certificate PDF",
+                                "📜 Generate Certificate PDF",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        self.generate_certificate_from_project_proofs(
+                            &projects_dir,
+                            &self.verification_project.clone(),
+                        );
+                    }
+                });
+
+                match &self.certificate_status {
+                    CertificateStatus::None | CertificateStatus::Generating => {}
+                    CertificateStatus::Generated(path) => {
+                        ui.add_space(6.0);
+                        ui.label(format!(
+                            "{}: {}",
+                            self.tr("Сертификат", "Certificate"),
+                            path.display()
+                        ));
+                    }
+                    CertificateStatus::Failed(err) => {
+                        ui.add_space(6.0);
+                        ui.colored_label(COLOR_INVALID, err);
+                    }
+                }
+
+                ui.allocate_ui(egui::vec2(600.0, 0.0), |ui| {
                     ui.label(self.tr(
                         "Система не хранит файлы. Если включено, файлы будут добавлены в архив \
                          с вашего устройства только в момент экспорта.",
@@ -4084,6 +4260,32 @@ ui.add_space(12.0);
                         }
                     }
                     if ui
+                        .button(self.tr(
+                            "📜 Generate Certificate PDF",
+                            "📜 Generate Certificate PDF",
+                        ))
+                        .clicked()
+                    {
+                        let projects_dir = match self.projects_dir() {
+                            Ok(dir) => dir,
+                            Err(err) => {
+                                self.certificate_status =
+                                    CertificateStatus::Failed(err.clone());
+                                self.status = format!("⚠️ {err}");
+                                return;
+                            }
+                        };
+                        let project_name = if self.project_mode == ProjectMode::New {
+                            self.project_name.clone()
+                        } else {
+                            self.selected_project.clone()
+                        };
+                        self.generate_certificate_from_project_proofs(
+                            &projects_dir,
+                            &project_name,
+                        );
+                    }
+                    if ui
                         .button(self.tr("📋 Вся цепочка аудита", "📋 Full Audit Chain"))
                         .clicked()
                     {
@@ -4250,6 +4452,22 @@ ui.add_space(12.0);
                     }
                 }
 
+                match &self.certificate_status {
+                    CertificateStatus::None | CertificateStatus::Generating => {}
+                    CertificateStatus::Generated(path) => {
+                        ui.add_space(6.0);
+                        ui.label(format!(
+                            "{}: {}",
+                            self.tr("Сертификат", "Certificate"),
+                            path.display()
+                        ));
+                    }
+                    CertificateStatus::Failed(err) => {
+                        ui.add_space(6.0);
+                        ui.colored_label(COLOR_INVALID, err);
+                    }
+                }
+
                 ui.add_space(12.0);
                 if ui
                     .button(self.tr("📁 К выбору файла", "📁 Back to File Selection"))
@@ -4329,4 +4547,213 @@ fn main() -> Result<(), eframe::Error> {
         ..Default::default()
     };
     eframe::run_native("Evident Ledger", options, Box::new(|_cc| Ok(Box::new(app))))
+}
+
+#[cfg(test)]
+mod stage25_certificate_export_tests {
+    use super::*;
+    use evident_ledger::client::{EventLeaf, ProofFile, ProofPayload, TsaData};
+    use evident_ledger::evidence_record::{
+        build_registered_record, write_evidence_record, EvidenceFileMeta,
+    };
+    use evident_ledger::file_certificate_pdf::generate_file_certificate;
+    use evident_ledger::merkle::MerkleTree;
+    use evident_ledger::signing::ServerSigner;
+
+    fn temp_subdir(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "evident-stage25-{}-{}",
+            label,
+            Uuid::new_v4()
+        ));
+        fs::create_dir_all(&dir).expect("temp dir");
+        dir
+    }
+
+    fn signed_fixture() -> (evident_ledger::evidence_record::EvidenceRecord, ProofFile) {
+        let key_dir = temp_subdir("key");
+        let key_path = key_dir.join("signing.key");
+        let signer = ServerSigner::load_or_create(key_path.to_str().unwrap()).unwrap();
+
+        let chain_id = Uuid::parse_str("c0bafd33-6807-4fb7-b480-c454ecabdd5d").unwrap();
+        let event_id = Uuid::parse_str("22d29a6a-4cb4-469f-bbce-1d07e49694ce").unwrap();
+        let file_hash =
+            "d058b1ba7f8199b4b82f4c0861572d081004de5bd375e077c4eeb5641b725da0".to_string();
+        let leaf = MerkleTree::build_leaf(1, &event_id, &Uuid::nil(), &file_hash);
+        let root = MerkleTree::build_merkle_root(&[leaf]);
+        let chain_head = event_id.to_string();
+        let signature = signer.sign_root(&chain_id.to_string(), &root, &chain_head);
+
+        let proof = ProofFile {
+            leaf_version: "leaf_v1".into(),
+            chain_id: chain_id.to_string(),
+            head_event_id: chain_head.clone(),
+            proof: ProofPayload {
+                root: root.clone(),
+                chain_head,
+                signature,
+                public_key: signer.public_key_hex(),
+                leaves_count: 1,
+                version: Some("proof_v1".into()),
+                proof_type: Some("merkle-root-v1".into()),
+            },
+            events: vec![EventLeaf {
+                sequence: 1,
+                event_id: event_id.to_string(),
+                parent_event_id: Uuid::nil().to_string(),
+                file_hash: file_hash.clone(),
+            }],
+            tsa: Some(TsaData {
+                timestamp: Some(1_786_372_690),
+                serial: Some("tsr-1786372690".into()),
+                token_bytes: Some(4642),
+            }),
+        };
+
+        let record = build_registered_record(
+            event_id,
+            chain_id,
+            &file_hash,
+            Some(245_810),
+            &EvidenceFileMeta {
+                filename: Some("contract.pdf".into()),
+                mime_type: Some("application/pdf".into()),
+                local_file_available: true,
+                project_id: Some("e2e".into()),
+            },
+            proof.tsa.as_ref(),
+            None,
+            Utc::now(),
+        );
+
+        (record, proof)
+    }
+
+    #[test]
+    fn pdf_export_success_writes_nonempty_file() {
+        let (record, proof) = signed_fixture();
+        let evidence_dir = temp_subdir("evidence");
+        write_evidence_record(&evidence_dir, &record).expect("write evidence");
+        let out_dir = temp_subdir("certs");
+
+        let path = App::export_file_certificate_pdf_to(
+            &evidence_dir,
+            &record.event_id,
+            &proof,
+            &out_dir,
+        )
+        .expect("export");
+
+        assert!(path.exists());
+        let meta = fs::metadata(&path).expect("meta");
+        assert!(meta.len() > 0);
+        assert!(path
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with(&format!("certificate_{}", record.certificate_id)));
+    }
+
+    fn pdf_text(bytes: &[u8]) -> String {
+        let dir = temp_subdir("pdftext");
+        let path = dir.join("cert.pdf");
+        fs::write(&path, bytes).unwrap();
+        if let Ok(out) = Command::new("pdftotext").arg(&path).arg("-").output() {
+            if out.status.success() {
+                return String::from_utf8_lossy(&out.stdout).into_owned();
+            }
+        }
+        String::from_utf8_lossy(bytes).into_owned()
+    }
+
+    #[test]
+    fn exported_pdf_contains_qr_block() {
+        let (record, proof) = signed_fixture();
+        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        assert!(!bytes.is_empty());
+        assert!(bytes.starts_with(b"%PDF"));
+        let text = pdf_text(&bytes);
+        assert!(
+            text.contains("Certificate QR (offline payload)"),
+            "expected Stage 2.2 QR block label; got excerpt: {}",
+            &text.chars().take(400).collect::<String>()
+        );
+        assert!(text.contains("EVIDENT-CERT|certificate_id|registered_merkle_root"));
+        let as_raw = String::from_utf8_lossy(&bytes);
+        assert!(
+            as_raw.matches(" re\n").count() > 50
+                || as_raw.matches(" re\r").count() > 50
+                || as_raw.contains(" re"),
+            "expected QR module rectangles in PDF content stream"
+        );
+    }
+
+    #[test]
+    fn existing_file_collision_uses_suffix() {
+        let out_dir = temp_subdir("collision");
+        let first = out_dir.join("certificate_test.pdf");
+        fs::write(&first, b"original-bytes").expect("seed first file");
+        let first_meta = fs::metadata(&first).expect("first meta");
+
+        let next = App::unique_certificate_pdf_path(&out_dir, "test");
+        assert_eq!(
+            next.file_name().unwrap().to_string_lossy(),
+            "certificate_test_1.pdf"
+        );
+        assert!(!next.exists());
+
+        // First file must remain untouched after collision resolution.
+        assert_eq!(fs::read(&first).unwrap(), b"original-bytes");
+        assert_eq!(fs::metadata(&first).unwrap().len(), first_meta.len());
+        assert_eq!(
+            App::unique_certificate_pdf_path(&out_dir, "test"),
+            next,
+            "still free until written"
+        );
+
+        fs::write(&next, b"second").unwrap();
+        let third = App::unique_certificate_pdf_path(&out_dir, "test");
+        assert_eq!(
+            third.file_name().unwrap().to_string_lossy(),
+            "certificate_test_2.pdf"
+        );
+    }
+
+    #[test]
+    fn missing_evidence_record_fails_without_panic() {
+        let (_record, proof) = signed_fixture();
+        let evidence_dir = temp_subdir("empty-evidence");
+        let out_dir = temp_subdir("certs-missing-ev");
+        let event_id = "22d29a6a-4cb4-469f-bbce-1d07e49694ce";
+
+        let err = App::export_file_certificate_pdf_to(
+            &evidence_dir,
+            event_id,
+            &proof,
+            &out_dir,
+        )
+        .expect_err("must fail without evidence");
+        assert!(
+            err.contains("Evidence record not found"),
+            "got: {err}"
+        );
+    }
+
+    #[test]
+    fn missing_proof_file_sets_failed_status() {
+        let mut app = App::new();
+        app.event_id = "22d29a6a-4cb4-469f-bbce-1d07e49694ce".into();
+        let projects = temp_subdir("projects");
+        let project = "demo";
+        fs::create_dir_all(projects.join(project).join("proofs")).unwrap();
+
+        app.generate_certificate_from_project_proofs(&projects, project);
+
+        match &app.certificate_status {
+            CertificateStatus::Failed(msg) => {
+                assert_eq!(msg, "Proof file not found");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
 }
