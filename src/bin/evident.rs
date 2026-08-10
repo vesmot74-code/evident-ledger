@@ -31,6 +31,10 @@ enum CliError {
     Http(reqwest::Error),
     Server(String),
     Usage(String),
+    /// Missing / corrupt local artifacts (exit 1).
+    NotFound(String),
+    /// Cryptographic / integrity verification failed (exit 2).
+    IntegrityFailed(String),
 }
 
 impl From<std::io::Error> for CliError {
@@ -75,11 +79,22 @@ impl fmt::Display for CliError {
             }
             CliError::Server(m) => write!(f, "Error: {m}"),
             CliError::Usage(m) => write!(f, "{m}"),
+            CliError::NotFound(m) => write!(f, "{m}"),
+            CliError::IntegrityFailed(m) => write!(f, "{m}"),
         }
     }
 }
 
 impl std::error::Error for CliError {}
+
+impl CliError {
+    fn exit_code(&self) -> i32 {
+        match self {
+            CliError::IntegrityFailed(_) => 2,
+            _ => 1,
+        }
+    }
+}
 
 fn evident_dir() -> PathBuf {
     let home = env::var("HOME").unwrap_or_else(|_| ".".into());
@@ -212,7 +227,7 @@ struct EventLeaf {
 fn main() {
     if let Err(e) = run() {
         eprintln!("{e}");
-        process::exit(1);
+        process::exit(e.exit_code());
     }
 }
 
@@ -231,6 +246,8 @@ Commands:
                        Commit a file hash into a chain (requires API key)
   verify <proof.json>  Verify a local proof artifact offline
   verify --chain <id>  Verify using the latest local proof for a chain
+  verify --event <id> --chain <id>
+                       Verify Evidence Record + ProofFile (local)
   status <chain_id>    Query chain verification status from the server
   account [info]       Show account plan / capabilities (requires API key)
   key status|info      Show API key status / local key configuration
@@ -272,12 +289,16 @@ fn print_verify_help() {
 Usage:
   evident verify <proof.json>
   evident verify --chain <chain_id>
+  evident verify --event <event_id> --chain <chain_id>
 
-Verify a proof artifact offline (signature + Merkle structure).
+Verify a proof artifact offline (signature + Merkle structure), or verify a
+local Evidence Record against its ProofFile (--event + --chain).
 
 Examples:
   evident verify ~/.evident/proofs/<chain_id>/<event_id>.json
   evident verify --chain 11111111-1111-1111-1111-111111111111
+  evident verify --event 22d29a6a-4cb4-469f-bbce-1d07e49694ce \\
+                 --chain c0bafd33-6807-4fb7-b480-c454ecabdd5d
 "
     );
 }
@@ -395,31 +416,90 @@ fn run() -> Result<(), CliError> {
             cmd_commit(&path, &chain_id)
         }
         Some("verify") => {
-            let first = args.next().ok_or_else(|| {
-                CliError::Usage(
-                    "Error: missing proof path or --chain.\n\
-                     Usage: evident verify <proof.json> | evident verify --chain <chain_id>"
+            let rest: Vec<String> = args.collect();
+            if rest.is_empty() {
+                return Err(CliError::Usage(
+                    "Error: missing proof path or flags.\n\
+                     Usage: evident verify <proof.json> | evident verify --chain <chain_id> | \
+                     evident verify --event <event_id> --chain <chain_id>"
                         .into(),
-                )
-            })?;
-            if is_help_flag(&first) {
+                ));
+            }
+            if rest.len() == 1 && is_help_flag(&rest[0]) {
                 print_verify_help();
                 return Ok(());
             }
-            if first == "--chain" {
-                let chain_id = args.next().ok_or_else(|| {
-                    CliError::Usage(
-                        "Error: missing chain id.\nUsage: evident verify --chain <chain_id>"
-                            .into(),
-                    )
-                })?;
-                Uuid::parse_str(&chain_id).map_err(|_| {
-                    CliError::Usage("Error: invalid chain id. Expected a UUID.".into())
-                })?;
-                let proof_path = find_latest_proof_artifact(&chain_id)?;
-                cmd_verify(&proof_path.to_string_lossy())
-            } else {
-                cmd_verify(&first)
+
+            let mut event_id: Option<String> = None;
+            let mut chain_id: Option<String> = None;
+            let mut positional: Option<String> = None;
+            let mut i = 0;
+            while i < rest.len() {
+                match rest[i].as_str() {
+                    "--event" => {
+                        let v = rest.get(i + 1).ok_or_else(|| {
+                            CliError::Usage(
+                                "Error: missing event id.\n\
+                                 Usage: evident verify --event <event_id> --chain <chain_id>"
+                                    .into(),
+                            )
+                        })?;
+                        event_id = Some(v.clone());
+                        i += 2;
+                    }
+                    "--chain" => {
+                        let v = rest.get(i + 1).ok_or_else(|| {
+                            CliError::Usage(
+                                "Error: missing chain id.\n\
+                                 Usage: evident verify --chain <chain_id> | \
+                                 evident verify --event <event_id> --chain <chain_id>"
+                                    .into(),
+                            )
+                        })?;
+                        chain_id = Some(v.clone());
+                        i += 2;
+                    }
+                    flag if flag.starts_with('-') => {
+                        return Err(CliError::Usage(format!(
+                            "Error: unknown verify flag '{flag}'.\nRun: evident verify --help"
+                        )));
+                    }
+                    other => {
+                        if positional.is_some() {
+                            return Err(CliError::Usage(
+                                "Error: unexpected extra argument.\nRun: evident verify --help"
+                                    .into(),
+                            ));
+                        }
+                        positional = Some(other.to_string());
+                        i += 1;
+                    }
+                }
+            }
+
+            match (event_id, chain_id, positional) {
+                (Some(event), Some(chain), None) => cmd_verify_event_evidence(&event, &chain),
+                (None, Some(chain), None) => {
+                    Uuid::parse_str(&chain).map_err(|_| {
+                        CliError::Usage("Error: invalid chain id. Expected a UUID.".into())
+                    })?;
+                    let proof_path = find_latest_proof_artifact(&chain)?;
+                    cmd_verify(&proof_path.to_string_lossy())
+                }
+                (None, None, Some(path)) => cmd_verify(&path),
+                (Some(_), None, _) => Err(CliError::Usage(
+                    "Error: --event requires --chain.\n\
+                     Usage: evident verify --event <event_id> --chain <chain_id>"
+                        .into(),
+                )),
+                (None, Some(_), Some(_)) | (Some(_), Some(_), Some(_)) => Err(CliError::Usage(
+                    "Error: do not combine a proof path with --event/--chain.\n\
+                     Run: evident verify --help"
+                        .into(),
+                )),
+                (None, None, None) => Err(CliError::Usage(
+                    "Error: missing proof path or flags.\nRun: evident verify --help".into(),
+                )),
             }
         }
         Some("account") => match args.next().as_deref() {
@@ -781,6 +861,39 @@ fn cmd_verify(proof_path: &str) -> Result<(), CliError> {
         )));
     }
     Ok(())
+}
+
+fn cmd_verify_event_evidence(event_id: &str, chain_id: &str) -> Result<(), CliError> {
+    let event_uuid = Uuid::parse_str(event_id).map_err(|_| {
+        CliError::Usage("Error: invalid event id. Expected a UUID.".into())
+    })?;
+    let chain_uuid = Uuid::parse_str(chain_id).map_err(|_| {
+        CliError::Usage("Error: invalid chain id. Expected a UUID.".into())
+    })?;
+
+    let evidence_dir = evident_dir().join("evidence");
+    let proofs_root = evident_dir().join("proofs");
+
+    match evident_ledger::event_evidence_verify::verify_event_evidence(
+        &evidence_dir,
+        &proofs_root,
+        event_uuid,
+        chain_uuid,
+    ) {
+        Ok(report) => {
+            print!("{}", report.format_report());
+            Ok(())
+        }
+        Err(evident_ledger::event_evidence_verify::EventEvidenceVerifyError::IntegrityFailed {
+            report,
+        }) => {
+            print!("{}", report.format_report());
+            Err(CliError::IntegrityFailed(
+                "cryptographic verification failed".into(),
+            ))
+        }
+        Err(e) => Err(CliError::NotFound(e.to_string())),
+    }
 }
 
 fn report_artifact_paths(base_dir: &Path, chain_id: &str) -> (PathBuf, PathBuf) {

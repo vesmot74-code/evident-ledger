@@ -5,6 +5,7 @@ pub mod client;
 pub mod config;
 pub mod db;
 pub mod evidence_record;
+pub mod event_evidence_verify;
 pub mod file_certificate_pdf;
 pub mod freeze;
 pub mod hash_attestation;

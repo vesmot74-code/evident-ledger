@@ -1,0 +1,17 @@
+{
+  "evidence_id": "ev_22d29a6a4cb4469fbbce1d07e49694ce",
+  "filename": "stage1_check.txt",
+  "sha256": "d058b1ba7f8199b4b82f4c0861572d081004de5bd375e077c4eeb5641b725da0",
+  "size_bytes": 57,
+  "mime_type": null,
+  "local_file_available": true,
+  "chain_id": "c0bafd33-6807-4fb7-b480-c454ecabdd5d",
+  "event_id": "22d29a6a-4cb4-469f-bbce-1d07e49694ce",
+  "certificate_id": "cert_8863fcee635a583ebce87ca80af729db",
+  "created_at_local": "2026-08-10T14:38:11.004804Z",
+  "registered_at": "2026-08-10T14:38:11.004804Z",
+  "lifecycle_status": "TSA_CONFIRMED",
+  "tsa_status": "CONFIRMED",
+  "project_id": null,
+  "proof_path": "/Users/iuriiveselskii/.evident/proofs/c0bafd33-6807-4fb7-b480-c454ecabdd5d/22d29a6a-4cb4-469f-bbce-1d07e49694ce.json"
+}

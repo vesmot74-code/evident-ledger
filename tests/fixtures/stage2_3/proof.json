@@ -1,0 +1,33 @@
+{
+  "leaf_version": "leaf_v1",
+  "chain_id": "c0bafd33-6807-4fb7-b480-c454ecabdd5d",
+  "head_event_id": "22d29a6a-4cb4-469f-bbce-1d07e49694ce",
+  "proof": {
+    "root": "89f0aa27295cd7de8fc2e03568714f398c31d0b7070af7fc8ec72570dd362800",
+    "chain_head": "22d29a6a-4cb4-469f-bbce-1d07e49694ce",
+    "signature": "0eecb4d938b96dc4450fd1e388fc9604ceb4b8e3b573810e1aa3980b661baa98d00f4540935f6869e6135648513683234095b4a35e8164b6df1d05d142ee4200",
+    "public_key": "fd97921df83d5e4adfa94f30989e93411f17641770446c91b6adc3f5676b156a",
+    "leaves_count": 2,
+    "version": "proof_v1",
+    "type": "merkle-root-v1"
+  },
+  "events": [
+    {
+      "sequence": 1,
+      "event_id": "33144a9c-75f8-4d86-9192-7499eaf1e6d9",
+      "parent_event_id": "00000000-0000-0000-0000-000000000000",
+      "file_hash": "f11194192e532be971aba5ca6bdb416883f65bf055b9c6a1d281e79ec590cf9c"
+    },
+    {
+      "sequence": 2,
+      "event_id": "22d29a6a-4cb4-469f-bbce-1d07e49694ce",
+      "parent_event_id": "33144a9c-75f8-4d86-9192-7499eaf1e6d9",
+      "file_hash": "d058b1ba7f8199b4b82f4c0861572d081004de5bd375e077c4eeb5641b725da0"
+    }
+  ],
+  "tsa": {
+    "timestamp": 1786372690,
+    "serial": "tsr-1786372690",
+    "token_bytes": 4642
+  }
+}
