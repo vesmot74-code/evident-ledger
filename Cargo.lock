@@ -1667,6 +1667,7 @@ dependencies = [
  "notary-pdf",
  "notary-tsa",
  "printpdf",
+ "qrcode",
  "rand 0.8.6",
  "reqwest",
  "serde",
