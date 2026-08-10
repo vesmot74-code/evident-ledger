@@ -273,6 +273,22 @@ impl EvidentClient {
         chain_id: Uuid,
         file_bytes: &[u8],
     ) -> Result<(CommitResponse, PathBuf, String), ClientError> {
+        self.submit_event_with_meta(
+            chain_id,
+            file_bytes,
+            crate::evidence_record::EvidenceFileMeta::default(),
+        )
+    }
+
+    /// Like [`submit_event`], and writes an Evidence Record projection
+    /// (`~/.evident/evidence/{evidence_id}.json`) linking file metadata to the
+    /// ledger event / proof. See `docs/audit_stage1.md`.
+    pub fn submit_event_with_meta(
+        &self,
+        chain_id: Uuid,
+        file_bytes: &[u8],
+        meta: crate::evidence_record::EvidenceFileMeta,
+    ) -> Result<(CommitResponse, PathBuf, String), ClientError> {
         use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(file_bytes);
@@ -316,6 +332,25 @@ impl EvidentClient {
             tsa: commit.tsa.clone(),
         };
         fs::write(&proof_path, serde_json::to_string_pretty(&proof_file)?)?;
+
+        // Projection layer only — does not replace events/proofs.
+        if let (Ok(event_uuid), Ok(chain_uuid)) = (
+            Uuid::parse_str(&commit.event_id),
+            Uuid::parse_str(&commit.chain_id),
+        ) {
+            let record = crate::evidence_record::build_registered_record(
+                event_uuid,
+                chain_uuid,
+                &file_hash,
+                Some(file_bytes.len() as u64),
+                &meta,
+                commit.tsa.as_ref(),
+                Some(&proof_path),
+                chrono::Utc::now(),
+            );
+            let evidence_dir = Self::evident_dir().join("evidence");
+            let _ = crate::evidence_record::write_evidence_record(&evidence_dir, &record);
+        }
 
         Ok((commit, proof_path, file_hash))
     }

@@ -4,6 +4,7 @@ pub mod auth;
 pub mod client;
 pub mod config;
 pub mod db;
+pub mod evidence_record;
 pub mod freeze;
 pub mod hash_attestation;
 pub mod hash_attestation_pdf;

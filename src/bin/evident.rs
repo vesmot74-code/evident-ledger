@@ -642,8 +642,18 @@ fn cmd_commit(path: &str, chain_id: &str) -> Result<(), CliError> {
     })?;
 
     let client = evident_ledger::client::EvidentClient::new(&server_url());
+    let filename = std::path::Path::new(path)
+        .file_name()
+        .and_then(|s| s.to_str())
+        .map(|s| s.to_string());
+    let meta = evident_ledger::evidence_record::EvidenceFileMeta {
+        filename,
+        mime_type: None,
+        project_id: None,
+        local_file_available: true,
+    };
     let (commit, proof_path, file_hash) = client
-        .submit_event(chain_uuid, &bytes)
+        .submit_event_with_meta(chain_uuid, &bytes, meta)
         .map_err(map_client_error)?;
 
     let event = Event::from_payload(&commit.chain_id, 1, &file_hash, "", "commit");

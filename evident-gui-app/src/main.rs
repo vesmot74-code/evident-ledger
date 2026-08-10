@@ -1811,7 +1811,19 @@ impl App {
                 chain_uuid
             );
             let client = authed_client();
-            match client.submit_event(chain_uuid, &file_bytes) {
+            let meta = evident_ledger::evidence_record::EvidenceFileMeta {
+                filename: Some(file_name.clone()),
+                mime_type: None,
+                project_id: Some(
+                    project_path_clone
+                        .file_name()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("project")
+                        .to_string(),
+                ),
+                local_file_available: !source_file_path.is_empty(),
+            };
+            match client.submit_event_with_meta(chain_uuid, &file_bytes, meta) {
                 Ok((commit, proof_path, file_hash)) => {
                     let public_proof_id = client.lookup_public_proof_id(&file_hash);
                     let _ = tx.send(WorkerResponse::CommitDone(Ok(CommitSuccess {
