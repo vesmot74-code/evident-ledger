@@ -76,6 +76,10 @@ impl EventEvidenceReport {
             "Signature Valid:      {}\n",
             pass_fail(self.integrity.signature_valid)
         ));
+        out.push_str(&format!(
+            "Verification Result:  {}\n",
+            verification_result_label(&self.integrity)
+        ));
         out.push_str("Merkle Root:\n");
         out.push_str(&format!("registered: {}\n", self.registered_root));
         match &self.recomputed_root {
@@ -94,7 +98,6 @@ impl EventEvidenceReport {
         ));
         let life = lifecycle_label(self.lifecycle);
         out.push_str(&format!("Lifecycle:            {life}\n"));
-        out.push_str(&format!("Overall:              {life}\n"));
         out
     }
 }
@@ -104,6 +107,21 @@ fn pass_fail(ok: bool) -> &'static str {
         "PASS"
     } else {
         "FAIL"
+    }
+}
+
+/// Result of **this** verification run — derived only from integrity fields,
+/// never from persisted `lifecycle_status`.
+fn verification_result_label(integrity: &EvidenceIntegrityResult) -> &'static str {
+    if integrity.event_found
+        && integrity.parent_chain_valid
+        && integrity.merkle_root_valid
+        && integrity.signature_valid
+        && integrity.errors.is_empty()
+    {
+        "PASS"
+    } else {
+        "FAILED"
     }
 }
 
@@ -253,7 +271,7 @@ mod tests {
     }
 
     #[test]
-    fn valid_fixture_event_passes_and_overall_matches_lifecycle() {
+    fn valid_fixture_event_passes_with_verification_result_and_lifecycle() {
         let (tmp, event_id, chain_id) = stage_dirs();
         let evidence_dir = tmp.path().join("evidence");
         let proofs_root = tmp.path().join("proofs");
@@ -277,9 +295,16 @@ mod tests {
             "lifecycle line missing: {text}"
         );
         assert!(
-            text.contains(&format!("Overall:              {life}")),
-            "Overall must mirror lifecycle_status, got:\n{text}"
+            text.contains("Verification Result:  PASS"),
+            "current-run result missing:\n{text}"
         );
+        assert!(
+            !text.contains("Overall:"),
+            "Overall must be removed from CLI output:\n{text}"
+        );
+        assert_eq!(report.lifecycle, LifecycleStatus::Certified);
+        assert!(text.contains("Lifecycle:            CERTIFIED"));
+        assert!(text.contains("Verification Result:  PASS"));
 
         // Persisted record matches reported lifecycle.
         let reloaded = crate::evidence_record::read_evidence_record(
@@ -334,9 +359,52 @@ mod tests {
                 assert!(!report.integrity.signature_valid);
                 let text = report.format_report();
                 assert!(text.contains("Signature Valid:      FAIL"));
+                assert!(text.contains("Verification Result:  FAILED"));
+                assert!(!text.contains("Overall:"));
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn broken_signature_after_certified_keeps_lifecycle_shows_failed_result() {
+        let (tmp, event_id, chain_id) = stage_dirs();
+        let evidence_dir = tmp.path().join("evidence");
+        let proofs_root = tmp.path().join("proofs");
+
+        let first = verify_event_evidence(&evidence_dir, &proofs_root, event_id, chain_id)
+            .expect("first verify must certify");
+        assert_eq!(first.lifecycle, LifecycleStatus::Certified);
+        assert!(first.format_report().contains("Verification Result:  PASS"));
+
+        let proof_path = proof_file_path(&proofs_root, chain_id, event_id);
+        let mut proof: ProofFile =
+            serde_json::from_str(&fs::read_to_string(&proof_path).unwrap()).unwrap();
+        let mut chars: Vec<char> = proof.proof.signature.chars().collect();
+        chars[0] = if chars[0] == '0' { '1' } else { '0' };
+        proof.proof.signature = chars.into_iter().collect();
+        fs::write(&proof_path, serde_json::to_string_pretty(&proof).unwrap()).unwrap();
+
+        let err = verify_event_evidence(&evidence_dir, &proofs_root, event_id, chain_id)
+            .expect_err("tampered sig must fail");
+        match err {
+            EventEvidenceVerifyError::IntegrityFailed { report } => {
+                let text = report.format_report();
+                assert!(text.contains("Signature Valid:      FAIL"));
+                assert!(text.contains("Verification Result:  FAILED"));
+                assert!(text.contains("Lifecycle:            CERTIFIED"));
+                assert_eq!(report.lifecycle, LifecycleStatus::Certified);
+                assert!(!text.contains("Overall:"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+
+        let persisted = crate::evidence_record::read_evidence_record(
+            &evidence_dir,
+            &evidence_id_for_event(event_id),
+        )
+        .unwrap();
+        assert_eq!(persisted.lifecycle_status, LifecycleStatus::Certified);
     }
 
     #[test]
