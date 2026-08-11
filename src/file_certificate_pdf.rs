@@ -449,19 +449,34 @@ fn write_scope_of_attestation(ctx: &mut PdfCtx) {
 
 fn write_independent_verification(ctx: &mut PdfCtx) {
     ctx.heading("Independent Verification");
+
     ctx.wrap_paragraph(
-        "Planned CLI (not yet shipped in Stage 2.1 — Task 2.3): \
-         evident verify --event <event_id> --chain <chain_id>",
+        "This certificate includes verification information describing the \
+         registered evidence record and its integrity checks.",
     );
+
     ctx.gap();
+
     ctx.wrap_paragraph(
-        "Public web verification at /cert/{certificate_id} is not available yet \
-         (Stage 4). Do not treat QR or web URLs as working verifiers in this release.",
+        "Evident Ledger provides verification tools for evidence records, \
+         including command-line verification and public verification services \
+         for records published through the public proof registry.",
     );
+
     ctx.gap();
+
     ctx.wrap_paragraph(
-        "Verification recomputes the Merkle root from the complete set of ledger \
-         leaves for this chain — see Scope of Attestation.",
+        "Where a public proof identifier is available, third parties may verify \
+         the registration status through the Evident Ledger public verification \
+         service.",
+    );
+
+    ctx.gap();
+
+    ctx.wrap_paragraph(
+        "This certificate does not certify legal ownership, authenticity of \
+         document contents, or the truthfulness of information contained in \
+         the underlying file.",
     );
 }
 
@@ -652,6 +667,16 @@ mod tests {
             "expected QR module rectangles in PDF content stream"
         );
     }
+
+#[test]
+fn independent_verification_does_not_contain_historical_unavailable_claims() {
+    let (record, proof, _) = signed_fixture(true, true);
+    let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+
+    assert!(!pdf_contains(&bytes, "not yet shipped"));
+    assert!(!pdf_contains(&bytes, "Stage 4"));
+    assert!(!pdf_contains(&bytes, "not available yet"));
+}
 
     #[test]
     fn qr_encodes_certificate_id_and_registered_merkle_root() {
