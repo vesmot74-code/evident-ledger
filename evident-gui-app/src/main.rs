@@ -1140,7 +1140,7 @@ impl App {
             }
         }
 
-        zip.start_file("evidence_snapshot.pdf", options)
+        zip.start_file("chain_verification_report.pdf", options)
             .map_err(|e| e.to_string())?;
 
         let pdf = fs::read(&pdf_path).map_err(|e| e.to_string())?;
@@ -1218,7 +1218,7 @@ impl App {
              the moment of export, by your explicit choice.\n\n\
              Package contents:\n\
              {}\
-             - evidence_snapshot.pdf   Human-readable verification report\n\
+             - chain_verification_report.pdf   Human-readable verification report\n\
              - manifest.json           Machine-readable proof data\n\
              - proof.json              Full cryptographic proof snapshot\n\
              - audit.jsonl             Append-only audit chain\n\
