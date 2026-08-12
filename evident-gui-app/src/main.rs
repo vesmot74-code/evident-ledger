@@ -1100,7 +1100,7 @@ impl App {
 
         let (proof_data, verification) = Self::build_evidence_snapshot(proof, events, verify_valid);
 
-        let pdf_path = proofs_dir.join("evidence_snapshot.pdf");
+        let pdf_path = proofs_dir.join("chain_verification_report.pdf");
 
         generate_report(&proof_data.chain_id, &proof_data, &verification, &pdf_path)
             .map_err(|e| format!("{:?}", e))?;
@@ -3721,7 +3721,7 @@ let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStat
                                     &self.verification_events,
                                     verify_valid,
                                 );
-                                let pdf_path = proofs_dir.join("evidence_snapshot.pdf");
+                                let pdf_path = proofs_dir.join("chain_verification_report.pdf");
 
                                 match generate_report(
                                     &proof_data.chain_id.clone(),
@@ -4235,7 +4235,7 @@ ui.add_space(12.0);
                                         projects_dir.join(project_name).join("proofs");
                                     let _ = fs::create_dir_all(&proofs_dir);
                                     let pdf_path = proofs_dir
-                                        .join(format!("{}_attestation.pdf", self.event_id));
+                                        .join(format!("{}_registration_snapshot.pdf", self.event_id));
 
                                     let proof_data = Self::build_registration_proof_data(proof);
                                     match generate_registration_snapshot(&proof_data, &pdf_path) {
