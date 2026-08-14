@@ -3706,7 +3706,7 @@ impl eframe::App for App {
                     if ui
 .add_sized(
     [220.0, 32.0],
-    egui::Button::new(self.tr("📄 Скачать заключение (PDF)", "📄 Download Report (PDF)")),
+    egui::Button::new(self.tr("📄 Скачать полный отчёт цепочки (PDF)", "📄 Download Full Chain Report (PDF)")),
 )
                         .clicked()
                     {
