@@ -7,8 +7,8 @@ use evident_ledger::service::backup_restore::{
 };
 use evident_ledger::service::backup_snapshot::parse_snapshot;
 use evident_report::{
-    generate_registration_snapshot, generate_report, EventReportScope, EventSummary, FileStatus,
-    ProofData, TsaData as ReportTsaData, VerificationContext,
+    generate_report, EventReportScope, EventSummary, FileStatus, ProofData,
+    TsaData as ReportTsaData, VerificationContext,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -1041,6 +1041,9 @@ impl App {
         Ok(pdf_path)
     }
 
+    /// Helper for registration snapshot PDF (`generate_registration_snapshot` in evident-report).
+    /// Kept after Result-screen «Открыть PDF» UI removal; not deleted per cleanup scope.
+    #[allow(dead_code)]
     fn build_registration_proof_data(proof: &client::ProofFile) -> ProofData {
         let event_summaries: Vec<EventSummary> = proof
             .events
@@ -3427,7 +3430,16 @@ impl eframe::App for App {
                     });
 
                 ui.add_space(12.0);
-                ui.label(&self.verification_report);
+                // Render at paint time from current `self.lang`. The stored
+                // `verification_report` is only a presence flag: it is filled once
+                // in `verify_project` via `tr().to_string()`, so showing that String
+                // would freeze the language from the moment of verification.
+                if !self.verification_report.is_empty() {
+                    ui.label(self.tr(
+                        "Локальная проверка: цепочка событий, файлы на диске и криптографическая подпись.",
+                        "Local check: event chain, files on disk, and cryptographic signature.",
+                    ));
+                }
                 ui.add_space(12.0);
 
                 if let VerifyDetailsState::UntrustedSignerIdentity {
@@ -3585,8 +3597,11 @@ impl eframe::App for App {
 
                                                 let pdf_clicked = ui
                                                     .add_sized(
-                                                        [110.0, 32.0],
-                                                        egui::Button::new("📄 PDF"),
+                                                        [180.0, 32.0],
+                                                        egui::Button::new(self.tr(
+                                                            "📄 Снимок регистрации",
+                                                            "📄 Снимок регистрации",
+                                                        )),
                                                     )
                                                     .clicked();
 
@@ -3768,39 +3783,7 @@ let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStat
                             }
                         }
                     }
-
-                    if ui
-                        .add_sized(
-                            [260.0, 32.0],
-                            egui::Button::new(self.tr(
-                                "📜 Generate Certificate PDF",
-                                "📜 Generate Certificate PDF",
-                            )),
-                        )
-                        .clicked()
-                    {
-                        self.generate_certificate_from_project_proofs(
-                            &projects_dir,
-                            &self.verification_project.clone(),
-                        );
-                    }
                 });
-
-                match &self.certificate_status {
-                    CertificateStatus::None | CertificateStatus::Generating => {}
-                    CertificateStatus::Generated(path) => {
-                        ui.add_space(6.0);
-                        ui.label(format!(
-                            "{}: {}",
-                            self.tr("Сертификат", "Certificate"),
-                            path.display()
-                        ));
-                    }
-                    CertificateStatus::Failed(err) => {
-                        ui.add_space(6.0);
-                        ui.colored_label(COLOR_INVALID, err);
-                    }
-                }
 
                 ui.allocate_ui(egui::vec2(600.0, 0.0), |ui| {
                     ui.label(self.tr(
@@ -4205,65 +4188,13 @@ ui.add_space(12.0);
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    if self.loading_verify_chain {
-                        ui.spinner();
-                        ui.label(self.tr("Проверка...", "Verifying..."));
-                    } else if ui.button(self.tr("🔍 Проверить", "🔍 Verify")).clicked()
-                    {
-                        self.do_verify(ui.ctx());
-                    }
-                    if !self.proof_path.is_empty() {
-                        if ui
-                            .button(self.tr("📄 Открыть PDF", "📄 Open PDF"))
-                            .clicked()
-                        {
-                           match self.last_proof.as_ref() {
-                                Some(proof) => {
-                                    let projects_dir = match self.projects_dir() {
-                                        Ok(dir) => dir,
-                                        Err(err) => {
-                                            self.status = format!("⚠️ {err}");
-                                            return;
-                                        }
-                                    };
-                                    let project_name = if self.project_mode == ProjectMode::New {
-                                        &self.project_name
-                                    } else {
-                                        &self.selected_project
-                                    };
-                                    let proofs_dir =
-                                        projects_dir.join(project_name).join("proofs");
-                                    let _ = fs::create_dir_all(&proofs_dir);
-                                    let pdf_path = proofs_dir
-                                        .join(format!("{}_registration_snapshot.pdf", self.event_id));
-
-                                    let proof_data = Self::build_registration_proof_data(proof);
-                                    match generate_registration_snapshot(&proof_data, &pdf_path) {
-                                        Ok(()) => {
-                                            let _ = Command::new("open").arg(&pdf_path).output();
-                                        }
-                                        Err(e) => {
-                                            self.status =
-                                                format!("⚠️ Failed to generate PDF: {e}");
-                                        }
-                                    }
-                                }
-                                None => {
-                                    self.status = self
-                                        .tr(
-                                            "⚠️ Нет данных доказательства",
-                                            "⚠️ No proof data available",
-                                        )
-                                        .to_string();
-                                }
-                            }
-                        }
-                    }
+                    let cert_label = egui::RichText::new(self.tr(
+                        "📜 Создать сертификат PDF",
+                        "📜 Создать сертификат PDF",
+                    ))
+                    .color(egui::Color32::WHITE);
                     if ui
-                        .button(self.tr(
-                            "📜 Generate Certificate PDF",
-                            "📜 Generate Certificate PDF",
-                        ))
+                        .add(egui::Button::new(cert_label).fill(COLOR_ACCENT))
                         .clicked()
                     {
                         let projects_dir = match self.projects_dir() {
@@ -4285,6 +4216,15 @@ ui.add_space(12.0);
                             &project_name,
                         );
                     }
+
+                    if self.loading_verify_chain {
+                        ui.spinner();
+                        ui.label(self.tr("Проверка...", "Verifying..."));
+                    } else if ui.button(self.tr("🔍 Проверить", "🔍 Verify")).clicked()
+                    {
+                        self.do_verify(ui.ctx());
+                    }
+
                     if ui
                         .button(self.tr("📋 Вся цепочка аудита", "📋 Full Audit Chain"))
                         .clicked()
