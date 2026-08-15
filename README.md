@@ -36,6 +36,23 @@ See published candidates in the
 [GitHub Releases](https://github.com/vesmot74-code/evident-ledger/releases)
 section.
 
+## Local development
+
+Start the local database and Evident Ledger server:
+
+```bash
+./scripts/dev-server.sh
+```
+
+Run the CLI:
+
+```bash
+./scripts/dev-cli.sh --help
+```
+
+Local configuration is stored in `.env` and is not committed to Git.
+Use `.env.example` as the configuration template.
+
 ---
 
 # ⚡ Quick Start: See it in Action
