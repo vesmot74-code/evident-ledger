@@ -348,15 +348,16 @@ async fn dashboard_revoke_without_session_redirects_to_login() {
         .expect("response");
 
     assert_eq!(response.status(), StatusCode::SEE_OTHER);
-    assert_eq!(
-        response
-            .headers()
-            .get(header::LOCATION)
-            .unwrap()
-            .to_str()
-            .unwrap(),
-        "/login"
-    );
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap();
+
+    assert!(location.starts_with("/login?next="));
+    assert!(location.contains("%2Fdashboard%2Fidentity%2F"));
+    assert!(location.contains("%2Frevoke"));
 
     cleanup_account(&pool, account.account_id).await;
 }
