@@ -1,11 +1,13 @@
-//! File Certificate PDF (Stage 2.1 + Stage 2.2 QR).
+//! File Certificate PDF (Stage 2.1 + QR).
 //!
 //! Pure renderer over [`EvidenceRecord`] + [`ProofFile`]. Does not touch the
 //! network, database, filesystem, or GUI. Verification uses Stage 1
 //! [`verify_evidence_integrity`] only — no parallel crypto.
 //!
-//! Stage 2.2 embeds an offline QR payload (not a URL):
-//! `EVIDENT-CERT|{certificate_id}|{registered_merkle_root}`.
+//! When a `public_proof_id` is supplied, the QR encodes a public certificate URL:
+//! `https://evident-ledger.com/public/verify/{public_proof_id}/certificate.pdf`.
+//! If `public_proof_id` is absent, the QR is omitted and the PDF shows
+//! "Public verification pending" (never a fallback id in a URL-shaped QR).
 
 use crate::client::ProofFile;
 use crate::evidence_record::{
@@ -27,6 +29,8 @@ const LINE_HEIGHT: f32 = 6.0;
 const SECTION_GAP: f32 = 8.0;
 const WRAP_CHARS: usize = 78;
 const QR_SIZE_MM: f32 = 30.0;
+const PUBLIC_CERTIFICATE_BASE_URL: &str =
+    "https://evident-ledger.com/public/verify";
 
 const VERIFICATION_MODEL: &str = "Full leaf-set Merkle root recomputation (parent-chain + merkle-root-v1). No per-event inclusion path — see Known Limitation in docs/audit_stage1.md.";
 
@@ -35,7 +39,7 @@ const VERIFICATION_MODEL: &str = "Full leaf-set Merkle root recomputation (paren
 pub enum CertificateError {
     Font(String),
     PdfSave(String),
-    /// QR matrix could not be encoded from the offline payload.
+    /// QR matrix could not be encoded from the payload.
     QrGeneration(String),
 }
 
@@ -51,12 +55,9 @@ impl fmt::Display for CertificateError {
 
 impl std::error::Error for CertificateError {}
 
-/// Fixed offline QR payload (Stage 2.2). Not a URL.
-pub fn file_certificate_qr_payload(
-    certificate_id: &str,
-    registered_merkle_root: &str,
-) -> String {
-    format!("EVIDENT-CERT|{certificate_id}|{registered_merkle_root}")
+/// Public certificate URL for QR (requires a real `pv_…` public_proof_id).
+pub fn file_certificate_qr_payload(public_proof_id: &str) -> String {
+    format!("{PUBLIC_CERTIFICATE_BASE_URL}/{public_proof_id}/certificate.pdf")
 }
 
 struct PdfCtx {
@@ -162,7 +163,7 @@ impl PdfCtx {
 
         self.layer
             .use_text(
-                "Certificate QR (offline payload)",
+                "Certificate QR (public verification)",
                 10.0,
                 Mm(MARGIN_LEFT),
                 Mm(self.y),
@@ -170,7 +171,7 @@ impl PdfCtx {
             );
         self.y -= LINE_HEIGHT;
         self.layer.use_text(
-            "Format: EVIDENT-CERT|certificate_id|registered_merkle_root",
+            "URL: /public/verify/{public_proof_id}/certificate.pdf",
             8.0,
             Mm(MARGIN_LEFT),
             Mm(self.y),
@@ -249,9 +250,13 @@ fn merkle_comparison(registered: &str, recomputed: Option<&str>) -> &'static str
 
 /// Generate a File Certificate PDF from an Evidence Record projection and its
 /// linked proof artifact. Pure: no I/O beyond PDF serialization.
+///
+/// `public_proof_id`: when `Some(pv_…)`, embed a QR linking to the public
+/// certificate URL. When `None`/empty, omit QR and show "Public verification pending".
 pub fn generate_file_certificate(
     record: &EvidenceRecord,
     proof: &ProofFile,
+    public_proof_id: Option<&str>,
 ) -> Result<Vec<u8>, CertificateError> {
     let integrity = verify_evidence_integrity(record, proof);
 
@@ -271,7 +276,7 @@ pub fn generate_file_certificate(
     let mut ctx = PdfCtx::new(pdf_doc, layer, font, bold);
 
     write_header(&mut ctx, record);
-    write_certificate_qr(&mut ctx, record, proof)?;
+    write_certificate_qr(&mut ctx, public_proof_id)?;
     write_target_file(&mut ctx, record);
     write_ledger_registration(&mut ctx, record);
     write_integrity_checks(&mut ctx, &integrity);
@@ -286,13 +291,19 @@ pub fn generate_file_certificate(
 
 fn write_certificate_qr(
     ctx: &mut PdfCtx,
-    record: &EvidenceRecord,
-    proof: &ProofFile,
+    public_proof_id: Option<&str>,
 ) -> Result<(), CertificateError> {
-    let payload =
-        file_certificate_qr_payload(&record.certificate_id, &proof.proof.root);
     ctx.gap();
-    ctx.draw_qr_modules(&payload)?;
+    match public_proof_id.map(str::trim).filter(|s| !s.is_empty()) {
+        Some(id) => {
+            let payload = file_certificate_qr_payload(id);
+            ctx.draw_qr_modules(&payload)?;
+        }
+        None => {
+            ctx.heading("Public Verification");
+            ctx.line("Public verification pending", 10.0);
+        }
+    }
     ctx.gap();
     Ok(())
 }
@@ -583,7 +594,7 @@ mod tests {
     fn generates_pdf_for_tsa_confirmed() {
         let (record, proof, _) = signed_fixture(true, true);
         assert_eq!(record.lifecycle_status, LifecycleStatus::TsaConfirmed);
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let bytes = generate_file_certificate(&record, &proof, Some("pv_Jc5Tts4ZmzRTHKmugjyCyj")).expect("pdf");
         assert!(!bytes.is_empty());
         assert!(bytes.starts_with(b"%PDF"));
         assert!(pdf_contains(&bytes, "TSA_CONFIRMED"));
@@ -595,7 +606,7 @@ mod tests {
         let (mut record, proof, _) = signed_fixture(true, true);
         refresh_lifecycle(&mut record, &proof);
         assert_eq!(record.lifecycle_status, LifecycleStatus::Certified);
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let bytes = generate_file_certificate(&record, &proof, Some("pv_Jc5Tts4ZmzRTHKmugjyCyj")).expect("pdf");
         assert!(!bytes.is_empty());
         assert!(bytes.starts_with(b"%PDF"));
         assert!(pdf_contains(&bytes, "CERTIFIED"));
@@ -604,7 +615,7 @@ mod tests {
     #[test]
     fn local_file_unavailable_is_labeled() {
         let (record, proof, _) = signed_fixture(false, true);
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let bytes = generate_file_certificate(&record, &proof, Some("pv_Jc5Tts4ZmzRTHKmugjyCyj")).expect("pdf");
         assert!(pdf_contains(&bytes, "NOT AVAILABLE ON THIS DEVICE"));
     }
 
@@ -618,7 +629,7 @@ mod tests {
             "MATCH"
         );
 
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let bytes = generate_file_certificate(&record, &proof, Some("pv_Jc5Tts4ZmzRTHKmugjyCyj")).expect("pdf");
         assert!(pdf_contains(&bytes, "Merkle Root (as registered)"));
         assert!(pdf_contains(&bytes, "Merkle Root (recomputed now)"));
         assert!(pdf_contains(&bytes, "MATCH"));
@@ -638,7 +649,7 @@ mod tests {
             "NOT AVAILABLE"
         );
 
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let bytes = generate_file_certificate(&record, &proof, Some("pv_Jc5Tts4ZmzRTHKmugjyCyj")).expect("pdf");
         assert!(pdf_contains(&bytes, "not recomputed"));
         assert!(pdf_contains(&bytes, "NOT AVAILABLE"));
         // Must not claim MATCH when recompute failed.
@@ -651,65 +662,68 @@ mod tests {
     #[test]
     fn generates_pdf_with_qr_code() {
         let (record, proof, _) = signed_fixture(true, true);
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let pv = "pv_Jc5Tts4ZmzRTHKmugjyCyj";
+        let bytes = generate_file_certificate(&record, &proof, Some(pv)).expect("pdf");
         assert!(!bytes.is_empty());
         assert!(bytes.starts_with(b"%PDF"));
-        // Label for the QR block (vector modules, not a raster XObject).
-        assert!(pdf_contains(&bytes, "Certificate QR (offline payload)"));
+        assert!(pdf_contains(&bytes, "Certificate QR (public verification)"));
         assert!(pdf_contains(
             &bytes,
-            "EVIDENT-CERT|certificate_id|registered_merkle_root"
+            "URL: /public/verify/{public_proof_id}/certificate.pdf"
         ));
-        // PDF content stream draws filled rects for dark modules (`re` operator).
+        // Full URL lives in the QR matrix (vector modules), not as extractable text.
         let as_text = String::from_utf8_lossy(&bytes);
         assert!(
-            as_text.matches(" re\n").count() > 50 || as_text.matches(" re\r").count() > 50 || as_text.contains(" re"),
+            as_text.matches(" re\n").count() > 50
+                || as_text.matches(" re\r").count() > 50
+                || as_text.contains(" re"),
             "expected QR module rectangles in PDF content stream"
         );
     }
 
-#[test]
-fn independent_verification_does_not_contain_historical_unavailable_claims() {
-    let (record, proof, _) = signed_fixture(true, true);
-    let bytes = generate_file_certificate(&record, &proof).expect("pdf");
-
-    assert!(!pdf_contains(&bytes, "not yet shipped"));
-    assert!(!pdf_contains(&bytes, "Stage 4"));
-    assert!(!pdf_contains(&bytes, "not available yet"));
-}
+    #[test]
+    fn omits_qr_when_public_proof_id_unavailable() {
+        let (record, proof, _) = signed_fixture(true, true);
+        let bytes = generate_file_certificate(&record, &proof, None).expect("pdf");
+        assert!(bytes.starts_with(b"%PDF"));
+        assert!(pdf_contains(&bytes, "Public verification pending"));
+        assert!(!pdf_contains(&bytes, "Certificate QR (public verification)"));
+        assert!(!pdf_contains(&bytes, "https://evident-ledger.com/public/verify/"));
+        // Must not URL-shape a fallback id.
+        assert!(!pdf_contains(&bytes, &format!("https://evident-ledger.com/public/verify/{}/", record.certificate_id)));
+        assert!(!pdf_contains(&bytes, &format!("https://evident-ledger.com/public/verify/{}/", record.event_id)));
+    }
 
     #[test]
-    fn qr_encodes_certificate_id_and_registered_merkle_root() {
-        let (record, proof, root) = signed_fixture(true, true);
-        let integrity = verify_evidence_integrity(&record, &proof);
-        // QR must bind the registered root, never the recomputed one as a substitute source.
-        let payload =
-            file_certificate_qr_payload(&record.certificate_id, &proof.proof.root);
+    fn independent_verification_does_not_contain_historical_unavailable_claims() {
+        let (record, proof, _) = signed_fixture(true, true);
+        let bytes = generate_file_certificate(&record, &proof, Some("pv_Jc5Tts4ZmzRTHKmugjyCyj")).expect("pdf");
+
+        assert!(!pdf_contains(&bytes, "not yet shipped"));
+        assert!(!pdf_contains(&bytes, "Stage 4"));
+        assert!(!pdf_contains(&bytes, "not available yet"));
+    }
+
+    #[test]
+    fn qr_encodes_public_proof_id_certificate_url() {
+        let (record, proof, _root) = signed_fixture(true, true);
+        let pv = "pv_Jc5Tts4ZmzRTHKmugjyCyj";
+        let payload = file_certificate_qr_payload(pv);
         assert_eq!(
             payload,
-            format!("EVIDENT-CERT|{}|{}", record.certificate_id, proof.proof.root)
+            format!("https://evident-ledger.com/public/verify/{pv}/certificate.pdf")
         );
-        assert_eq!(proof.proof.root, root);
-        assert!(!payload.contains("http://") && !payload.contains("https://"));
-        if let Some(recomputed) = integrity.recomputed_root.as_deref() {
-            // Even when equal, the payload construction API takes registered root only.
-            let _ = recomputed;
-        }
-        let wrong = file_certificate_qr_payload(&record.certificate_id, "deadbeef");
-        assert_ne!(wrong, payload);
+        assert!(payload.starts_with("https://"));
+        assert!(payload.contains(pv));
+        assert!(!payload.contains(&record.certificate_id));
+        assert!(!payload.contains(&proof.proof.root));
 
         let code = QrCode::new(payload.as_bytes()).expect("encode");
         assert!(code.width() > 0);
 
-        // Round-trip decode via the same matrix the PDF would draw: rebuild payload
-        // from documented parts (qrcode is encode-only; full image decode would need
-        // an extra crate). Assert the encoded bytes match the fixed format parts.
-        let parts: Vec<&str> = payload.split('|').collect();
-        assert_eq!(parts.len(), 3);
-        assert_eq!(parts[0], "EVIDENT-CERT");
-        assert_eq!(parts[1], record.certificate_id.as_str());
-        assert_eq!(parts[2], proof.proof.root.as_str());
-        assert_eq!(parts[2], root.as_str());
+        let bytes = generate_file_certificate(&record, &proof, Some(pv)).expect("pdf");
+        assert!(pdf_contains(&bytes, "Certificate QR (public verification)"));
+        assert!(!pdf_contains(&bytes, "Public verification pending"));
     }
 
     #[test]

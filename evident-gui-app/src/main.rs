@@ -785,14 +785,22 @@ impl App {
             .filter(|s| !s.is_empty())
     }
 
-    /// Stage 2.5: EvidenceRecord + ProofFile → `generate_file_certificate` → disk.
+    /// Stage 2.5+: EvidenceRecord + ProofFile → `generate_file_certificate` → disk.
+    /// `public_proof_id` must be freshly looked up by the caller (Dashboard path).
     fn export_file_certificate_pdf(
         evidence_dir: &Path,
         event_id_str: &str,
         proof: &client::ProofFile,
+        public_proof_id: Option<&str>,
     ) -> Result<PathBuf, String> {
         let out_dir = Self::certificates_output_dir()?;
-        Self::export_file_certificate_pdf_to(evidence_dir, event_id_str, proof, &out_dir)
+        Self::export_file_certificate_pdf_to(
+            evidence_dir,
+            event_id_str,
+            proof,
+            &out_dir,
+            public_proof_id,
+        )
     }
 
     fn export_file_certificate_pdf_to(
@@ -800,6 +808,7 @@ impl App {
         event_id_str: &str,
         proof: &client::ProofFile,
         out_dir: &Path,
+        public_proof_id: Option<&str>,
     ) -> Result<PathBuf, String> {
         let event_uuid = Uuid::parse_str(event_id_str)
             .map_err(|_| format!("Invalid event id for certificate: {event_id_str}"))?;
@@ -829,7 +838,9 @@ impl App {
         }
 
         let bytes = evident_ledger::file_certificate_pdf::generate_file_certificate(
-            &record, proof,
+            &record,
+            proof,
+            public_proof_id,
         )
         .map_err(|e| format!("Certificate generation failed:\n{e}"))?;
 
@@ -840,6 +851,8 @@ impl App {
         Ok(path)
     }
 
+    /// Dashboard / VerifyResult entry: fresh `lookup_public_proof_id` every time,
+    /// then Tier-1 `generate_file_certificate` (QR only when `pv_…` is available).
     fn generate_certificate_from_project_proofs(
         &mut self,
         projects_dir: &Path,
@@ -858,8 +871,33 @@ impl App {
                 CertificateStatus::Failed("Proof file not found".into());
             return;
         };
+
+        // Trust boundary: file_hash MUST come from the same resolved event_id
+        // that the Certificate body is built for. Never substitute head's hash.
+        let Some(file_hash) = proof
+            .events
+            .iter()
+            .find(|e| e.event_id == event_id)
+            .map(|e| e.file_hash.clone())
+        else {
+            self.certificate_status = CertificateStatus::Failed(
+                "Selected event not found in current proof data — refresh verification and try again"
+                    .into(),
+            );
+            return;
+        };
+
+        // Fresh lookup every generation — never reuse cached Result-screen value.
+        let client = authed_client();
+        let public_proof_id = client.lookup_public_proof_id(&file_hash);
+
         let evidence_dir = evident_ledger::evidence_record::default_evidence_dir();
-        match Self::export_file_certificate_pdf(&evidence_dir, &event_id, &proof) {
+        match Self::export_file_certificate_pdf(
+            &evidence_dir,
+            &event_id,
+            &proof,
+            public_proof_id.as_deref(),
+        ) {
             Ok(path) => {
                 let _ = Command::new("open").arg(&path).spawn();
                 self.certificate_status = CertificateStatus::Generated(path.clone());
@@ -3783,7 +3821,45 @@ let verify_valid = matches!(self.verify_status, VerifyStatus::Valid | VerifyStat
                             }
                         }
                     }
+
+                    if ui
+                        .add_sized(
+                            [280.0, 32.0],
+                            egui::Button::new(self.tr(
+                                "📜 Generate Evident Certificate",
+                                "📜 Generate Evident Certificate",
+                            )),
+                        )
+                        .clicked()
+                    {
+                        // Prefer head / latest verification event for certificate target.
+                        if self.event_id.is_empty() {
+                            if let Some(proof) = self.last_proof.as_ref() {
+                                self.event_id = proof.head_event_id.clone();
+                            }
+                        }
+                        self.generate_certificate_from_project_proofs(
+                            &projects_dir,
+                            &self.verification_project.clone(),
+                        );
+                    }
                 });
+
+                match &self.certificate_status {
+                    CertificateStatus::None | CertificateStatus::Generating => {}
+                    CertificateStatus::Generated(path) => {
+                        ui.add_space(6.0);
+                        ui.label(format!(
+                            "{}: {}",
+                            self.tr("Сертификат", "Certificate"),
+                            path.display()
+                        ));
+                    }
+                    CertificateStatus::Failed(err) => {
+                        ui.add_space(6.0);
+                        ui.colored_label(COLOR_INVALID, err);
+                    }
+                }
 
                 ui.allocate_ui(egui::vec2(600.0, 0.0), |ui| {
                     ui.label(self.tr(
@@ -4188,35 +4264,6 @@ ui.add_space(12.0);
 
                 ui.add_space(12.0);
                 ui.horizontal(|ui| {
-                    let cert_label = egui::RichText::new(self.tr(
-                        "📜 Создать сертификат PDF",
-                        "📜 Создать сертификат PDF",
-                    ))
-                    .color(egui::Color32::WHITE);
-                    if ui
-                        .add(egui::Button::new(cert_label).fill(COLOR_ACCENT))
-                        .clicked()
-                    {
-                        let projects_dir = match self.projects_dir() {
-                            Ok(dir) => dir,
-                            Err(err) => {
-                                self.certificate_status =
-                                    CertificateStatus::Failed(err.clone());
-                                self.status = format!("⚠️ {err}");
-                                return;
-                            }
-                        };
-                        let project_name = if self.project_mode == ProjectMode::New {
-                            self.project_name.clone()
-                        } else {
-                            self.selected_project.clone()
-                        };
-                        self.generate_certificate_from_project_proofs(
-                            &projects_dir,
-                            &project_name,
-                        );
-                    }
-
                     if self.loading_verify_chain {
                         ui.spinner();
                         ui.label(self.tr("Проверка...", "Verifying..."));
@@ -4389,22 +4436,6 @@ ui.add_space(12.0);
                         if !details.is_empty() {
                             ui.colored_label(COLOR_BORDER, details);
                         }
-                    }
-                }
-
-                match &self.certificate_status {
-                    CertificateStatus::None | CertificateStatus::Generating => {}
-                    CertificateStatus::Generated(path) => {
-                        ui.add_space(6.0);
-                        ui.label(format!(
-                            "{}: {}",
-                            self.tr("Сертификат", "Certificate"),
-                            path.display()
-                        ));
-                    }
-                    CertificateStatus::Failed(err) => {
-                        ui.add_space(6.0);
-                        ui.colored_label(COLOR_INVALID, err);
                     }
                 }
 
@@ -4581,6 +4612,7 @@ mod stage25_certificate_export_tests {
             &record.event_id,
             &proof,
             &out_dir,
+            Some("pv_Jc5Tts4ZmzRTHKmugjyCyj"),
         )
         .expect("export");
 
@@ -4607,18 +4639,19 @@ mod stage25_certificate_export_tests {
     }
 
     #[test]
-    fn exported_pdf_contains_qr_block() {
+    fn exported_pdf_contains_qr_when_public_proof_id_present() {
         let (record, proof) = signed_fixture();
-        let bytes = generate_file_certificate(&record, &proof).expect("pdf");
+        let pv = "pv_Jc5Tts4ZmzRTHKmugjyCyj";
+        let bytes = generate_file_certificate(&record, &proof, Some(pv)).expect("pdf");
         assert!(!bytes.is_empty());
         assert!(bytes.starts_with(b"%PDF"));
         let text = pdf_text(&bytes);
         assert!(
-            text.contains("Certificate QR (offline payload)"),
-            "expected Stage 2.2 QR block label; got excerpt: {}",
+            text.contains("Certificate QR (public verification)"),
+            "expected public QR block label; got excerpt: {}",
             &text.chars().take(400).collect::<String>()
         );
-        assert!(text.contains("EVIDENT-CERT|certificate_id|registered_merkle_root"));
+        assert!(text.contains("URL: /public/verify/{public_proof_id}/certificate.pdf"));
         let as_raw = String::from_utf8_lossy(&bytes);
         assert!(
             as_raw.matches(" re\n").count() > 50
@@ -4626,6 +4659,15 @@ mod stage25_certificate_export_tests {
                 || as_raw.contains(" re"),
             "expected QR module rectangles in PDF content stream"
         );
+    }
+
+    #[test]
+    fn exported_pdf_omits_qr_without_public_proof_id() {
+        let (record, proof) = signed_fixture();
+        let bytes = generate_file_certificate(&record, &proof, None).expect("pdf");
+        let text = pdf_text(&bytes);
+        assert!(text.contains("Public verification pending"));
+        assert!(!text.contains("Certificate QR (public verification)"));
     }
 
     #[test]
@@ -4671,6 +4713,7 @@ mod stage25_certificate_export_tests {
             event_id,
             &proof,
             &out_dir,
+            None,
         )
         .expect_err("must fail without evidence");
         assert!(
@@ -4687,11 +4730,50 @@ mod stage25_certificate_export_tests {
         let project = "demo";
         fs::create_dir_all(projects.join(project).join("proofs")).unwrap();
 
+        // Dashboard-style entry (same helper used by VerifyResult button).
         app.generate_certificate_from_project_proofs(&projects, project);
 
         match &app.certificate_status {
             CertificateStatus::Failed(msg) => {
                 assert_eq!(msg, "Proof file not found");
+            }
+            other => panic!("expected Failed, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn mismatched_event_id_fails_without_head_hash_fallback() {
+        let (_record, proof) = signed_fixture();
+        let projects = temp_subdir("projects-mismatch");
+        let project = "demo";
+        let proofs_dir = projects.join(project).join("proofs");
+        fs::create_dir_all(&proofs_dir).unwrap();
+        fs::write(
+            proofs_dir.join(format!("{}.json", proof.head_event_id)),
+            serde_json::to_string_pretty(&proof).unwrap(),
+        )
+        .unwrap();
+
+        // Stale / foreign event_id — present in app state but absent from proof.
+        let foreign_event = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        assert!(
+            proof.events.iter().all(|e| e.event_id != foreign_event),
+            "fixture must not contain the foreign event_id"
+        );
+
+        let mut app = App::new();
+        app.event_id = foreign_event.into();
+        app.generate_certificate_from_project_proofs(&projects, project);
+
+        match &app.certificate_status {
+            CertificateStatus::Failed(msg) => {
+                assert!(
+                    msg.contains("Selected event not found in current proof data"),
+                    "got: {msg}"
+                );
+            }
+            CertificateStatus::Generated(path) => {
+                panic!("must not write a PDF when event_id mismatches; got {path:?}")
             }
             other => panic!("expected Failed, got {other:?}"),
         }
