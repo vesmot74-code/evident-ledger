@@ -968,6 +968,8 @@ impl App {
         events
     }
 
+    /// Writes `EVENT_{seq:03}_attestation.pdf` via `generate_report`.
+    /// Used by the per-event dashboard button and by `export_chain_zip`.
     fn export_event_pdf(
         projects_dir: &Path,
         project_name: &str,
@@ -1146,6 +1148,20 @@ impl App {
         generate_report(&proof_data.chain_id, &proof_data, &verification, &pdf_path)
             .map_err(|e| format!("{:?}", e))?;
 
+        // Per-event attestation PDFs — same writer as the event-row button
+        // (`export_event_pdf` → `generate_report`). Written under proofs/, then packed.
+        let mut event_pdf_paths: Vec<PathBuf> = Vec::with_capacity(events.len());
+        for event in events {
+            let path =
+                Self::export_event_pdf(projects_dir, project_name, proof, event).map_err(|e| {
+                    format!(
+                        "Failed to generate EVENT_{:03}_attestation.pdf: {e}",
+                        event.sequence
+                    )
+                })?;
+            event_pdf_paths.push(path);
+        }
+
         let zip_path = proofs_dir.join(format!(
             "{}_evidence_package.zip",
             project_name.replace(" ", "_")
@@ -1187,6 +1203,17 @@ impl App {
         let pdf = fs::read(&pdf_path).map_err(|e| e.to_string())?;
 
         zip.write_all(&pdf).map_err(|e| e.to_string())?;
+
+        for event_pdf in &event_pdf_paths {
+            let name = event_pdf
+                .file_name()
+                .map(|n| n.to_string_lossy().into_owned())
+                .unwrap_or_else(|| "event_attestation.pdf".into());
+            zip.start_file(&name, options)
+                .map_err(|e| e.to_string())?;
+            let bytes = fs::read(event_pdf).map_err(|e| e.to_string())?;
+            zip.write_all(&bytes).map_err(|e| e.to_string())?;
+        }
 
         let proof_json = serde_json::to_string_pretty(proof).map_err(|e| e.to_string())?;
         zip.start_file("proof.json", options)
@@ -1243,6 +1270,16 @@ impl App {
             ""
         };
 
+        let event_pdf_lines: String = events
+            .iter()
+            .map(|e| {
+                format!(
+                    "             - EVENT_{:03}_attestation.pdf   Per-event evidence report\n",
+                    e.sequence
+                )
+            })
+            .collect();
+
         let readme = format!(
             "Evident Ledger — Evidence Export\n\
              =================================\n\
@@ -1260,6 +1297,7 @@ impl App {
              Package contents:\n\
              {}\
              - chain_verification_report.pdf   Human-readable verification report\n\
+             {}\
              - manifest.json           Machine-readable proof data\n\
              - proof.json              Full cryptographic proof snapshot\n\
              - audit.jsonl             Append-only audit chain\n\
@@ -1277,7 +1315,8 @@ impl App {
             },
             if include_originals { "yes" } else { "no" },
             chrono::Utc::now().to_rfc3339(),
-            contents_line
+            contents_line,
+            event_pdf_lines
         );
 
         zip.start_file("README.txt", options)
