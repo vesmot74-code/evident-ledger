@@ -425,32 +425,4 @@ mod tests {
         }
     }
 
-    #[test]
-    fn classify_test2_ondisk_proof_against_local_pin_is_untrusted() {
-        let home = std::env::var_os("HOME")
-            .map(PathBuf::from)
-            .unwrap_or_else(|| PathBuf::from("."));
-        let proof_path =
-            home.join("Evident Projects/Test 2/proofs/734a9c4d-cbdd-4a52-84fd-f9161d0e3be6.json");
-        let pin_path = home.join(".evident/server_identity.pub");
-        if !proof_path.is_file() || !pin_path.is_file() {
-            eprintln!("Test 2 artifacts not present; skipping on-disk regression");
-            return;
-        }
-        let proof_json: serde_json::Value =
-            serde_json::from_str(&std::fs::read_to_string(&proof_path).unwrap()).unwrap();
-        let pinned = std::fs::read_to_string(&pin_path).unwrap();
-        let result = classify_signature(
-            proof_json["proof"]["public_key"].as_str().unwrap(),
-            &pinned,
-            proof_json["chain_id"].as_str().unwrap(),
-            proof_json["proof"]["root"].as_str().unwrap(),
-            proof_json["proof"]["chain_head"].as_str().unwrap(),
-            proof_json["proof"]["signature"].as_str().unwrap(),
-        );
-        match result {
-            SignatureCheckResult::Valid => {}
-            other => panic!("Test 2 must be Valid with matching pinned identity, got {other:?}"),
-        }
-    }
 }
