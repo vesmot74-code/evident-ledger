@@ -663,6 +663,20 @@ mod tests {
     fn generates_pdf_with_qr_code() {
         let (record, proof, _) = signed_fixture(true, true);
         let pv = "pv_Jc5Tts4ZmzRTHKmugjyCyj";
+
+        // Payload + QR matrix are deterministic; do not scrape PDF binary streams
+        // (printpdf may compress content, so operators like "re" are not stable).
+        let payload = file_certificate_qr_payload(pv);
+        let code = QrCode::new(payload.as_bytes()).expect("qr encode");
+        let dark_modules = (0..code.width())
+            .flat_map(|y| (0..code.width()).map(move |x| (x, y)))
+            .filter(|&(x, y)| code[(x, y)] == qrcode::types::Color::Dark)
+            .count();
+        assert!(
+            dark_modules > 50,
+            "expected QR dark modules > 50, got {dark_modules}"
+        );
+
         let bytes = generate_file_certificate(&record, &proof, Some(pv)).expect("pdf");
         assert!(!bytes.is_empty());
         assert!(bytes.starts_with(b"%PDF"));
@@ -671,13 +685,14 @@ mod tests {
             &bytes,
             "URL: /public/verify/{public_proof_id}/certificate.pdf"
         ));
-        // Full URL lives in the QR matrix (vector modules), not as extractable text.
-        let as_text = String::from_utf8_lossy(&bytes);
+
+        let bytes_without_qr =
+            generate_file_certificate(&record, &proof, None).expect("pdf without qr");
         assert!(
-            as_text.matches(" re\n").count() > 50
-                || as_text.matches(" re\r").count() > 50
-                || as_text.contains(" re"),
-            "expected QR module rectangles in PDF content stream"
+            bytes.len() > bytes_without_qr.len(),
+            "PDF with QR ({} bytes) should be larger than without ({} bytes)",
+            bytes.len(),
+            bytes_without_qr.len()
         );
     }
 
