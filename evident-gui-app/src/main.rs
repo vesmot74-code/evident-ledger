@@ -1298,13 +1298,13 @@ impl App {
              {}\
              - chain_verification_report.pdf   Human-readable verification report\n\
              {}\
-             - manifest.json           Machine-readable proof data\n\
-             - proof.json              Full cryptographic proof snapshot\n\
-             - audit.jsonl             Append-only audit chain\n\
-             - README.txt              Package description\n\n\
+             - manifest.json                  Machine-readable proof data\n\
+             - proof.json                     Full cryptographic proof snapshot\n\
+             - audit.jsonl                    Append-only audit chain\n\
+             - README.txt                     Package description\n\n\
              Verification:\n\
              Recalculate SHA-256 hashes of any presented file and compare\n\
-             them with the hashes recorded in chain_manifest.json.\n",
+             them with the hashes recorded in manifest.json.\n",
             project_name,
             proof.chain_id,
             events.len(),

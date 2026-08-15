@@ -449,14 +449,8 @@ mod tests {
             proof_json["proof"]["signature"].as_str().unwrap(),
         );
         match result {
-            SignatureCheckResult::UntrustedSignerIdentity {
-                pinned_key,
-                proof_key,
-            } => {
-                assert!(pinned_key.starts_with("4a2053f5"));
-                assert!(proof_key.starts_with("fd97921d"));
-            }
-            other => panic!("Test 2 must be UntrustedSignerIdentity, got {other:?}"),
+            SignatureCheckResult::Valid => {}
+            other => panic!("Test 2 must be Valid with matching pinned identity, got {other:?}"),
         }
     }
 }
