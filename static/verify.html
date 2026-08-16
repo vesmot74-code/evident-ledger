@@ -343,7 +343,9 @@ footer a { color: var(--accent); text-decoration: none; }
         const integrityClass =
           String(integrity).toUpperCase() === 'VALID' ? 'status-valid' : 'status-invalid';
         const timestamp = formatPublicTimestamp(data.timestamp);
-        const proofId = data.public_proof_id || '—';
+        const proofIdRaw =
+          typeof data.public_proof_id === 'string' ? data.public_proof_id.trim() : '';
+        const proofId = proofIdRaw || '—';
 
         dl.innerHTML =
           `<dt>${dict.dtStatus}</dt>` +
@@ -356,6 +358,15 @@ footer a { color: var(--accent); text-decoration: none; }
           `<dd class="mono">${escapeHtml(proofId)}</dd>` +
           `<dt>${dict.hashLabel}</dt>` +
           `<dd class="mono">${escapeHtml(hash)}</dd>`;
+
+        // Same action style as chain_id PDF download; only when public_proof_id exists.
+        if (proofIdRaw) {
+          pdfActions.style.display = 'flex';
+          document.getElementById('hashPdfLink').href =
+            `/public/verify/${encodeURIComponent(proofIdRaw)}/certificate.pdf`;
+        } else {
+          pdfActions.style.display = 'none';
+        }
       } catch (_) {
         resultSection.style.display = 'block';
         dl.innerHTML =
