@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>{% block title %}Dashboard{% endblock %} — Evident Ledger</title>
   <script src="https://unpkg.com/htmx.org@2.0.4"></script>
+  {% block head_extra %}{% endblock %}
   <style>
     :root {
       --bg: #f4f6f9;
@@ -204,7 +205,6 @@
     .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 0.75rem; background: var(--bg); }
     .badge-active { background: #dcfce7; color: #166534; }
   </style>
-  {% block head_extra %}{% endblock %}
 </head>
 <body>
   <div class="shell">
