@@ -263,6 +263,9 @@ struct App {
     backup_list_error: Option<String>,
     loading_backup_create: bool,
     backup_create_error: Option<UiText>,
+    loading_backup_export: bool,
+    backup_export_error: Option<UiText>,
+    backup_export_path: Option<String>,
     loading_backup_download: Option<String>,
     backup_download_error: Option<UiText>,
     backup_download_path: Option<String>,
@@ -334,6 +337,9 @@ impl Default for App {
             backup_list_error: None,
             loading_backup_create: false,
             backup_create_error: None,
+            loading_backup_export: false,
+            backup_export_error: None,
+            backup_export_path: None,
             loading_backup_download: None,
             backup_download_error: None,
             backup_download_path: None,
@@ -435,6 +441,7 @@ enum WorkerResponse {
     DevChangePlanDone(Result<client::DevChangePlanResponse, String>),
     BackupListDone(Result<Vec<client::BackupListItem>, String>),
     BackupCreateDone(Result<client::BackupCreateResponse, String>),
+    BackupExportDone(Result<String, String>),
     BackupDownloadDone(Result<(Uuid, Vec<u8>), String>),
     BackupRestoreDownloadDone(Result<(Uuid, Vec<u8>), String>),
     BackupRestoreDone(Result<RestoreSummary, String>),
@@ -2216,6 +2223,41 @@ impl App {
         Ok(path)
     }
 
+    fn write_local_export_file(chain_id: Uuid, bytes: &[u8]) -> Result<PathBuf, String> {
+        let evident_dir = Self::evident_dir_path()?;
+        let target_dir = backups_dir(&evident_dir);
+        fs::create_dir_all(&target_dir).map_err(|e| e.to_string())?;
+        let filename = format!(
+            "{}-export-{}Z.json",
+            chain_id,
+            chrono::Utc::now().format("%Y%m%dT%H%M%S%.3f")
+        );
+        let path = target_dir.join(filename);
+        fs::write(&path, bytes).map_err(|e| e.to_string())?;
+        Ok(path)
+    }
+
+    fn start_backup_export(&mut self, ctx: &egui::Context, chain_id: Uuid) {
+        self.loading_backup_export = true;
+        self.backup_export_error = None;
+        self.backup_export_path = None;
+
+        let tx = self.tx_resp.clone();
+        let ctx = ctx.clone();
+        self.rt.spawn_blocking(move || {
+            let client = authed_client();
+            let result = client
+                .backup_export(chain_id)
+                .map_err(|e| e.to_string())
+                .and_then(|bytes| {
+                    Self::write_local_export_file(chain_id, &bytes)
+                        .map(|p| p.display().to_string())
+                });
+            let _ = tx.send(WorkerResponse::BackupExportDone(result));
+            ctx.request_repaint();
+        });
+    }
+
     fn evident_dir_path() -> Result<PathBuf, String> {
         Ok(dirs::home_dir()
             .ok_or_else(|| "HOME directory not found".to_string())?
@@ -2567,6 +2609,19 @@ impl eframe::App for App {
                         }
                     }
                 }
+                WorkerResponse::BackupExportDone(res) => {
+                    self.loading_backup_export = false;
+                    match res {
+                        Ok(path) => {
+                            self.backup_export_error = None;
+                            self.backup_export_path = Some(path);
+                        }
+                        Err(e) => {
+                            self.backup_export_error = Some(UiText::Raw(e));
+                            self.backup_export_path = None;
+                        }
+                    }
+                }
                 WorkerResponse::BackupDownloadDone(res) => {
                     self.loading_backup_download = None;
                     match res {
@@ -2729,7 +2784,18 @@ impl eframe::App for App {
                         self.lang = Lang::En;
                     }
                     ui.add_space(8.0);
-                    if ui.button(self.tr("💾 Резервное копирование", "💾 Backup")).clicked() {
+                    let server_backup = self
+                        .account_data
+                        .as_ref()
+                        .and_then(|caps| caps.get("server_backup"))
+                        .and_then(|v| v.as_bool())
+                        .unwrap_or(false);
+                    let backup_btn = if server_backup {
+                        self.tr("💾 Резервная копия на сервере", "💾 Server backup")
+                    } else {
+                        self.tr("💾 Скачать резервную копию", "💾 Download backup")
+                    };
+                    if ui.button(backup_btn).clicked() {
                         let ctx = ui.ctx().clone();
                         self.screen = Screen::Backup;
                         if self.account_data.is_none() {
@@ -2922,7 +2988,17 @@ impl eframe::App for App {
             }
 
             if self.screen == Screen::Backup {
-                ui.heading(self.tr("Резервное копирование", "Backup"));
+                let server_backup_heading = self
+                    .account_data
+                    .as_ref()
+                    .and_then(|caps| caps.get("server_backup"))
+                    .and_then(|v| v.as_bool())
+                    .unwrap_or(false);
+                ui.heading(if server_backup_heading {
+                    self.tr("Резервная копия на сервере", "Server backup")
+                } else {
+                    self.tr("Локальная резервная копия", "Local backup")
+                });
                 ui.add_space(8.0);
 
                 if self.loading_account {
@@ -2950,17 +3026,52 @@ impl eframe::App for App {
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
 
+                    ui.label(self.tr(
+                        "Резервная копия восстанавливает данные при потере локального файла. Юридическую значимость доказательства повышают TSA и Identity, а не факт наличия резервной копии.",
+                        "A backup restores data if the local file is lost. Legal weight comes from TSA and Identity, not from the existence of a backup.",
+                    ));
+                    ui.add_space(8.0);
+
                     if !server_backup {
                         ui.label(format!(
                             "{} ({})",
-                            self.tr(
-                                "Резервное копирование на сервере недоступно на вашем плане",
-                                "Server Backup: unavailable on your plan",
-                            ),
-                            plan.to_uppercase(),
+                            self.tr("План", "Plan"),
+                            plan.to_uppercase()
                         ));
-                        ui.label(self.tr("Требуется обновление плана", "Upgrade required"));
+                        let export_label = if self.loading_backup_export {
+                            self.tr("Скачивание...", "Downloading...")
+                        } else {
+                            self.tr("Скачать резервную копию", "Download backup")
+                        };
+                        if ui
+                            .add_enabled(!self.loading_backup_export, egui::Button::new(export_label))
+                            .clicked()
+                        {
+                            match self.resolve_selected_project_chain_id() {
+                                Ok(chain_id) => {
+                                    self.start_backup_export(&ui.ctx().clone(), chain_id);
+                                }
+                                Err(e) => {
+                                    self.backup_export_error = Some(e);
+                                }
+                            }
+                        }
+                        if let Some(path) = &self.backup_export_path {
+                            ui.label(format!(
+                                "{} {}",
+                                self.tr("Сохранено:", "Saved to:"),
+                                path
+                            ));
+                        }
+                        if let Some(err) = &self.backup_export_error {
+                            ui.colored_label(egui::Color32::RED, self.render_ui_text(err));
+                        }
                     } else {
+                        ui.label(self.tr(
+                            "Резервная копия хранится на сервере Evident Ledger.",
+                            "Server backup is stored by Evident Ledger.",
+                        ));
+                        ui.add_space(4.0);
                         if self.pending_restore.is_some() {
                             ui.label(self.tr(
                                 "Локальные данные для этой цепочки уже существуют.",

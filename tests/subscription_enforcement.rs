@@ -297,6 +297,35 @@ async fn post_backup_create(
     .await
 }
 
+async fn post_backup_export(
+    app: axum::Router,
+    account: &TestAccount,
+) -> (StatusCode, Value, Option<String>) {
+    let req = authed_request(
+        "POST",
+        "/backup/export",
+        &account.api_key,
+        Some(json!({ "chain_id": account.chain_id })),
+    );
+    let svc = app.into_service();
+    let response = svc.oneshot(req).await.expect("response");
+    let status = response.status();
+    let disposition = response
+        .headers()
+        .get(axum::http::header::CONTENT_DISPOSITION)
+        .and_then(|v| v.to_str().ok())
+        .map(|s| s.to_string());
+    let bytes = axum::body::to_bytes(response.into_body(), usize::MAX)
+        .await
+        .expect("body");
+    let json = if bytes.is_empty() {
+        json!(null)
+    } else {
+        serde_json::from_slice(&bytes).unwrap_or(json!({ "raw": String::from_utf8_lossy(&bytes) }))
+    };
+    (status, json, disposition)
+}
+
 #[tokio::test]
 async fn free_plan_write_within_limit_passes() {
     let pool = test_pool().await;
@@ -626,5 +655,54 @@ async fn backup_create_free_account_keeps_entitlement_behavior() {
     assert_eq!(status, StatusCode::FORBIDDEN);
     assert_eq!(body["error"], "feature_not_available");
     assert_eq!(body["feature"], "server_backup");
+    cleanup_account(&pool, account.account_id).await;
+}
+
+#[tokio::test]
+async fn backup_export_free_account_returns_snapshot_without_server_persist() {
+    let pool = test_pool().await;
+    let account = create_test_account(&pool, "free", "none").await;
+    let tmp = tempfile::tempdir().expect("tempdir");
+    unsafe {
+        std::env::set_var("EVIDENT_BACKUP_DIR", tmp.path());
+    }
+
+    let before_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backups WHERE account_id = $1")
+            .bind(account.account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+
+    let app = backup_app(test_state(pool.clone()));
+    let (status, body, disposition) = post_backup_export(app, &account).await;
+    assert_eq!(status, StatusCode::OK, "body={body}");
+    assert_eq!(body["chain_id"], account.chain_id.to_string());
+    assert!(body["events"].is_array());
+    assert!(body["exported_at"].is_string());
+    assert!(
+        disposition
+            .as_deref()
+            .is_some_and(|d| d.contains("attachment")),
+        "expected Content-Disposition attachment, got {disposition:?}"
+    );
+
+    let after_rows: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM backups WHERE account_id = $1")
+            .bind(account.account_id)
+            .fetch_one(&pool)
+            .await
+            .expect("count");
+    assert_eq!(after_rows, before_rows);
+
+    let account_dir = tmp.path().join(account.account_id.to_string());
+    assert!(
+        !account_dir.exists()
+            || std::fs::read_dir(&account_dir)
+                .map(|mut d| d.next().is_none())
+                .unwrap_or(true),
+        "local export must not write server backup files"
+    );
+
     cleanup_account(&pool, account.account_id).await;
 }

@@ -6,6 +6,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
+use chrono::Utc;
 use serde::Deserialize;
 use serde_json::json;
 use uuid::Uuid;
@@ -13,7 +14,8 @@ use uuid::Uuid;
 use crate::auth::{api_key_auth_middleware, AuthedAccount};
 use crate::middleware::subscription_enforcement::subscription_enforcement_middleware;
 use crate::service::backup::{
-    create_backup, get_backup_info, list_backups, read_backup_file, BackupError,
+    create_backup, export_local_snapshot, get_backup_info, list_backups, read_backup_file,
+    BackupError,
 };
 use crate::service::capabilities::get_account_capabilities;
 use crate::state::AppState;
@@ -23,9 +25,15 @@ struct CreateBackupRequest {
     chain_id: Uuid,
 }
 
+#[derive(Deserialize)]
+struct ExportBackupRequest {
+    chain_id: Uuid,
+}
+
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/create", post(create_handler))
+        .route("/export", post(export_handler))
         .route("/list", get(list_handler))
         .route("/:backup_id/download", get(download_handler))
         .route("/:backup_id", get(info_handler))
@@ -57,6 +65,32 @@ async fn create_handler(
             "event_count": result.event_count,
         })),
     ))
+}
+
+async fn export_handler(
+    State(state): State<AppState>,
+    auth: AuthedAccount,
+    Json(req): Json<ExportBackupRequest>,
+) -> Result<Response, BackupError> {
+    // Local Export — all plans; do not call ensure_server_backup_allowed().
+    let snapshot = export_local_snapshot(&state.db, auth.account_id, req.chain_id).await?;
+    let bytes = serde_json::to_vec_pretty(&snapshot).map_err(BackupError::Serialize)?;
+
+    let filename = format!(
+        "{}-export-{}Z.json",
+        req.chain_id,
+        Utc::now().format("%Y%m%dT%H%M%S%.3f")
+    );
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_static("application/json"),
+    );
+    if let Ok(value) = HeaderValue::from_str(&format!("attachment; filename=\"{filename}\"")) {
+        headers.insert(header::CONTENT_DISPOSITION, value);
+    }
+
+    Ok((StatusCode::OK, headers, bytes).into_response())
 }
 
 async fn list_handler(

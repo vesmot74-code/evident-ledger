@@ -436,6 +436,20 @@ impl EvidentClient {
         Ok(resp.json()?)
     }
 
+    /// Local Export — available on all plans; no server-side persistence.
+    pub fn backup_export(&self, chain_id: Uuid) -> Result<Vec<u8>, ClientError> {
+        let resp = self
+            .authed(self.client.post(format!("{}/backup/export", self.base_url)))
+            .json(&serde_json::json!({ "chain_id": chain_id }))
+            .send()?;
+        if !resp.status().is_success() {
+            let status = resp.status();
+            let body = resp.text().unwrap_or_default();
+            return Err(Self::map_http_error(status, &body));
+        }
+        Ok(resp.bytes()?.to_vec())
+    }
+
     pub fn backup_list(&self) -> Result<Vec<BackupListItem>, ClientError> {
         let resp = self
             .authed(self.client.get(format!("{}/backup/list", self.base_url)))

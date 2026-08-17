@@ -12,7 +12,7 @@ pub struct BackupSnapshot {
     pub exported_at: DateTime<Utc>,
 }
 
-#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq, sqlx::FromRow)]
 pub struct EventSnapshot {
     pub event_id: Uuid,
     pub chain_id: Uuid,

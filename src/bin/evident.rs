@@ -251,7 +251,7 @@ Commands:
   status <chain_id>    Query chain verification status from the server
   account [info]       Show account plan / capabilities (requires API key)
   key status|info      Show API key status / local key configuration
-  backup <subcommand>  Create, list, download, or restore backups
+  backup <subcommand>  Export local snapshot, or manage server backups (Vault+)
   report generate <chain_id>
                        Generate a PDF report for a chain
   hash <file>          Print SHA-256 of a file
@@ -552,25 +552,79 @@ fn cmd_backup(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
     match args.next().as_deref() {
         Some(arg) if is_help_flag(arg) => {
             println!(
-                "Usage: evident backup <create|list|download|restore>\n\
+                "Usage: evident backup <export|create|list|download|restore>\n\
                  \n\
-                 create --chain <uuid>              Create a backup\n\
-                 list                               List backups\n\
-                 download <backup_id> [--output p]  Download backup JSON\n\
-                 restore <backup_id> [--force]      Restore a backup locally"
+                 export --chain <uuid> [--output p] Export a local backup snapshot without server-side storage.\n\
+                                                    Available on all plans.\n\
+                 create --chain <uuid>              Create a server backup (Vault+)\n\
+                 list                               List server backups (Vault+)\n\
+                 download <backup_id> [--output p]  Download server backup JSON (Vault+)\n\
+                 restore <backup_id> [--force]      Restore a server backup locally (Vault+)"
             );
             Ok(())
         }
+        Some("export") => cmd_backup_export(args),
         Some("create") => cmd_backup_create(args),
         Some("list") => cmd_backup_list(),
         Some("download") => cmd_backup_download(args),
         Some("restore") => cmd_backup_restore(args),
         _ => Err(CliError::Usage(
             "Error: unknown or missing backup subcommand.\n\
-             Usage: evident backup <create|list|download|restore>"
+             Usage: evident backup <export|create|list|download|restore>"
                 .into(),
         )),
     }
+}
+
+fn cmd_backup_export(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
+    let mut chain_id = None;
+    let mut output = None;
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--chain" => chain_id = args.next(),
+            "--output" => output = args.next(),
+            flag if is_help_flag(flag) => {
+                println!(
+                    "Usage: evident backup export --chain <uuid> [--output <path>]\n\
+                     \n\
+                     Export a local backup snapshot without server-side storage.\n\
+                     Available on all plans."
+                );
+                return Ok(());
+            }
+            other => {
+                return Err(CliError::Usage(format!(
+                    "unknown argument '{other}'. usage: evident backup export --chain <uuid> [--output <path>]"
+                )));
+            }
+        }
+    }
+    let chain_id = chain_id
+        .ok_or_else(|| CliError::Usage("usage: evident backup export --chain <uuid>".into()))?;
+    let chain_uuid =
+        Uuid::parse_str(&chain_id).map_err(|_| CliError::Usage("invalid chain id".into()))?;
+
+    let client = evident_client()?;
+    let bytes = client
+        .backup_export(chain_uuid)
+        .map_err(|e| CliError::Server(e.to_string()))?;
+
+    let path = match output {
+        Some(p) => PathBuf::from(p),
+        None => PathBuf::from(format!(
+            "{}-export-{}Z.json",
+            chain_uuid,
+            chrono::Utc::now().format("%Y%m%dT%H%M%S%.3f")
+        )),
+    };
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(&path, &bytes)?;
+    println!("snapshot exported to {}", path.display());
+    Ok(())
 }
 
 fn cmd_backup_create(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
