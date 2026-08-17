@@ -75,6 +75,39 @@ Don't just take our word for it. Review the type of evidence package generated b
   Discloses registration time, TSA class, and integrity state only — no
   chain, event, or Merkle data, per [SECURITY.md](SECURITY.md).
 
+## Evidence Export and Backup Model
+
+Evidence Export and Server Backup are not copies of your original files.
+They preserve cryptographic evidence of an audit chain.
+
+### Evidence Export (All Plans)
+
+Evidence Export creates a local cryptographic evidence snapshot of a chain.
+
+The snapshot contains:
+
+- hashes
+- digital signatures
+- event order
+- chain metadata
+- verification information
+
+**This export does not contain original user files.**
+
+It confirms that records existed, that events occurred in a specific sequence, and that the chain was intact at the time of export. It is not a copy of the user's documents.
+
+Exported snapshots are stored locally at `~/.evident/backups/`.
+
+### Server Backup (Vault+)
+
+Server Backup is available on **Vault** and **Identity** plans.
+
+It is for availability and recovery: keeping evidence packages available if local application data is lost.
+
+**Server Backup stores evidence snapshots, not original user files.**
+
+Evident Ledger is not a file-hosting or document cloud. Original files remain wherever the customer placed them.
+
 ---
 
 # 🏗 Why Evident Ledger?
@@ -90,7 +123,7 @@ Evident Ledger separates record creation from later verification.
 | Integrity | Database-dependent | Cryptographically verifiable |
 | Verification | Requires internal system access | Independent verification |
 | Audit History | Mutable records | Tamper-evident proof chain |
-| Cloud Dependency | Usually required | Local-first architecture |
+| Cloud Dependency | Usually required | Local-first with optional managed backup |
 
 ---
 
@@ -140,6 +173,20 @@ Anyone with the proof package can independently verify integrity.
 
 No access to the original database is required.
 
+## What Evident Ledger Does Not Store
+
+Evident Ledger is not a file store and does not replace customer document repositories.
+
+The system does **not** store original user files as part of the evidence chain.
+
+What it stores is cryptographic proof that those records existed and remained intact:
+
+- cryptographic proofs
+- hashes
+- signatures
+- chain information
+
+Original files stay under customer control. Evident Ledger stores evidence of their existence and integrity, not the files themselves.
 
 ---
 
@@ -220,6 +267,18 @@ Optional report:
 ./target/release/evident report generate <chain_id>
 ```
 
+Export a local evidence snapshot (all plans). This does not copy original files:
+
+```bash
+evident backup export --chain <chain_id>
+```
+
+Create a server-side backup (Vault+):
+
+```bash
+evident backup create --chain <chain_id>
+```
+
 Other CLI commands: `status`, `backup`, `account`, `account info`, `key status`, `key info`, `hash`, `version`.
 
 Run `evident --help` for the full command list.
@@ -256,6 +315,17 @@ Subscription state is orthogonal to the active tariff:
 - Plans: `free`, `legal`, `vault`, `identity`
 - Statuses: `none`, `active`, `past_due`, `canceled`
 - Paid upgrades via Paddle (Dashboard overlay checkout); state updates from signed webhooks
+
+## Storage capabilities
+
+| Plan | Local Evidence Export | Server Backup |
+| --- | --- | --- |
+| Free | ✓ | — |
+| Legal | ✓ | — |
+| Vault | ✓ | ✓ |
+| Identity | ✓ | ✓ |
+
+Local Evidence Export is available on every plan. Server Backup is Vault+ only and stores evidence snapshots, not original files.
 
 Details: [docs/AUTH_MODEL.md](docs/AUTH_MODEL.md), [docs/BILLING_MODEL.md](docs/BILLING_MODEL.md).
 
@@ -296,37 +366,38 @@ cargo build --release --bin evident --bin evident-ledger --bin evident-verify
 
 ---
 
-# 📚 Documentation
+# 📚 Documentation & Product Materials
 
-Technical, security, evidence, and legal documentation:
+Product-facing materials for users, companies, auditors, and counsel. Implementation details live in `docs/`.
 
-## Technical Documentation
-
-- [Architecture](docs/cli_product_layer_tz.md)
-
-- [Protocol Specification](docs/protocol_v0.1.md)
-
-- [Proof Schema](docs/proof_v1.schema.md)
-
-- [Security Policy](SECURITY.md)
-
-- [API Contract](docs/API.md)
-
-- [Authentication Model](docs/AUTH_MODEL.md)
-
-- [Billing Model](docs/BILLING_MODEL.md)
-
-- [Identity Model](docs/IDENTITY_MODEL.md)
-
-- [Verification Model](docs/VERIFY_MODEL.md)
-
-## Evidence & Legal Documentation
+### Product Overview
 
 - [Technical Whitepaper](docs/whitepaper/Evident_Ledger_Technical_Whitepaper_v1.0.md)
-
 - [Evidence Assurance Model](docs/specifications/Evidence_Assurance_Model_v1.0.md)
-
 - [Legal Brief for Attorneys](docs/legal/Evident_Ledger_Legal_Brief.md)
+
+### User Materials
+
+- [CLI installation](docs/CLI_INSTALLATION.md)
+
+### Product PDFs
+
+- [Evidence Snapshot (local report)](docs/samples/evidence_snapshot.pdf)
+- [Public Certificate](docs/samples/public-certificate-sample.pdf)
+- [Technical Whitepaper (PDF)](docs/whitepaper/Evident_Ledger_Technical_Whitepaper_v1.0.pdf)
+
+### Interface & UX
+
+- [Dashboard](docs/assets/dashboard.png)
+
+### Audits
+
+- [Backup Tiering](docs/audits/backup-tiering.md)
+- [Storage Transparency](docs/audits/storage-transparency.md)
+
+### Technical Documentation
+
+- [Security Policy](SECURITY.md)
 
 ---
 
