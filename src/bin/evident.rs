@@ -554,7 +554,10 @@ fn cmd_backup(args: &mut impl Iterator<Item = String>) -> Result<(), CliError> {
             println!(
                 "Usage: evident backup <export|create|list|download|restore>\n\
                  \n\
-                 export --chain <uuid> [--output p] Export a local backup snapshot without server-side storage.\n\
+                 export --chain <uuid> [--output p] Export a cryptographic evidence snapshot:\n\
+                                                    hashes, signatures, and chain structure.\n\
+                                                    This is not a copy of your original files.\n\
+                                                    No server-side storage.\n\
                                                     Available on all plans.\n\
                  create --chain <uuid>              Create a server backup (Vault+)\n\
                  list                               List server backups (Vault+)\n\
@@ -587,7 +590,10 @@ fn cmd_backup_export(args: &mut impl Iterator<Item = String>) -> Result<(), CliE
                 println!(
                     "Usage: evident backup export --chain <uuid> [--output <path>]\n\
                      \n\
-                     Export a local backup snapshot without server-side storage.\n\
+                     Export a cryptographic evidence snapshot:\n\
+                     hashes, signatures, and chain structure.\n\
+                     This is not a copy of your original files.\n\
+                     No server-side storage.\n\
                      Available on all plans."
                 );
                 return Ok(());

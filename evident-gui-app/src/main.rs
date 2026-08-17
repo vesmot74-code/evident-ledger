@@ -2793,7 +2793,7 @@ impl eframe::App for App {
                     let backup_btn = if server_backup {
                         self.tr("💾 Резервная копия на сервере", "💾 Server backup")
                     } else {
-                        self.tr("💾 Скачать резервную копию", "💾 Download backup")
+                        self.tr("💾 Экспорт доказательства", "💾 Export Evidence Snapshot")
                     };
                     if ui.button(backup_btn).clicked() {
                         let ctx = ui.ctx().clone();
@@ -2997,7 +2997,96 @@ impl eframe::App for App {
                 ui.heading(if server_backup_heading {
                     self.tr("Резервная копия на сервере", "Server backup")
                 } else {
-                    self.tr("Локальная резервная копия", "Local backup")
+                    self.tr("Экспорт доказательства", "Export Evidence Snapshot")
+                });
+                ui.add_space(8.0);
+
+                ui.label(self.tr(
+                    "Этот файл не содержит ваши исходные файлы.",
+                    "This file does not contain your original files.",
+                ));
+                ui.label(self.tr(
+                    "Он содержит криптографическое доказательство цепочки:",
+                    "It contains cryptographic evidence of your audit chain:",
+                ));
+                ui.label(self.tr(
+                    "хэши, подписи и порядок событий на момент экспорта.",
+                    "hashes, signatures, and event order at the time of export.",
+                ));
+                ui.add_space(8.0);
+                ui.label(self.tr(
+                    "Резервная копия восстанавливает данные при потере локального файла.",
+                    "A backup restores data if the local file is lost.",
+                ));
+                ui.label(self.tr(
+                    "Юридическая значимость доказательства определяется TSA и Identity,",
+                    "Legal weight comes from TSA and Identity,",
+                ));
+                ui.label(self.tr(
+                    "а не самим фактом наличия резервной копии.",
+                    "not from the existence of a backup.",
+                ));
+                ui.add_space(8.0);
+
+                let evident_dir_display = Self::evident_dir_path()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|_| "~/.evident".into());
+                let backups_dir_display = Self::evident_dir_path()
+                    .map(|p| backups_dir(&p).display().to_string())
+                    .unwrap_or_else(|_| "~/.evident/backups".into());
+                egui::CollapsingHeader::new(self.tr(
+                    "Где хранятся мои данные",
+                    "Where is my data stored?",
+                ))
+                .default_open(false)
+                .id_salt("backup_storage_transparency")
+                .show(ui, |ui| {
+                    ui.label(self.tr("📁 Исходные файлы", "📁 Original files"));
+                    ui.label(self.tr(
+                        "Хранятся там, куда вы их положили.",
+                        "Stored wherever you placed them.",
+                    ));
+                    ui.label(self.tr(
+                        "Evident Ledger не копирует и не перемещает оригиналы.",
+                        "Evident Ledger does not copy or move originals.",
+                    ));
+                    ui.add_space(6.0);
+                    ui.label(self.tr(
+                        "📁 Локальные данные приложения",
+                        "📁 Application data",
+                    ));
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&evident_dir_display).monospace().small(),
+                        )
+                        .wrap(),
+                    );
+                    ui.add_space(6.0);
+                    ui.label(self.tr(
+                        "📄 Экспортированные снимки",
+                        "📄 Exported snapshots",
+                    ));
+                    ui.add(
+                        egui::Label::new(
+                            egui::RichText::new(&backups_dir_display).monospace().small(),
+                        )
+                        .wrap(),
+                    );
+                    if server_backup_heading {
+                        ui.add_space(6.0);
+                        ui.label(self.tr(
+                            "☁ Резервная копия на сервере",
+                            "☁ Server backup",
+                        ));
+                        ui.label(self.tr(
+                            "Доступна на тарифе Vault и выше.",
+                            "Available on Vault plans and above.",
+                        ));
+                        ui.label(self.tr(
+                            "Хранится на инфраструктуре Evident Ledger.",
+                            "Stored on Evident Ledger infrastructure.",
+                        ));
+                    }
                 });
                 ui.add_space(8.0);
 
@@ -3026,12 +3115,6 @@ impl eframe::App for App {
                         .and_then(|v| v.as_bool())
                         .unwrap_or(false);
 
-                    ui.label(self.tr(
-                        "Резервная копия восстанавливает данные при потере локального файла. Юридическую значимость доказательства повышают TSA и Identity, а не факт наличия резервной копии.",
-                        "A backup restores data if the local file is lost. Legal weight comes from TSA and Identity, not from the existence of a backup.",
-                    ));
-                    ui.add_space(8.0);
-
                     if !server_backup {
                         ui.label(format!(
                             "{} ({})",
@@ -3039,9 +3122,12 @@ impl eframe::App for App {
                             plan.to_uppercase()
                         ));
                         let export_label = if self.loading_backup_export {
-                            self.tr("Скачивание...", "Downloading...")
+                            self.tr("Экспорт...", "Exporting...")
                         } else {
-                            self.tr("Скачать резервную копию", "Download backup")
+                            self.tr(
+                                "Экспортировать снимок доказательства",
+                                "Export evidence snapshot",
+                            )
                         };
                         if ui
                             .add_enabled(!self.loading_backup_export, egui::Button::new(export_label))
